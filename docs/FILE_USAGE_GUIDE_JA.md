@@ -35,9 +35,7 @@
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、公開前検査。 |
-| `PUBLIC_RELEASE_SCOPE_JA.md` | GitHub 公開に含めるもの、含めないもの。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
-| `EULA_DRAFT_JA.md` | 配布条件と免責のドラフト。正式条件は `LICENSE.txt` を優先。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
 | `mcp_client_config_console_script.json` | PATH 上の `gx3-mcp-server` を直接起動する MCP 設定例。 |
 

@@ -147,11 +147,13 @@ Recommended reading order:
 
 1. [User manual (JA)](docs/USER_MANUAL_JA.md): install, MCP setup, and common commands.
 2. [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md): how Codex/Claude/Cursor should operate this tool.
-3. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): what every repository file is for.
-4. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
-5. [Public release scope (JA)](docs/PUBLIC_RELEASE_SCOPE_JA.md): what is included/excluded for GitHub publication.
-6. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and claims that must not be overstated.
-7. [EULA draft (JA)](docs/EULA_DRAFT_JA.md): distribution terms draft for legal review.
+3. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
+4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and claims that must not be overstated.
+5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
+
+Distribution terms are defined in [LICENSE.txt](LICENSE.txt). Internal drafts
+and publication planning notes are intentionally not part of the public user
+documentation.
 
 MCP configuration examples:
 
