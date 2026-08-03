@@ -11,8 +11,7 @@
 | CLI 全体一覧 | `gx3-cli list` |
 | コマンド詳細 | `gx3-cli help <command> [subcommand]` |
 | MCP tool 一覧 | MCP `tools/list` |
-| 公開前検査 | `python scripts\release_gate.py .` |
-| 回帰テスト | `python run_tests.py` |
+| 開発者向けテスト | `python run_tests.py` |
 
 ## ルートファイル
 
@@ -34,7 +33,7 @@
 | `USER_MANUAL_JA.md` | 人間向けの基本操作、MCP 設定、主要コマンド。 |
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
-| `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、公開前検査。 |
+| `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
 | `mcp_client_config_console_script.json` | PATH 上の `gx3-mcp-server` を直接起動する MCP 設定例。 |
@@ -43,7 +42,7 @@
 
 | ファイル | 役割 |
 |---|---|
-| `release_gate.py` | 公開前の混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
+| `release_gate.py` | 開発者/メンテナ向けの混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
 
 ## gx3cli の公開入口
 
