@@ -1,0 +1,32 @@
+SOURCE-AVAILABLE PROPRIETARY LICENSE
+
+Copyright (c) 2026 purinzan. All rights reserved.
+
+This software is published as source-available proprietary software. It is not
+open-source software.
+
+Permission is granted to view, clone, and run this repository locally for
+evaluation and personal/internal analysis, subject to the restrictions below.
+
+You may not redistribute, sublicense, sell, host as a service, or use this
+software as part of a paid product or commercial service without prior written
+permission from the copyright holder.
+
+You may not use this software to bypass, modify, or violate the terms of GX
+Works3, Mitsubishi Electric software, or any other third-party product.
+
+This software performs static analysis of PLC project files. Its output is
+advisory only. It does not execute, validate, certify, or guarantee the behavior
+of any programmable logic controller, safety system, machine, or physical
+equipment.
+
+Users are solely responsible for verifying all results in the official
+engineering environment and through their own safety, quality, and operational
+review process before applying any change to a live system.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+A PARTICULAR PURPOSE, NON-INFRINGEMENT, ACCURACY, OR SAFETY. IN NO EVENT SHALL
+THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, EQUIPMENT LOSS,
+PRODUCTION LOSS, OR OTHER LIABILITY ARISING FROM USE OF THE SOFTWARE OR ITS
+ANALYSIS OUTPUT.

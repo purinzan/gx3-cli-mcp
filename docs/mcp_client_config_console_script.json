@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "gx3": {
+      "command": "gx3-mcp-server"
+    }
+  }
+}

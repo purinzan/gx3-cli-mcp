@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gx3-cli-mcp"
+version = "0.1.0"
+description = "Local GX Works3 project analysis CLI with a stdio MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LicenseRef-Source-Available-Proprietary"
+license-files = ["LICENSE.txt"]
+authors = [{ name = "purinzan" }]
+keywords = ["plc", "gx-works3", "mitsubishi", "ladder", "mcp"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: Microsoft :: Windows",
+  "Intended Audience :: Manufacturing",
+]
+
+[project.urls]
+Homepage = "https://github.com/purinzan/gx3-cli-mcp"
+Repository = "https://github.com/purinzan/gx3-cli-mcp"
+Issues = "https://github.com/purinzan/gx3-cli-mcp/issues"
+
+[project.scripts]
+gx3-cli = "gx3cli.gx3_cli:main"
+gx3-mcp-server = "gx3cli.gx3_mcp_server:main"
+
+[tool.setuptools]
+include-package-data = false
+packages = ["gx3cli"]

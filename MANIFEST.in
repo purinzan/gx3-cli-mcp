@@ -1,0 +1,15 @@
+include pyproject.toml
+include README.md
+include LICENSE.txt
+recursive-include gx3cli *.py
+prune tests
+prune scripts
+prune dist
+prune dist_sdist
+prune build
+prune .git
+global-exclude __pycache__/* *.py[cod]
+# Belt-and-suspenders: no data of any kind ships, even if it lands here.
+global-exclude *.gx3 *.GX3 *.gtx *.GTX *.zip *.BACKUP.GTX
+global-exclude *.db *.sqlite *.sqlite3 *.cab *.CAB *.dat *.PRM *.xml *.bin *.w3pa *.iut *.gpj *.prj *.pji *.col *.qpg *.pcode *.info
+global-exclude *.csv *.xlsx *.xls *.pdf

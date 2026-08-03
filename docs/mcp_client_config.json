@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gx3": {
+      "command": "python",
+      "args": ["-m", "gx3cli.gx3_mcp_server"]
+    }
+  }
+}

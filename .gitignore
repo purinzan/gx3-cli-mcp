@@ -1,0 +1,44 @@
+# Build artifacts
+/dist/
+/dist_sdist/
+/build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# --- Confidential data must never enter this repo ---
+# Belt-and-suspenders: block PLC project data and generated analysis output
+# even if someone drops it here by accident.
+_extracted_*/
+outputs/
+.gx3_index/
+*.gx3
+*.GX3
+*.gtx
+*.GTX
+*.db
+*.sqlite
+*.sqlite3
+*.cab
+*.CAB
+*.w3pa
+*.iut
+*.qpg
+*.dat
+*.PRM
+*.csv
+*.xlsx
+*.xls
+*.pdf
+_rename_*.json
+_work_*/
+_verify_*/
+_ARCHIVE*/
+_KEEP*/
+
+# Tauri desktop shell generated artifacts
+/desktop-shell/node_modules/
+/desktop-shell/src-tauri/target/
+/desktop-shell/src-tauri/gen/
+/desktop-shell/src-tauri/resources/gx3/*
+!/desktop-shell/src-tauri/resources/gx3/README_PLACEHOLDER.txt
