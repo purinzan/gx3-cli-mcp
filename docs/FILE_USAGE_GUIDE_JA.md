@@ -122,6 +122,7 @@
 | `test_gx3_intermediate_tool_regression.py` | 中間表現 operation model の回帰。 |
 | `test_gx3_parse_gaps_zero.py` | 合成プロジェクトの parse gap 0 確認。 |
 | `test_gx3_timing_detect.py` | timing detect。 |
+| `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
 

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from importlib import metadata
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    tomllib = None  # type: ignore[assignment]
 
 
 PROJECT_NAME = "gx3-cli-mcp"
@@ -18,13 +22,41 @@ def package_version() -> str:
     except metadata.PackageNotFoundError:
         pass
 
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    return _version_from_pyproject(Path(__file__).resolve().parents[1] / "pyproject.toml")
+
+
+def _version_from_pyproject(pyproject: Path) -> str:
+    """Read the project version from pyproject.toml.
+
+    Python 3.11+ has tomllib. Python 3.10 does not, so keep a tiny fallback for
+    the simple PEP 621 `version = "..."` field used by this project.
+    """
+
     try:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        version = data.get("project", {}).get("version")
-    except (OSError, tomllib.TOMLDecodeError):
-        version = None
-    return str(version or "0+unknown")
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return "0+unknown"
+
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+            version = data.get("project", {}).get("version")
+        except tomllib.TOMLDecodeError:
+            version = None
+        return str(version or "0+unknown")
+
+    in_project = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line == "[project]":
+            in_project = True
+            continue
+        if in_project and line.startswith("["):
+            break
+        if in_project and line.startswith("version"):
+            _, _, value = line.partition("=")
+            return value.strip().strip('"') or "0+unknown"
+    return "0+unknown"
 
 
 def version_line(entrypoint: str) -> str:
