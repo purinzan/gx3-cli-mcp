@@ -37,7 +37,7 @@ from gx3cli.gx3_arg_decode import (
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES
 from gx3cli.gx3_ladder_logic import VERTICAL_RE, parse_pos
 from gx3cli.gx3_program_map import ProgramMap, load_program_map
-from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 from gx3cli.review_gx3_project import DEVICE_CODE_BY_TYPE, LadderRow
 from gx3cli.gx3_project_paths import find_comment_db
 
@@ -1093,6 +1093,8 @@ def resolve_lddb(root: Path, program: str, pm: ProgramMap) -> str:
     for p in candidates:
         if pm.label(p.name) == program:
             return p.name
+    if program in pm.program_files and len(candidates) == 1:
+        return candidates[0].name
     for p in candidates:
         if p.name.startswith(program):
             return p.name
@@ -1140,7 +1142,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args()
-    root = Path(args.root)
+    root = resolve_project_root(args.root)
     pm = load_program_map(root)
     lddb_name = args.program if args.program.endswith("_LDDB.db") else resolve_lddb(root, args.program, pm)
     comments = load_print_comments(root)
