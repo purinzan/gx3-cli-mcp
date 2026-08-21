@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import zipfile
 from pathlib import Path
+from dataclasses import dataclass
 
 
 DEFAULT_OUTPUT_PREFIX = "project"
@@ -19,6 +20,21 @@ LEGACY_COMM_PREFIX_ENV = "GX3_COMM_PREFIX"
 
 class ProjectRootError(ValueError):
     """Raised when a project root or .gx3 archive cannot be prepared."""
+
+
+@dataclass(frozen=True)
+class ConvertDataEntry:
+    """A ConvertData member that may be extracted with Windows separators.
+
+    Some .gx3 archives store member names with backslashes. On POSIX,
+    ``zipfile.extractall`` preserves those backslashes as literal filename
+    characters instead of creating nested directories, so callers cannot rely on
+    ``root / "ConvertData" / id / name`` existing.
+    """
+
+    program_id: str
+    member_name: str
+    path: Path
 
 
 def first_env(*names: str) -> str | None:
@@ -35,8 +51,55 @@ def is_extracted_gx3_root(path: Path) -> bool:
     return (
         (path / "UnitConfig.dat").exists()
         or any(path.glob("*_LDDB.db"))
+        or any(path.glob("*_FBDDB.db"))
         or any(path.glob("*_DC.db"))
     )
+
+
+def iter_convertdata_entries(root: Path, member_name: str | None = None) -> list[ConvertDataEntry]:
+    """Return ConvertData files from normal or backslash-preserved layouts."""
+
+    entries: list[ConvertDataEntry] = []
+    convert = root / "ConvertData"
+    if convert.is_dir():
+        for path in sorted(convert.glob("*/*")):
+            if not path.is_file():
+                continue
+            if member_name and path.name != member_name:
+                continue
+            entries.append(ConvertDataEntry(path.parent.name, path.name, path))
+
+    prefix = "ConvertData\\"
+    for path in sorted(root.iterdir() if root.is_dir() else []):
+        if not path.is_file() or not path.name.startswith(prefix):
+            continue
+        parts = path.name.split("\\")
+        if len(parts) != 3 or not parts[1] or not parts[2]:
+            continue
+        if member_name and parts[2] != member_name:
+            continue
+        entries.append(ConvertDataEntry(parts[1], parts[2], path))
+
+    seen: set[Path] = set()
+    unique: list[ConvertDataEntry] = []
+    for entry in entries:
+        if entry.path in seen:
+            continue
+        seen.add(entry.path)
+        unique.append(entry)
+    return unique
+
+
+def convertdata_path(root: Path, program_id: str, member_name: str) -> Path:
+    """Resolve one ConvertData member across supported extraction layouts."""
+
+    normal = root / "ConvertData" / program_id / member_name
+    if normal.exists():
+        return normal
+    flat = root / f"ConvertData\\{program_id}\\{member_name}"
+    if flat.exists():
+        return flat
+    return normal
 
 
 def is_gx3_archive(path: Path) -> bool:
