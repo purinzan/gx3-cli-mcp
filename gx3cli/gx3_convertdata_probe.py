@@ -34,7 +34,12 @@ from gx3cli.gx3_intermediate_tool import (
     read_stepinfo_blocks,
 )
 from gx3cli.gx3_program_map import load_program_map, qpg_pou_name_records
-from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
+from gx3cli.gx3_project_paths import (
+    default_output_prefix,
+    default_project_root,
+    iter_convertdata_entries,
+    resolve_project_root,
+)
 
 
 def sha1_hex(data: bytes) -> str:
@@ -119,7 +124,17 @@ def parse_qpg(qpg: Path, root: Path) -> dict[str, object]:
         }
     )
 
-    program_pcode = qpg.with_name("ProgramFilePCode.pcode")
+    program_id = qpg.parent.name
+    if "\\" in qpg.name:
+        parts = qpg.name.split("\\")
+        program_id = parts[1] if len(parts) == 3 else program_id
+    sibling_paths = {
+        entry.member_name: entry.path
+        for entry in iter_convertdata_entries(root)
+        if entry.program_id == program_id
+    }
+
+    program_pcode = sibling_paths.get("ProgramFilePCode.pcode", qpg.with_name("ProgramFilePCode.pcode"))
     if program_pcode.exists():
         pcode_data = program_pcode.read_bytes()
         row.update(
@@ -131,7 +146,7 @@ def parse_qpg(qpg: Path, root: Path) -> dict[str, object]:
             }
         )
 
-    plcwrite = qpg.with_name("PLCWriteProgram.qpg")
+    plcwrite = sibling_paths.get("PLCWriteProgram.qpg", qpg.with_name("PLCWriteProgram.qpg"))
     if plcwrite.exists():
         row["plcwrite_qpg"] = rel(plcwrite, root)
         row["plcwrite_qpg_matches"] = plcwrite.read_bytes() == data
@@ -200,7 +215,7 @@ def count_rows(table_path: Path, query: str) -> int:
 
 
 def build_probe(root: Path) -> dict[str, object]:
-    qpg_rows = [parse_qpg(p, root) for p in sorted((root / "ConvertData").glob("*/Program.qpg"))]
+    qpg_rows = [parse_qpg(entry.path, root) for entry in iter_convertdata_entries(root, "Program.qpg")]
 
     ladder_rows = read_ladder_rows(root)
     stepinfo_by_lddb = find_stepinfo_map(root, ladder_rows)
@@ -209,7 +224,8 @@ def build_probe(root: Path) -> dict[str, object]:
     pcode_rows: list[dict[str, object]] = []
     pcode_summaries: list[dict[str, object]] = []
     pcode_record_by_path_guid: dict[tuple[str, str], dict[str, object]] = {}
-    for pcode in sorted((root / "ConvertData").glob("*/PouPCode.pcode")):
+    for entry in iter_convertdata_entries(root, "PouPCode.pcode"):
+        pcode = entry.path
         records, summary = parse_pou_pcode_records(pcode, root)
         pcode_rows.extend(records)
         pcode_summaries.append(summary)
@@ -330,8 +346,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prefix", default=None)
     args = parser.parse_args(argv)
 
-    root = Path(args.root)
-    if not (root / "ConvertData").is_dir():
+    root = resolve_project_root(args.root)
+    if not iter_convertdata_entries(root):
         raise SystemExit(f"ConvertData not found under: {root}")
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
