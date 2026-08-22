@@ -17,7 +17,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     parse_header_ops,
     support_status,
 )
-from gx3cli.gx3_project_paths import default_output_path
+from gx3cli.gx3_project_paths import convertdata_path, default_output_path
 
 
 SCHEMA_VERSION = "0.3"
@@ -863,7 +863,7 @@ def read_stepinfo_blocks(root: Path, stepinfo: str) -> tuple[list[dict[str, obje
 
 def pcode_path_for_stepinfo(root: Path, stepinfo: str) -> Path:
     step_id = stepinfo.removesuffix("_StepInfo.db")
-    return root / "ConvertData" / step_id / "PouPCode.pcode"
+    return convertdata_path(root, step_id, "PouPCode.pcode")
 
 
 def pcode_record_start(data: bytes, guid: str) -> int | None:
