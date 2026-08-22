@@ -152,7 +152,9 @@ def create_schema(con: sqlite3.Connection) -> None:
     )
 
 
-def row_id(lddb: str, pos: int) -> str:
+def row_id(lddb: str, pos: int, block_id: str = "") -> str:
+    if block_id:
+        return f"{lddb}:{pos}:{block_id}"
     return f"{lddb}:{pos}"
 
 
@@ -195,7 +197,7 @@ def build_index(args: argparse.Namespace) -> int:
     usage_rows = []
     device_stats: dict[str, dict[str, Any]] = {}
     for row in rows:
-        rid = row_id(row.lddb, row.pos)
+        rid = row_id(row.lddb, row.pos, row.block_id)
         ladder_rows.append(
             (
                 rid,
