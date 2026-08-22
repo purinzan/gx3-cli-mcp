@@ -58,6 +58,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | 2 つのコイルが同時 ON 可能か静的確認する | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | 静的チェックを走らせる | `gx3-cli lint project.gx3` |
 | サポート用の診断 ZIP を作る | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+| 匿名化済みのサポート報告を送る | `gx3-cli report-issue --root project.gx3 --message "困っている内容" --yes` |
 
 ## 典型的な調査の流れ
 
@@ -104,6 +105,22 @@ MCP クライアント設定例:
 PATH 上の console script を使える環境では、`docs/mcp_client_config_console_script.json` の設定も使えます。
 
 MCP では typed tool を優先してください。一般的な検索は `gx3_run_command` から `query-device`、`query-comment`、`xref`、`index-lite` を呼び出せます。`synthetic-project` はローカル CLI 専用で、MCP からは実行できません。
+
+## サポート報告を送る
+
+`report-issue` は、匿名化済みの診断 ZIP をローカルに作成し、同じ診断要約を GitHub Issue として送ります。送信には `GH_TOKEN` / `GITHUB_TOKEN`、または `gh auth login` 済みの GitHub CLI が必要です。
+
+```powershell
+gx3-cli report-issue --root project.gx3 --message "解析結果が空になる" --command "gx3-cli trace-device M100 --root project.gx3" --yes
+```
+
+送信前に内容を確認したい場合:
+
+```powershell
+gx3-cli report-issue --root project.gx3 --message "解析結果が空になる" --dry-run
+```
+
+`.gx3` 本体やラダー本文は送信しません。Issue 本文には `doctor` と parse gap summary などの匿名化済み診断情報だけを入れます。
 
 ## デモデータ
 

@@ -72,6 +72,8 @@ COMMANDS: dict[str, CommandSpec] = {
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates"),
     "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data"),
+    "report-issue": CommandSpec("gx3_report_issue.py", "submit a redacted support report to GitHub Issues"),
+    "send-report": CommandSpec("gx3_report_issue.py", "alias of report-issue"),
     "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos"),
     "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report"),
     "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic"),
@@ -317,6 +319,7 @@ def print_help() -> None:
                 "  gx3-cli external-inputs --output-dir outputs",
                 "  gx3-cli review --prefix project_review",
                 "  gx3-cli lint .\\_extracted_Project --xref-db .\\.gx3_index\\Project_xref.sqlite",
+                "  gx3-cli report-issue --root project.gx3 --message \"what went wrong\" --yes",
                 "",
                 "Use `gx3-cli list` to see available commands.",
             ]

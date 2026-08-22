@@ -45,10 +45,26 @@ def test_mcp_rejects_local_state_command() -> None:
     assert "creates local demo artifacts" in result["content"][0]["text"]
 
 
+def test_mcp_rejects_external_report_command() -> None:
+    response = handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "gx3_run_command", "arguments": {"command": "report-issue", "args": ["--dry-run"]}},
+        }
+    )
+    assert response is not None
+    result = response["result"]
+    assert result["isError"] is True
+    assert "sends support reports outside the local machine" in result["content"][0]["text"]
+
+
 def main() -> int:
     test_mcp_initialize_and_tool_list()
     test_mcp_rejects_mutating_command()
     test_mcp_rejects_local_state_command()
+    test_mcp_rejects_external_report_command()
     print("MCP server checks passed")
     return 0
 

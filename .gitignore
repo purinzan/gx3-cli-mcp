@@ -12,6 +12,9 @@ __pycache__/
 _extracted_*/
 outputs/
 .gx3_index/
+.gx3_redaction/
+gx3_support_bundle_*.zip
+gx3_support_report_*.md
 *.gx3
 *.GX3
 *.gtx

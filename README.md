@@ -87,6 +87,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
 | Create a support summary | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+| Submit a redacted support report | `gx3-cli report-issue --root project.gx3 --message "what went wrong" --yes` |
 
 Use the indexed commands above for normal lookup and discovery. Avoid starting
 AI workflows with raw text search over extracted GX3 files; GX Works3 projects
@@ -136,6 +137,7 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ## Data And Safety
 
 - Project files stay on your machine unless you pass outputs to another tool.
+- `report-issue` sends a redacted GitHub Issue only when `--yes` is passed.
 - Some commands create local files such as SQLite indexes, CSV reports, ZIP
   support bundles, or Markdown summaries.
 - Analysis output is advisory. Verify findings in GX Works3 and through your

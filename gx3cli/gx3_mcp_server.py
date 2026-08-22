@@ -48,7 +48,11 @@ PROJECT_MUTATING_COMMANDS = {"intermediate", "roundtrip", "instruction-edit-test
 # Keep these in the local CLI only so the MCP surface stays analysis-focused.
 LOCAL_STATE_COMMANDS = {"synthetic-project"}
 
-MCP_DISABLED_COMMANDS = PROJECT_MUTATING_COMMANDS | LOCAL_STATE_COMMANDS
+# Commands that can send redacted diagnostics outside the local machine. Keep
+# explicit user-driven reporting in the local CLI only.
+EXTERNAL_REPORT_COMMANDS = {"report-issue", "send-report"}
+
+MCP_DISABLED_COMMANDS = PROJECT_MUTATING_COMMANDS | LOCAL_STATE_COMMANDS | EXTERNAL_REPORT_COMMANDS
 
 # Query verbs implemented directly in gx3_cli (not in COMMANDS).
 QUERY_COMMANDS = {
@@ -400,6 +404,8 @@ def run_cli(command: str, args: list[str], root: str | None, timeout_seconds: in
         raise ValueError(f"command '{command}' modifies the project and is disabled on the MCP server")
     if command in LOCAL_STATE_COMMANDS:
         raise ValueError(f"command '{command}' creates local demo artifacts and is disabled on the MCP server")
+    if command in EXTERNAL_REPORT_COMMANDS:
+        raise ValueError(f"command '{command}' sends support reports outside the local machine and is disabled on the MCP server")
     if command not in READ_ONLY_COMMANDS:
         raise ValueError(f"unknown or non-allowed command: {command}")
 

@@ -86,6 +86,7 @@
 | `gx3_project_survey.py` | `project-survey` | `gx3_run_command` | プロジェクト調査パッケージ。 |
 | `gx3_audit.py` | `audit` | `gx3_run_command` | doctor/index/xref/lint/dead-logic をまとめる。 |
 | `gx3_support_bundle.py` | `support-bundle` | `gx3_run_command` | ラダー本文を含めない診断 ZIP。 |
+| `gx3_report_issue.py` | `report-issue`, `send-report` | CLI only | 匿名化済みサポート要約を GitHub Issue として送る。MCP からは不可。 |
 | `gx3_reliability_report.py` | `reliability-report` | `gx3_run_command` | parse gap/decoder coverage の 1 ページ報告。 |
 | `gx3_coverage.py` | `coverage`, `instruction-coverage`, `device-coverage` | `gx3_run_command` | 命令/デバイス知識の coverage。 |
 | `extract_gx3_extended_instruction_knowledge.py` | `extended-instructions` | `gx3_run_command` | 拡張命令/デバイス使用知識の抽出。 |
@@ -121,6 +122,7 @@
 | `test_gx3_timing_detect.py` | timing detect。 |
 | `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
 | `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
+| `test_gx3_report_issue.py` | 匿名化済み issue body 生成、dry-run の回帰。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
 
