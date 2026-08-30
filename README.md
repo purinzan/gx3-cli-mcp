@@ -151,6 +151,25 @@ gx3-cli doctor --root demo.gx3
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
 
+For a project with enough in it to be worth exploring, use the `demo-line`
+profile: a 14-station pick-and-place line, about 500 rungs across 10 programs
+with roughly 500 commented devices, chained so that tracing an output on the
+last station walks back through every station upstream.
+
+```powershell
+gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite
+gx3-cli index-lite build --root line.gx3
+gx3-cli xref build --root line.gx3
+gx3-cli lint line.gx3
+gx3-cli dead-logic --root line.gx3
+```
+
+It also contains a small number of deliberate faults - a duplicate coil, a
+latch with no reset, a coil nobody reads, a contact that can never close, and
+two devices whose comments contradict each other - so the review commands
+report findings instead of an empty table. This is also the fastest way to
+reproduce a bug for an issue without sending anyone a real project.
+
 ## Data And Safety
 
 - Project files stay on your machine unless you pass outputs to another tool.
