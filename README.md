@@ -87,6 +87,8 @@ When you pass a `.gx3` file, the tool extracts it into
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
 | Create a support summary | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+| Capture a parser failure as a regression case | `gx3-cli failure-corpus capture --root project.gx3 --case-id case-name --reason "what failed"` |
+| Rerun captured failure cases | `gx3-cli failure-corpus run` |
 
 Use the indexed commands above for normal lookup and discovery. Avoid starting
 AI workflows with raw text search over extracted GX3 files; GX Works3 projects
@@ -123,6 +125,16 @@ If your client can resolve console scripts from PATH:
 The MCP server exposes read-only analysis tools and a restricted command
 runner. Synthetic demo generation is local CLI-only.
 
+## Agent Skills
+
+This repository includes focused skills for agent workflows:
+
+- [Agent guidance](AGENTS.md): short default rules for this repository.
+- [GX3 existing project audit](skills/gx3-existing-project-audit/SKILL.md):
+  read-only `.gx3` analysis workflow.
+- [GX3 failure corpus](skills/gx3-failure-corpus/SKILL.md): capture failed
+  parser/xref/ladder-print/lint cases as regression fixtures.
+
 ## Demo Project
 
 Use a synthetic project for screenshots, tutorials, and first-time tests.
@@ -132,6 +144,25 @@ gx3-cli synthetic-project demo.gx3 --overwrite
 gx3-cli doctor --root demo.gx3
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
+
+## Failure Corpus
+
+When a real `.gx3` exposes a parser, printer, indexing, or lint coverage gap,
+capture it before fixing the bug:
+
+```powershell
+gx3-cli failure-corpus capture --root C:\path\to\project.gx3 --case-id title-row-gap --reason "ladder-print did not detect section titles" --failed-command "gx3-cli ladder-print MAIN --root {root}"
+gx3-cli failure-corpus run
+```
+
+The command stores the case under `.gx3_failures\cases\` with a small
+`case.json` record, then reruns schema, `doctor`, `xref`, `ladder-print`, and
+the captured `--failed-command` for every active case. Use `{root}` and
+`{reports_dir}` placeholders in failed commands so fixtures remain portable.
+Projects with FBD/ST/MIL databases but no LDDB are reported as detected
+unsupported formats, and ladder-only checks are skipped instead of being treated
+as raw extraction failures. This turns one-off GX3 failures into reusable
+regression fixtures.
 
 ## Data And Safety
 

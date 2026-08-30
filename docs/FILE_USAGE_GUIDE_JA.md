@@ -18,6 +18,7 @@
 | ファイル | 役割 |
 |---|---|
 | `README.md` | GitHub のトップ説明。インストール、MCP 設定、基本ワークフロー、全 Markdown へのリンクを持つ。 |
+| `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
@@ -43,6 +44,15 @@
 | ファイル | 役割 |
 |---|---|
 | `release_gate.py` | 開発者/メンテナ向けの混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
+
+## skills
+
+| ファイル | 役割 |
+|---|---|
+| `skills/gx3-existing-project-audit/SKILL.md` | 既存 `.gx3` の read-only 解析手順。doctor/index/xref/survey/trace/ladder-print の使い分け。 |
+| `skills/gx3-existing-project-audit/agents/openai.yaml` | OpenAI/Codex 側の表示メタデータ。 |
+| `skills/gx3-failure-corpus/SKILL.md` | 解析失敗を `.gx3_failures` の回帰検体へ昇格する手順。 |
+| `skills/gx3-failure-corpus/agents/openai.yaml` | OpenAI/Codex 側の表示メタデータ。 |
 
 ## gx3cli の公開入口
 
@@ -86,6 +96,7 @@
 | `gx3_project_survey.py` | `project-survey` | `gx3_run_command` | プロジェクト調査パッケージ。 |
 | `gx3_audit.py` | `audit` | `gx3_run_command` | doctor/index/xref/lint/dead-logic をまとめる。 |
 | `gx3_support_bundle.py` | `support-bundle` | `gx3_run_command` | ラダー本文を含めない診断 ZIP。 |
+| `gx3_failure_corpus.py` | `failure-corpus` | CLI only | 解析失敗した GX3 を回帰検体として保存し、形式検出/schema/doctor/xref/ladder-print/失敗コマンド再実行を回す。 |
 | `gx3_reliability_report.py` | `reliability-report` | `gx3_run_command` | parse gap/decoder coverage の 1 ページ報告。 |
 | `gx3_coverage.py` | `coverage`, `instruction-coverage`, `device-coverage` | `gx3_run_command` | 命令/デバイス知識の coverage。 |
 | `extract_gx3_extended_instruction_knowledge.py` | `extended-instructions` | `gx3_run_command` | 拡張命令/デバイス使用知識の抽出。 |
@@ -121,6 +132,7 @@
 | `test_gx3_timing_detect.py` | timing detect。 |
 | `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
 | `test_gtx_probe.py` | GTX probe。 |
+| `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
 
 ## 迷ったときの選び方
@@ -133,4 +145,5 @@
 | 起動しない原因を探す | `trace-device` -> `same-row` -> `block-context` |
 | 通信や HMI が絡む | `query-external` -> `external-inputs` -> `network-map` |
 | プロジェクト全体を棚卸ししたい | `audit` -> `project-survey` -> `reliability-report` |
+| 解析失敗を再発防止したい | `failure-corpus capture` -> `failure-corpus run` |
 | サポートへ渡す | `support-bundle` |

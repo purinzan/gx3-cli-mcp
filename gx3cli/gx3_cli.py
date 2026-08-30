@@ -72,6 +72,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates"),
     "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data"),
+    "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures"),
     "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos"),
     "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report"),
     "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic"),
