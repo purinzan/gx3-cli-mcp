@@ -43,7 +43,11 @@ def test_demo_line_project_shape() -> None:
             con = sqlite3.connect(lddb)
             rungs += con.execute("select count(*) from LadderBlocks where blocktype = 0").fetchone()[0]
             for (data,) in con.execute("select data from LadderBlocks where blocktype = 1"):
-                assert extract_title_text(data), f"unreadable section title in {lddb.name}"
+                title = extract_title_text(data)
+                assert title, f"unreadable section title in {lddb.name}"
+                # extract_title_text splits on ":", so a colon in a title
+                # silently truncates it to whatever follows the last one.
+                assert ":" not in title, f"section title contains a colon: {title!r}"
                 titles += 1
             con.close()
 
