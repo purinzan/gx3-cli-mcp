@@ -193,6 +193,11 @@ Distribution terms are defined in [LICENSE.txt](LICENSE.txt).
 
 ## For Contributors
 
+If you clone this repository and find a source code problem, prefer sending a
+pull request with the smallest reproduction, a focused fix, and test evidence.
+When the bug is exposed by a `.gx3`, capture it with `failure-corpus` before
+changing parser logic so the failure becomes a regression case.
+
 Before changing or publishing this project, run the same checks used by CI:
 
 ```powershell
@@ -201,3 +206,6 @@ python scripts\release_gate.py .
 python -m build --wheel
 python scripts\release_gate.py dist\gx3_cli_mcp-*.whl
 ```
+
+See [Contributing](CONTRIBUTING.md) for the Windows-first PR workflow and data
+safety rules.

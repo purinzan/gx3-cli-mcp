@@ -58,6 +58,8 @@ ladder-only checks.
 
 ## PR Notes
 
-Mention the captured case id, the original failure command, what changed, and
-the successful `failure-corpus run` result. If a case cannot be shared, describe
-the schema or parse signature without exposing ladder body data.
+If the source code is wrong, make a focused fix and prepare a pull request after
+capturing the failure. Mention the captured case id, the original failure
+command, what changed, and the successful `failure-corpus run` result. If a case
+cannot be shared, describe the schema or parse signature without exposing ladder
+body data.
