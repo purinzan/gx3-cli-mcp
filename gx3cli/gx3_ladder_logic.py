@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     element_meta,
     extract_dim,
@@ -101,7 +102,7 @@ def parse_device(text: str) -> tuple[str, int]:
 
 def normalize_device(text: str) -> str:
     dev_type, number = parse_device(text)
-    return f"{dev_type}{number}"
+    return _format_device(dev_type, number)
 
 
 def parse_pos(value: str) -> tuple[int, int] | None:
@@ -146,7 +147,7 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
         group_spans.append(match.span())
         refs.append(
             DeviceRef(
-                device=f"{device_type}{number}",
+                device=_format_device(device_type, number),
                 device_type=device_type,
                 number=number,
                 label=f"K{k_count}{device_type}{number}",

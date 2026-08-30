@@ -25,6 +25,8 @@
 | `.gitignore` | キャッシュ、解析結果、GX3/GTX/DB/文書データ、desktop shell 生成物を除外する。 |
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
+| `test_gx3_device_name.py` | デバイス名の 16 進/10 進の整形・解釈・往復を検査する。 |
+| `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
 | `release.yml` | GitHub Actions。`v*` タグで wheel と sdist を build し、release gate と tag/version 一致確認を通してから Trusted Publishing で PyPI へ公開する。 |

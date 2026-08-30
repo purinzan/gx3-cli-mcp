@@ -25,6 +25,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_program_map import load_program_map
@@ -161,9 +162,9 @@ def open_db(args: argparse.Namespace) -> sqlite3.Connection:
 
 
 def normalize_device(text: str) -> str:
-    m = DEVICE_NAME_RE.match(text.strip())
-    if m:
-        return f"{m.group(1).upper()}{int(m.group(2))}"
+    parsed = _split_device(text)
+    if parsed is not None:
+        return _format_device(*parsed)
     return text.strip()
 
 

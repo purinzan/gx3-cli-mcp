@@ -9,6 +9,7 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import (
     DeviceOcc,
@@ -71,16 +72,12 @@ def display_text(value: object) -> str:
 
 
 def parse_device(text: str) -> tuple[str, int]:
-    value = text.strip().upper()
-    match = DEVICE_RE.fullmatch(value)
-    if not match:
-        raise ValueError(f"invalid device: {text!r}")
-    return match.group(1), int(match.group(2))
+    return _parse_device_name(text)
 
 
 def normalize_device(text: str) -> str:
     dev_type, number = parse_device(text)
-    return f"{dev_type}{number}"
+    return _format_device(dev_type, number)
 
 
 def project_label_from_root(root: Path) -> str:

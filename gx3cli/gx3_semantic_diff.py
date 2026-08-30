@@ -21,6 +21,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import extract_elements, header_tokens
 from gx3cli.gx3_intermediate_tool import decode_data
 from gx3cli.gx3_program_map import load_program_map
@@ -114,7 +115,7 @@ def comment_map(root: Path) -> dict[str, str]:
     for (dev_type, number), info in load_comments_for_root(root).items():
         text = info.japanese or info.english or info.all_text
         if text:
-            out[f"{dev_type}{number}"] = text
+            out[_format_device(dev_type, number)] = text
     return out
 
 

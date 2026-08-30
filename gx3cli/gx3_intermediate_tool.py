@@ -9,6 +9,7 @@ import zipfile
 from itertools import product
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     classify_op,
     element_meta,
@@ -272,7 +273,8 @@ def parse_device(device: str) -> tuple[str, int]:
         raise ValueError(f"invalid device: {device}")
     if dev_type not in BIT_DEVICE_TYPES:
         raise ValueError(f"device type not supported for generated logic yet: {dev_type}")
-    return dev_type, int(number_text, 0)
+    # X, Y and B are numbered in hex, so the base depends on the type.
+    return _parse_device_name(f"{dev_type}{number_text}")
 
 
 def toggle_contact(role: str) -> str:
@@ -291,7 +293,7 @@ def literal_from_expr(expr: dict[str, object], negate: bool = False) -> dict[str
     if negate:
         role = toggle_contact(role)
     dev_type, number = parse_device(device)
-    return {"role": role, "device": f"{dev_type}{number}", "device_type": dev_type, "number": number}
+    return {"role": role, "device": _format_device(dev_type, number), "device_type": dev_type, "number": number}
 
 
 def to_nnf(expr, negate: bool = False):
