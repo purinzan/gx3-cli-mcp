@@ -10,6 +10,7 @@ from pathlib import Path
 
 import sqlite3
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_hmi_build_info import CommentInfo, DEVICE_CODE_BY_TYPE, comment_status
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPE_ALIASES,
@@ -187,7 +188,7 @@ def const_value(arg_shapes: str) -> str:
 
 
 def format_device(device_type: str, number: int) -> str:
-    return f"{device_type}{number}"
+    return _format_device(device_type, number)
 
 
 def operation_device_types(data: str) -> list[str]:

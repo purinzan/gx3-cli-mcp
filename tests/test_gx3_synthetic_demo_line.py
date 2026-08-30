@@ -7,10 +7,10 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from gx3cli.gx3_device_name import canonical_device
 from gx3cli.gx3_synthetic_project import (
     DEMO_COMMENTS,
     STATION_COUNT,
-    _device,
     _title_data,
     create_demo_line_project,
 )
@@ -18,13 +18,10 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import extract_title_text
 
 
 def test_hex_numbered_types_round_trip() -> None:
-    # GX numbers X/Y/B in hex, so X24 must be stored as 0x24 and not as 24.
-    assert _device("X24") == "X36"
-    assert _device("Y3D") == "Y61"
-    assert _device("X0") == "X0"
-    # Decimal-numbered types are left alone.
-    assert _device("M100") == "M100"
-    assert _device("SM400") == "SM400"
+    # GX numbers X/Y/B in hex, so the fixture's device names must survive a
+    # round trip through the shared parser and formatter unchanged.
+    for name in ("X24", "Y3D", "X0", "M100", "SM400"):
+        assert canonical_device(name) == name
 
 
 def test_section_titles_are_readable_back() -> None:
@@ -65,7 +62,7 @@ def test_demo_line_project_shape() -> None:
 def test_every_commented_device_is_unique() -> None:
     # A device listed twice would give it two comments and make every answer
     # about it ambiguous.
-    devices = [_device(name) for name, _comment in DEMO_COMMENTS]
+    devices = [canonical_device(name) for name, _comment in DEMO_COMMENTS]
     assert len(devices) == len(set(devices))
 
 

@@ -18,6 +18,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, format_device, hex_number
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     extract_args_text,
     extract_elements,
@@ -311,20 +312,8 @@ def display_operands(raw_args: list[str], arg_tokens: list[str]) -> list[str]:
     return out
 
 
-HEX_DEVICE_TYPES = {"X", "Y", "B", "W", "SB", "SW", "DX", "DY"}
-
-
-def hex_number(number: int) -> str:
-    text = f"{number:X}"
-    return f"0{text}" if text[0] in "ABCDEF" else text
-
-
-def format_device(dev_type: str, number: int) -> str:
-    if dev_type in HEX_DEVICE_TYPES:
-        return f"{dev_type}{hex_number(number)}"
-    return f"{dev_type}{number}"
-
-
+# Device spelling lives in gx3_device_name so every command agrees on it; these
+# names stay importable from here for the modules that already use them.
 def parse_display_device(text: str) -> tuple[str, int] | None:
     if text.startswith("#"):
         text = text[1:]

@@ -12,39 +12,6 @@ from gx3cli.gx3_intermediate_tool import generate_rung, parse_device
 from gx3cli.review_gx3_project import DEVICE_CODE_BY_TYPE
 
 
-# GX Works3 numbers X, Y and B devices in hexadecimal, so a device the engineer
-# calls X24 is stored as 0x24. Writing the plain integer 24 instead produces a
-# fixture whose ladder prints "X18" while its comment table says X24 -- the kind
-# of quiet inconsistency that makes a demo project useless. Everything here goes
-# through _device() so the stored number always matches the printed name.
-HEX_NUMBERED_TYPES = {"X", "Y", "B", "SB", "DX", "DY"}
-
-
-def _device(name: str) -> str:
-    """Return `name` with its number rewritten so GX prints it back as `name`."""
-    index = 0
-    while index < len(name) and not name[index].isdigit():
-        index += 1
-    dev_type, digits = name[:index].upper(), name[index:]
-    if not digits:
-        raise ValueError(f"invalid device: {name}")
-    if dev_type not in HEX_NUMBERED_TYPES:
-        return name
-    return f"{dev_type}{int(digits, 16)}"
-
-
-def _map_devices(node):
-    """Rewrite every device name in a logic tree through _device()."""
-    if isinstance(node, dict):
-        return {
-            key: _device(value) if key == "device" and isinstance(value, str) else _map_devices(value)
-            for key, value in node.items()
-        }
-    if isinstance(node, list):
-        return [_map_devices(item) for item in node]
-    return node
-
-
 def _title_data(text: str) -> str:
     """Encode a section title the way extract_title_text() reads it back."""
     return f"V1:0:t:{text}:st{{m=0:dim=0}}"
@@ -753,7 +720,7 @@ def _create_demo_ladder_db(path: Path, sections: list[tuple[str, list[tuple[dict
         index += 1
         pos += 1.0
         for logic, output in rungs:
-            data, rowsize, steps = generate_rung(_map_devices(logic), _map_devices(output))
+            data, rowsize, steps = generate_rung(logic, output)
             rows.append((_guid(index), pos, 0, data, rowsize, 0, 0))
             index += 1
             pos += max(1.0, float(steps))
@@ -771,7 +738,7 @@ def _create_demo_comment_db(path: Path, comments: list[tuple[str, str]]) -> None
     for seq, (device, comment) in enumerate(comments, start=1):
         # Derive the stored number with the same parser the ladder uses, so a
         # comment can never drift away from the device it describes.
-        dev_type, number = parse_device(_device(device))
+        dev_type, number = parse_device(device)
         device_rows.append((seq, DEVICE_CODE_BY_TYPE[dev_type], number))
         comment_rows.append((seq, comment))
     con.executemany("insert into DEVICE_DATA values (?, ?, 0, 0, ?, 0)", device_rows)

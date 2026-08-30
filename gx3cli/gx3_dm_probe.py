@@ -11,6 +11,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 
 
@@ -69,7 +70,7 @@ def rel(path: Path, root: Path) -> str:
 def device_name(dev_type: str, number: int) -> str:
     if dev_type in HEX_DEVICE_TYPES:
         return f"{dev_type}{number:X}"
-    return f"{dev_type}{number}"
+    return _format_device(dev_type, number)
 
 
 def signed16(value: int) -> int:

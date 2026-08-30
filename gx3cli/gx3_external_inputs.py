@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import LadderRow, comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
@@ -86,7 +87,7 @@ def parse_device_text(device: str) -> tuple[str, int] | None:
 def plc_device_text(device_type: str, number: int, fallback: str = "") -> str:
     if device_type.upper() in HEX_DEVICE_TYPES:
         return f"{device_type}{number:X}"
-    return fallback or f"{device_type}{number}"
+    return fallback or _format_device(device_type, number)
 
 
 def find_comm_csv(name_suffix: str, path: Path | None = None) -> Path:
