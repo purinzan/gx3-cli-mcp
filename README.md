@@ -191,6 +191,12 @@ SaaS としての提供、有償製品やサービスへの組み込みです。
 
 ## For Contributors
 
+Bug reports, questions, and small pull requests are welcome, in Japanese or
+English. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which covers the
+no-project-data rule, the development setup, and what a useful bug report
+contains. Issues labeled `good first issue` are scoped to be approachable
+without deep knowledge of the GX Works3 file format.
+
 Before changing or publishing this project, run the same checks used by CI:
 
 ```powershell
