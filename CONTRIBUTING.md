@@ -43,8 +43,9 @@ gx3-cli doctor --root demo.gx3
 
 ## Development Setup
 
-Windows is the primary platform, and CI runs on Windows with Python 3.10 and
-3.12.
+Windows is the primary platform. CI runs the suite on Windows, Linux, and
+macOS with Python 3.10 and 3.12, so keep new code free of platform assumptions
+such as hard-coded `\` path separators.
 
 ```powershell
 python -m venv .venv
@@ -64,8 +65,7 @@ python -m build --wheel
 python scripts\release_gate.py dist\gx3_cli_mcp-*.whl
 ```
 
-On macOS or Linux, use forward slashes in those paths. The test suite runs
-there too, but Windows is what CI verifies.
+On macOS or Linux, use forward slashes in those paths.
 
 ## Pull Request Guidelines
 

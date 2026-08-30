@@ -9,10 +9,14 @@ on:
 
 jobs:
   test:
-    runs-on: windows-latest
+    # Windows is the primary supported platform. Linux and macOS are covered so
+    # that accidental platform assumptions (path separators, casing) are caught,
+    # since MCP clients are often run from those hosts.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.12"]
 
     steps:
@@ -36,7 +40,7 @@ jobs:
         run: python run_tests.py
 
       - name: Run source release gate
-        run: python scripts\release_gate.py .
+        run: python scripts/release_gate.py .
 
   build:
     runs-on: windows-latest
@@ -58,7 +62,7 @@ jobs:
         run: python -m build --wheel
 
       - name: Run artifact release gate
-        run: python scripts\release_gate.py dist\gx3_cli_mcp-*.whl
+        run: python scripts/release_gate.py dist/gx3_cli_mcp-*.whl
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
