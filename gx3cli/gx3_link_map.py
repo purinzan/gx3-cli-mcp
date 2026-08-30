@@ -20,6 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_xref import default_db_path, normalize_device
 
 
@@ -110,14 +111,11 @@ def parse_project_spec(text: str) -> ProjectSpec:
 
 
 def parse_device_name(device: str) -> tuple[str, int] | None:
-    match = DEVICE_RE.fullmatch(device.strip())
-    if not match:
-        return None
-    return match.group(1).upper(), int(match.group(2))
+    return _split_device(device)
 
 
 def device_name(device_type: str, number: int) -> str:
-    return f"{device_type.upper()}{number}"
+    return _format_device(device_type, number)
 
 
 def merge_info(target: DeviceInfo, row: sqlite3.Row, evidence: str, use_comment: bool = True) -> None:

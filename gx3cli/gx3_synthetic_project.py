@@ -672,11 +672,11 @@ def _station_sections(index: int) -> list[tuple[str, list[tuple[dict, dict]]]]:
         handoff.append(({"device": "M122"}, {"type": "coil", "device": d["handoff_ack"]}))
 
     return [
-        (f"Station {n:02d}: interlocks", interlocks),
-        (f"Station {n:02d}: step sequence", sequence),
-        (f"Station {n:02d}: actuator outputs", outputs),
-        (f"Station {n:02d}: alarms", alarms),
-        (f"Station {n:02d}: handoff", handoff),
+        (f"Station {n:02d} - interlocks", interlocks),
+        (f"Station {n:02d} - step sequence", sequence),
+        (f"Station {n:02d} - actuator outputs", outputs),
+        (f"Station {n:02d} - alarms", alarms),
+        (f"Station {n:02d} - handoff", handoff),
     ]
 
 
