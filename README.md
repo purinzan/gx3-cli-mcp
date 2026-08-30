@@ -1,5 +1,10 @@
 # gx3-cli-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
+[![CI](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
+
 Local GX Works3 project analysis for engineers and AI agents.
 
 `gx3-cli-mcp` provides a Windows-first CLI and stdio MCP server for inspecting

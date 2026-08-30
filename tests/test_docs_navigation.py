@@ -10,10 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_all_markdown_files_are_linked_from_readme() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8").replace("/", "\\")
+    # Compare on POSIX separators so the check behaves the same whether the
+    # tests run on Windows or on a POSIX host.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").replace("\\", "/")
     missing: list[str] = []
     for path in ROOT.rglob("*.md"):
-        rel = str(path.relative_to(ROOT))
+        rel = path.relative_to(ROOT).as_posix()
         if rel == "README.md":
             continue
         if rel not in readme:
@@ -31,8 +33,8 @@ def test_file_usage_guide_indexes_repository_files() -> None:
             continue
         if any(part.endswith(".egg-info") for part in path.parts):
             continue
-        rel = str(path.relative_to(ROOT))
-        if rel == "docs\\FILE_USAGE_GUIDE_JA.md":
+        rel = path.relative_to(ROOT).as_posix()
+        if rel == "docs/FILE_USAGE_GUIDE_JA.md":
             continue
         if path.name not in guide:
             missing.append(rel)
