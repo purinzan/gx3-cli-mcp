@@ -21,10 +21,12 @@
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
+| `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
 | `.gitignore` | キャッシュ、解析結果、GX3/GTX/DB/文書データ、desktop shell 生成物を除外する。 |
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
 | `ci.yml` | GitHub Actions。Windows 上で install、console script 確認、test、release gate、wheel build を実行する。 |
+| `release.yml` | GitHub Actions。`v*` タグで wheel と sdist を build し、release gate と tag/version 一致確認を通してから Trusted Publishing で PyPI へ公開する。 |
 
 ## docs
 

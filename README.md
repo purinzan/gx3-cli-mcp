@@ -37,16 +37,29 @@ Electric.
 ## Install
 
 ```powershell
-python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
+python -m pip install gx3-cli-mcp
 gx3-cli --version
 gx3-mcp-server --version
 ```
 
-For local source checkout:
+Requires Python 3.10 or later. Installing into a virtual environment is
+recommended so the two console scripts stay off the system PATH.
+
+If your site blocks PyPI, install the latest source directly:
+
+```powershell
+python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
+```
+
+For a local source checkout:
 
 ```powershell
 python -m pip install -e .
 ```
+
+日本語: 通常は `pip install gx3-cli-mcp` だけで CLI と MCP サーバーの両方が
+入ります。社内プロキシで PyPI に到達できない場合のみ、上の git 直接指定を
+使ってください。
 
 ## First Analysis
 
@@ -158,9 +171,31 @@ MCP configuration examples:
 - [MCP client config](docs/mcp_client_config.json): robust `python -m gx3cli.gx3_mcp_server` launch.
 - [MCP client config, console script](docs/mcp_client_config_console_script.json): direct `gx3-mcp-server` launch when PATH is reliable.
 
-Distribution terms are defined in [LICENSE.txt](LICENSE.txt).
+## License In Plain Words
+
+Full terms are in [LICENSE.txt](LICENSE.txt); this section is only a summary and
+the license text governs.
+
+This is **source-available proprietary software**, not open source. In practice:
+
+- You **may** clone it, read the source, and run it for evaluation and for
+  internal analysis work, including inside a company.
+- You **may not** redistribute it, host it as a service, resell it, or ship it
+  as part of a paid product or commercial service without written permission.
+- There is **no license token, activation, or paid plan** to run it.
+- It is provided as is, with no warranty, and its output is advisory only.
+
+日本語: 社内での評価・業務利用は許諾されています。禁止しているのは再配布、
+SaaS としての提供、有償製品やサービスへの組み込みです。実行にライセンス
+キーや課金は不要です。商用利用の相談は Issue からご連絡ください。
 
 ## For Contributors
+
+Bug reports, questions, and small pull requests are welcome, in Japanese or
+English. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which covers the
+no-project-data rule, the development setup, and what a useful bug report
+contains. Issues labeled `good first issue` are scoped to be approachable
+without deep knowledge of the GX Works3 file format.
 
 Before changing or publishing this project, run the same checks used by CI:
 
