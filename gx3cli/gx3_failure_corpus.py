@@ -66,7 +66,7 @@ def write_manifest(corpus: Path, manifest: dict[str, object]) -> None:
 
 def display_path(path: Path, base: Path) -> str:
     try:
-        return str(path.relative_to(base))
+        return path.relative_to(base).as_posix()
     except ValueError:
         return str(path)
 
