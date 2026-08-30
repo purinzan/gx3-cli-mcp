@@ -14,6 +14,10 @@ Use repo skills when the task matches them:
 Before finishing code changes, run `python run_tests.py` from the repository
 root and report any remaining failures.
 
+Before preparing a pull request or changing source code for an external
+contributor workflow, read `CONTRIBUTING.md` and follow its Windows-first PR and
+data-safety rules.
+
 When source code is the problem, do not stop at a workaround. Reproduce the
 failure, capture a `.gx3` case with `failure-corpus` when applicable, make a
 focused code fix, run the checks, and prepare a pull request. Keep Windows CLI
