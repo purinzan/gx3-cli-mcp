@@ -22,6 +22,7 @@
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
 | `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
+| `llms.txt` | AI 向けの短い要約。何をする/しないツールかと、主要ドキュメントへのリンクを機械可読な形で置く。 |
 | `.gitignore` | キャッシュ、解析結果、GX3/GTX/DB/文書データ、desktop shell 生成物を除外する。 |
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
