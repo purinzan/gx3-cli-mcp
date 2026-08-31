@@ -5,16 +5,48 @@
 [![CI](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
 
-Local GX Works3 project analysis for engineers and AI agents.
+**Work out why a coil never turns on, without opening GX Works3.**
 
-`gx3-cli-mcp` provides a Windows-first CLI and stdio MCP server for inspecting
-GX Works3 (`.gx3`) projects on your own machine. It helps you search devices,
-comments, cross references, ladder conditions, communication boundaries, and
-static review signals without modifying the source project.
+`gx3-cli-mcp` reads a GX Works3 (`.gx3`) project on your own machine and
+answers questions about it: where a device is written, what has to be true for
+a coil to turn on, which conditions come from outside the PLC, and which
+branches can never be true at all. It is read-only and never writes back to the
+project.
 
-日本語: GX Works3 (`.gx3`) プロジェクトをローカルで読み取り解析し、AI
-エージェントからも使える CLI / MCP サーバーです。プロジェクトを書き換えず、
-デバイス、コメント、xref、ラダー根拠、通信境界を確認するための道具です。
+It is a CLI, and it is also a stdio MCP server, so an AI agent can answer from
+the same indexed facts instead of guessing at a binary file.
+
+That matters for three reasons:
+
+- **A GX Works3 licence is not on everyone's desk.** Maintenance, production
+  engineering, quality and upstream software all end up asking whoever has one.
+- **Following a coil upstream is where people lose the thread**, usually about
+  three cross-reference hops in. A machine does not lose the thread.
+- **You should not need to know the device number.** Search the comment you
+  actually remember, and every answer comes back with its comment attached.
+
+日本語: GX Works3 を開かずに、「このコイルがなぜ ON にならないか」を追える
+CLI / MCP サーバーです。読み取り専用で、元のプロジェクトファイルは書き換え
+ません。ライセンスが手元に無い人でも調べられること、デバイス番号を知らなくても
+コメントから引けることを狙っています。
+
+**紹介記事: [GX Works3 を開かずにラダーを追えるようにした](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp)**
+— 何ができるかは、実際の出力つきでこちらにまとめています。
+
+## Try It Without a Real Project
+
+You do not need a `.gx3` you are allowed to share. Generate a synthetic one:
+
+```powershell
+python -m pip install gx3-cli-mcp
+gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite
+gx3-cli index-lite build --root line.gx3
+gx3-cli xref build --root line.gx3
+gx3-cli trace-device M2313 --root line.gx3 --strict-logic --compact
+```
+
+That builds a fictional 14-station transfer line — about 500 rungs across 10
+programs — and traces one step back through every station upstream of it.
 
 This is an unofficial, independent tool. It is not endorsed by Mitsubishi
 Electric.
@@ -143,7 +175,11 @@ runner. Synthetic demo generation is local CLI-only.
 
 ## Demo Project
 
-Use a synthetic project for screenshots, tutorials, and first-time tests.
+Two synthetic profiles, neither of which contains anything real. See
+[Try It Without a Real Project](#try-it-without-a-real-project) for the quick
+start.
+
+`basic` (the default) is three rungs — enough to check that a command runs:
 
 ```powershell
 gx3-cli synthetic-project demo.gx3 --overwrite
@@ -151,15 +187,14 @@ gx3-cli doctor --root demo.gx3
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
 
-For a project with enough in it to be worth exploring, use the `demo-line`
-profile: a 14-station pick-and-place line, about 500 rungs across 10 programs
-with roughly 500 commented devices, chained so that tracing an output on the
-last station walks back through every station upstream.
+`demo-line` is a 14-station pick-and-place line: about 500 rungs across 10
+programs with roughly 500 commented devices, chained so that tracing an output
+on the last station walks back through every station upstream. Use this one for
+demos, for screenshots, and for reproducing a bug without sending anyone a real
+project.
 
 ```powershell
 gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite
-gx3-cli index-lite build --root line.gx3
-gx3-cli xref build --root line.gx3
 gx3-cli lint line.gx3
 gx3-cli dead-logic --root line.gx3
 ```
