@@ -25,10 +25,12 @@ That matters for three reasons:
 - **You should not need to know the device number.** Search the comment you
   actually remember, and every answer comes back with its comment attached.
 
-日本語: GX Works3 を開かずに、「このコイルがなぜ ON にならないか」を追える
-CLI / MCP サーバーです。読み取り専用で、元のプロジェクトファイルは書き換え
-ません。ライセンスが手元に無い人でも調べられること、デバイス番号を知らなくても
-コメントから引けることを狙っています。
+日本語: 三菱電機の MELSEC シーケンサ（PLC）のプロジェクトファイル `.gx3` を、
+GX Works3 を開かずに解析する CLI / MCP サーバーです。「このコイルがなぜ ON に
+ならないか」をラダーから追い、クロスリファレンスを何度も開く代わりに一度で
+答えます。読み取り専用で、元のプロジェクトファイルは書き換えません。
+ライセンスが手元に無い人でも調べられること、デバイス番号を知らなくても
+デバイスコメントから引けることを狙っています。
 
 **紹介記事: [GX Works3 を開かずにラダーを追えるようにした](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp)**
 — 何ができるかは、実際の出力つきでこちらにまとめています。
@@ -50,6 +52,63 @@ programs — and traces one step back through every station upstream of it.
 
 This is an unofficial, independent tool. It is not endorsed by Mitsubishi
 Electric.
+
+## Questions This Answers
+
+日本語の質問例も併記しています。CLI でも、MCP 経由で AI エージェントに聞く場合でも同じです。
+
+**Where is this device written, and where is it read?**
+このデバイスはどこで書かれて、どこで読まれているのか
+
+```powershell
+gx3-cli xref where-used M2313 --root project.gx3
+```
+
+**Why does this coil never turn on?**
+なぜこのコイルが ON にならないのか / 起動条件は何か
+
+```powershell
+gx3-cli trace-device M2313 --root project.gx3 --strict-logic --compact
+```
+
+**Which conditions come from outside the PLC?**
+どの条件が外部入力・HMI・通信から来ているのか（＝ラダーではなく盤を見るべきか）
+
+`trace-device` の出力に `External/HMI/communication boundaries` として出ます。
+
+**I only remember what the device is called, not its number.**
+デバイス番号は覚えていないが、コメントの文言なら分かる
+
+```powershell
+gx3-cli query-comment "クランプ確認" --root project.gx3
+```
+
+**Is anything in this project dead or contradictory?**
+二重コイル、リセットの無いラッチ、成立しない条件、矛盾したコメントはないか
+
+```powershell
+gx3-cli lint project.gx3
+gx3-cli dead-logic --root project.gx3
+```
+
+**Can an AI agent answer these instead of me typing commands?**
+コマンドを覚えずに、Claude や Cursor から日本語で聞けるか
+
+Yes — that is what the MCP server is for. See [Use With MCP](#use-with-mcp).
+`gx3-mcp-server` を Claude Desktop / Claude Code / Cursor などの MCP クライアント
+に登録すると、エージェントが上記の解析を呼び出して、根拠つきで答えます。
+
+## Scope
+
+- **Supported:** MELSEC iQ-R / iQ-F series projects saved as `.gx3` by
+  GX Works3. 三菱電機の MELSEC シーケンサ、GX Works3 の `.gx3` 形式。
+- **Not supported:** GX Works2 (`.gxw`), GX Developer (`.gpj`), and `.gx3`
+  files saved with the compressed/lightweight option, which are password
+  protected and cannot be extracted. 軽量保存された `.gx3` は展開できません。
+- **Not a substitute** for GX Works3, for PLC validation, or for your own
+  safety and quality review. Output is advisory.
+
+Verified coverage is listed in [docs/VALIDATION_MATRIX.md](docs/VALIDATION_MATRIX.md).
 
 ## What You Can Do
 
@@ -224,6 +283,9 @@ Recommended reading:
 3. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
 4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
 5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
+
+[llms.txt](llms.txt) is a short machine-readable summary of what this project is
+and is not, for tools that index repositories for AI assistants.
 
 MCP configuration examples:
 
