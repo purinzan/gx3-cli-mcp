@@ -19,6 +19,7 @@
 - Not a validation, certification or safety tool. Its output is advisory and must be confirmed in GX Works3 and through the operator's own safety and quality process.
 - Not able to modify a PLC project. Project-mutating commands are not exposed at all through MCP.
 - Not able to read GX Works2 (`.gxw`), GX Developer (`.gpj`), or `.gx3` files saved with the lightweight/compressed option (those are password protected).
+- Not a reverse engineering of Mitsubishi Electric software. It reads a `.gx3` data file the user already holds, using only Python's standard `zipfile` and `sqlite3`. It does not decompile, disassemble or modify GX Works3, bundles or redistributes no Mitsubishi Electric code, and contains no code to decrypt password-protected (lightweight-saved) `.gx3` files — that format is unsupported by choice. GX Works3 and MELSEC are trademarks of Mitsubishi Electric.
 
 ## Key facts
 

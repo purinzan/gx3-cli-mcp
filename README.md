@@ -112,6 +112,59 @@ Yes — that is what the MCP server is for. See [Use With MCP](#use-with-mcp).
 
 Verified coverage is listed in [docs/VALIDATION_MATRIX.md](docs/VALIDATION_MATRIX.md).
 
+## How This Reads `.gx3`, And What It Does Not Do
+
+This project is unofficial and independent. It is not affiliated with, endorsed
+by, or supported by Mitsubishi Electric. `GX Works3` and `MELSEC` are their
+trademarks, used here only to say what this tool reads.
+
+What it does:
+
+- It opens a `.gx3` **data file that the user already has on their own machine**
+  and reads the SQLite databases and text inside it. The format was worked out
+  by looking at project files the author is authorised to work with.
+- It uses only the Python standard library — `zipfile` and `sqlite3`. The
+  project has **no third-party dependencies** and bundles, links against, or
+  redistributes **no Mitsubishi Electric code, libraries, or assets** of any kind.
+
+What it does not do:
+
+- It does **not** decompile, disassemble, patch, instrument, or otherwise
+  analyse GX Works3 or any other Mitsubishi Electric software. It never runs
+  their software and never touches its binaries.
+- It does **not** remove, defeat, or work around any access control. A `.gx3`
+  saved with the compressed/lightweight option is password protected, and this
+  project contains **no code to decrypt one and will not gain any** — that
+  format is listed as unsupported in [Scope](#scope) and stays that way by
+  choice, not by oversight.
+- It does **not** modify the project. The archive is extracted to a local cache
+  and only that copy is read; the original file is never written back to.
+- It does **not** communicate with a PLC, a network, or any remote service.
+- It does **not** reproduce Mitsubishi Electric's software, documentation, or
+  file format specification. It reads a customer's own data.
+
+Using this tool does not change the agreements you have with Mitsubishi
+Electric. Complying with the terms of your GX Works3 licence, and with your
+employer's and customers' rules about project data, remains yours.
+
+If Mitsubishi Electric has a concern about this project, please open an issue
+or contact the author through GitHub; it will be addressed.
+
+日本語: 本プロジェクトは非公式・独立のもので、三菱電機とは無関係です。読むのは
+**利用者が自分の手元に持っているデータファイル**（`.gx3`）だけで、形式は作者が
+業務上アクセスできるプロジェクトファイルを観察して把握しました。GX Works3 を
+はじめとする三菱電機のソフトウェアを逆アセンブル・デコンパイル・改変することは
+一切していません。三菱電機のコードやライブラリを同梱・参照・再配布もしていません
+（依存パッケージはゼロで、Python 標準ライブラリのみを使います）。
+
+**保護の解除も行いません。** 軽量保存された `.gx3` はパスワード保護されており、
+本プロジェクトには復号のためのコードが存在しません。今後も実装しません。これは
+実装漏れではなく方針です。
+
+GX Works3 のライセンス条項や、勤務先・顧客のプロジェクトデータの取り扱い規則を
+守る責任は利用者にあります。三菱電機の方でご懸念があれば、Issue または GitHub
+経由でご連絡ください。対応します。
+
 ## What You Can Do
 
 - Find where a device is used and whether it is read, written, or referenced.
