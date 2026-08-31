@@ -82,6 +82,38 @@ knowledge of the GX Works3 file format. Output formatting, documentation, and
 comment-keyword work are good entry points; the ladder parser and xref builder
 are the parts that need the most context.
 
+## Releasing
+
+Two steps, in this order.
+
+1. Bump `version` in `pyproject.toml` and the two `version` fields in
+   `server.json` to the same value, then tag it. Pushing a `v*` tag builds and
+   publishes to PyPI through Trusted Publishing; the workflow fails if the tag
+   and the packaged version disagree.
+
+   ```powershell
+   git tag v0.1.3
+   git push origin v0.1.3
+   ```
+
+2. Once the release is live on PyPI, publish the same version to the official
+   MCP registry. The registry verifies PyPI ownership by looking for the
+   `mcp-name: io.github.purinzan/gx3-cli-mcp` comment at the top of this
+   repository's README, which is what PyPI shows as the package description --
+   so step 1 has to land first.
+
+   ```powershell
+   mcp-publisher login github
+   mcp-publisher publish
+   ```
+
+   `mcp-publisher login` opens a browser for GitHub authentication, so it has
+   to be run by a person.
+
+PyPI never reuses a version number. If a tag is pushed before the version is
+bumped, the workflow stops before publishing -- bump and use the next number
+rather than retrying the same one.
+
 ## Reporting Bugs
 
 A useful report includes:
