@@ -43,16 +43,27 @@ GitHub repo search `"GX Works3"` で確認できた主な19件:
 | Repo | 種別 | 使える観点 |
 |---|---|---|
 | `den-aliev/fx5_mbtcpserver` | FX5 Modbus TCP server `.gx3` | 通信FB/サーバ実装サンプル、iQ-F検体 |
+| `unsalsoftwareentwickler/factoryio-example` | Factory I/O + MX OPC + GX Works3 | `mxopc_tags.csv` と `.gx3` の対応、仮想設備セットアップ |
+| `Lworakan/SCARA-Plotter-3DOF-FX5U-PLC` | FX5Uロボット/軌跡制御 `.gx3` | CSV軌跡、Python MC Protocol、ラダーの役割分担 |
+| `Bomoursenfant/Mitsubishi-PLC-and-HMI-for-Control-Systems` | FX + GOT + inverter `.gx3/.GTX` | Modbus RTU、HMI/PLCペア、駆動系安全説明 |
 | `YudaiKitamura/mcpx-mcp-server` | MC Protocol MCP | address-comment辞書、自然言語名でのdevice操作 |
 | `fa-yoshinobu/node-red-contrib-plc-comm-slmp` | Node-RED SLMP | PLC profile、要求直列化、read/write safety flow |
+| `fa-yoshinobu/factoryio-slmp-hostlink-gateway` | Factory I/O gateway | tag CSV import、bulk address assignment、auto reconnect |
 | `Moge800/gomcprotocol` | Go MC Protocol | 3E/4E、random read/write、remote control、goroutine-safe直列化 |
 | `plcpeople/mcprotocol` | Node MC Protocol | シンプルなSLMPクライアントAPI |
+| `mokouliszt/psLMP` | PowerShell SLMP client | Windows標準寄り、GX Simulator3/実機read-write、単一ファイル配布 |
 | `ChrisPulman/MitsubishiRx` | C# MC Protocol/SLMP | tag database、typed client、reactive polling、diff/rollout policy |
+| `cmariusz/MelsecAI.VSExt` | VS Code + GX Works3 Open I/F | PLCopen XML import/export、GXW3OpenIF検出、AI agent向けworkspace |
 | `radevgit/plc` | L5X/PLCopen/ST解析 | code smell、SVG graph、IEC ST parser、typed generated model |
 | `suifei/plcopen-go` | PLCopen XML Go | XSD由来の完全構造体、XML/JSON roundtrip、schema validation |
 | `RoDoerIng/PlcOpen` / `PyLC` | PLCopen解析実験 | POU/FBDノード抽出の考え方 |
+| `mokouliszt/jiecc-skill` | GX Works3向けIEC 61131-10 XML/ST生成 | 三菱XML方言、ST/FB/FUN中心、LD不可の切り分け |
 | `mokouliszt/iqr_device_validator` | iQ-R device validator | デバイス/定数の構文木、範囲、修飾子制約 |
 | `mokouliszt/iQRSimpCPUCommSkill` | シンプルCPU通信CSV skill | GX Works3互換CSV、roundtrip、通信設定validation |
+| `mokouliszt/iqr-device-skill` | iQ-R device knowledge skill | デバイス仕様の分割、overview/specificationsのskill分担 |
+| `mokouliszt/iec61131-3-motioncontrol-skill` | 三菱PLCopen Motion Control skill | 公式FBライブラリを使うST設計、状態遷移の知識化 |
+| `Gunio2322/FX5U-Dashboard` / `Gunio2322/PLC-dashboard` | FX5U Web dashboard | MC Protocol/Modbusの現場設定docs、UIとアドレス表 |
+| `johannesPettersson80/trust-platform` | ST runtime/toolchain | ST LSP、テスト、HMI preview、live schema/value更新 |
 
 三菱公式サンプル:
 
@@ -96,6 +107,7 @@ GitHub repo search `"GX Works3"` で確認できた主な19件:
 - `RandomRead` 相当で、ラダーに出てくるデバイスをまとめて読む `live-snapshot` を追加する。
 - GX3コメントから `address-comment.json` / `device-dictionary.json` を出し、外部MCP/OPC/SLMPツールと接続しやすくする。
 - PLC profileを `iq-r`, `iq-f/fx5`, `q/l` で明示し、X/Yの基数や対応deviceをprofileで分ける。
+- Windows現場ではPowerShell単一ファイルやNode-RED/Factory I/O gatewayのような「まず接続確認できる薄い道具」が効く。`live-read --dry-run` や `live-read --explain-frame` を追加すると導入時の不安が下がる。
 
 ### 4. タグ辞書/デバイス検証
 
@@ -127,6 +139,16 @@ GitHub repo search `"GX Works3"` で確認できた主な19件:
 - `graph` を `structure`, `call`, `dataflow`, `combined` に分ける。
 - `lint` を code smell として再整理し、rule id / severity / evidence / citation を標準化する。
 - PLCopen XML export/importが手に入る環境では、GX3静的解析結果とPLCopen XMLを突き合わせる検証モードを作る。
+
+### 7. GX Works3 Open I/F / IEC XML
+
+`MelsecAI.VSExt` と `jiecc-skill` は、GX Works3 Open I/F とIEC 61131-10 XMLの方向。`.gx3` の内部DBを直接読む本プロジェクトとは入口が違うが、Windows環境では強い補助線になる。
+
+取り込み候補:
+
+- `gx3-cli` 側ではOpen I/F DLLを同梱しない。ただし、Open I/FでexportしたPLCopen XMLを入力にできる `plcopen-import` は検討価値が高い。
+- `doctor` に「GX Works3でPLCopen XMLをexportできるなら、それを添えると解析精度が上がる」という案内を追加する。
+- LD/FBD/SFCのGX Works3 XML import/export可否は言語ごとに違うため、生成系はST/FB/FUNを中心に扱う。
 
 ## 設計軸レビュー
 
@@ -188,15 +210,18 @@ Windows基本、Macも可能、という方針なら外部依存は明示パス�
 6. PLC profile  
    `--plc-profile iq-r|iq-f|q|l` でX/Y基数、対応device、SLMP制約を変える。
 
+7. `live-read --dry-run` / `--explain-frame`  
+   実PLCに触る前に、どのSLMP frameを送るか、どのdevice codeになるかを確認できるようにする。
+
 ### P2: 将来価値が大きい
 
-7. PLCopen/GX3 IR bridge  
+8. PLCopen/GX3 IR bridge  
    GX Works3 Open I/Fや手動exportで得たPLCopen XMLと、GX3内部DB解析を突き合わせる。
 
-8. Web/SVG viewer  
+9. Web/SVG viewer  
    CLIからHTML/SVGを吐き、rung citation + live値 + xrefを視覚化する。
 
-9. Windows bridge別プロセス  
+10. Windows bridge別プロセス  
    GX Works3操作やcompile確認をやるなら、read-only静的解析とは別MCPに分ける。
 
 ## 見送るもの
@@ -211,4 +236,3 @@ Windows基本、Macも可能、という方針なら外部依存は明示パス�
 - 改造レビューには、`lint rule id + evidence + graph` が効く。
 - 他ツール連携には、`device-dictionary.json` が効く。
 - Windows現場導入には、`doctor` が依存関係と入力形式をはっきり出すことが効く。
-
