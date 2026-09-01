@@ -31,6 +31,8 @@
 | `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
+| `parser-gap.yml` | 解析に失敗したときの issue フォーム。実データを貼らせないための注意と確認チェックを先頭に置いている。失敗時のエラーメッセージからこのフォームへ直接リンクする。 |
+| `config.yml` | issue 作成画面の導線。バグ以外は Discussions、初見の人は紹介記事へ送る。 |
 | `release.yml` | GitHub Actions。`v*` タグで wheel と sdist を build し、release gate と tag/version 一致確認を通してから Trusted Publishing で PyPI へ公開する。 |
 
 ## docs

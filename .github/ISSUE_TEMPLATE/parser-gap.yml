@@ -1,0 +1,94 @@
+name: 読めなかった / エラーが出た (Parser gap or error)
+description: 実プロジェクトで解析に失敗したときはこちら。日本語で構いません。
+title: "[parser] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。**パーサの穴は報告でしか直りません。**
+
+        > ⚠️ **実プロジェクトのデータを貼らないでください。**
+        > ラダーの中身、デバイスコメント、設備名・会社名、IP アドレスは書かないでください。
+        > `gx3-cli support-bundle` が作る ZIP は、それらを取り除いた状態で作られます。
+        > 貼るならそちらを添付してください。
+
+  - type: textarea
+    id: command
+    attributes:
+      label: 実行したコマンド
+      description: そのまま貼ってください（パスは伏せて構いません）
+      render: shell
+      placeholder: gx3-cli doctor --root project.gx3
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: エラー出力
+      description: 全文を貼ってください。途中で切らない方が原因が分かります
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: バージョン
+      description: "`gx3-cli --version` と `python --version` の出力"
+      placeholder: gx3-cli 0.1.3 / Python 3.12.4
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS と GX Works3 のバージョン
+      placeholder: Windows 11 / GX Works3 1.100E
+    validations:
+      required: true
+
+  - type: dropdown
+    id: synthetic
+    attributes:
+      label: 合成プロジェクトでも再現しますか？
+      description: |
+        `gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite` で
+        架空のプロジェクトを作り、同じコマンドを試してください。
+        再現するなら手元で直せます。再現しないなら、実プロジェクト固有の構成が原因です。
+      options:
+        - まだ試していない
+        - 合成プロジェクトでも再現する
+        - 合成プロジェクトでは再現しない（実プロジェクトのみ）
+    validations:
+      required: true
+
+  - type: textarea
+    id: project_shape
+    attributes:
+      label: プロジェクトの構成（分かる範囲で）
+      description: |
+        データそのものではなく「形」を教えてください。
+        例: プログラム数、おおよそのラング数、FB/構造化ラダー/ST の有無、
+        機種（iQ-R / iQ-F / Q）、軽量保存の有無、ラベルの使用有無。
+      placeholder: |
+        プログラム 12 個、ラダーは全部で 8000 行くらい
+        FB を多用、一部 ST
+        iQ-R、軽量保存はしていない
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: サポートバンドル
+      description: |
+        `gx3-cli support-bundle --root <project>` で作った ZIP をここにドラッグしてください。
+        ラダー本体とデバイスコメントは含まれません。任意ですが、あると解決がかなり早くなります。
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 確認
+      options:
+        - label: 実プロジェクトのデータ・設備名・アドレスを含めていないことを確認しました
+          required: true

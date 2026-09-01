@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 質問・使い方・要望
+    url: https://github.com/purinzan/gx3-cli-mcp/discussions
+    about: バグ報告以外はこちらへどうぞ。日本語で構いません。
+  - name: はじめての方へ
+    url: https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp
+    about: 何ができるかは紹介記事にまとめてあります。
