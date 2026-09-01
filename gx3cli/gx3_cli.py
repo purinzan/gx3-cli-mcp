@@ -34,35 +34,46 @@ PACKAGE_PARENT = BASE_DIR.parent
 class CommandSpec:
     script: str
     summary: str
+    category: str = "Other"
+
+
+COMMAND_CATEGORIES = [
+    ("Getting Started", "First commands to confirm a project and create reusable evidence."),
+    ("Search", "Look up devices, comments, external boundaries, and device ranges."),
+    ("Analysis", "Trace logic, xref, graphs, timing, safety, and static risks."),
+    ("Reports", "Produce review, survey, support, and AI handoff artifacts."),
+    ("Diagnostics", "Inspect formats, parser coverage, versions, and failure cases."),
+    ("Utilities", "Lower-level probes and conversion helpers."),
+]
 
 
 COMMANDS: dict[str, CommandSpec] = {
-    "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports"),
-    "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device"),
-    "dependency-flow": CommandSpec("gx3_dependency_flow.py", "render upstream coil dependencies as a Mermaid flow graph"),
-    "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs"),
-    "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams"),
-    "ladder-print": CommandSpec("gx3_ladder_print.py", "render a whole program in GX Works3 print-text layout (matches GX print output)"),
-    "matiec-st": CommandSpec("gx3_matiec_export.py", "export target device enable logic as MATIEC Structured Text"),
-    "project-survey": CommandSpec("gx3_project_survey.py", "generate ordered project survey package"),
-    "external-inputs": CommandSpec("gx3_external_inputs.py", "extract external/terminal contact inputs and trace boundaries"),
+    "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports", "Reports"),
+    "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device", "Analysis"),
+    "dependency-flow": CommandSpec("gx3_dependency_flow.py", "render upstream coil dependencies as a Mermaid flow graph", "Analysis"),
+    "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs", "Analysis"),
+    "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams", "Analysis"),
+    "ladder-print": CommandSpec("gx3_ladder_print.py", "render a whole program in GX Works3 print-text layout (matches GX print output)", "Analysis"),
+    "matiec-st": CommandSpec("gx3_matiec_export.py", "export target device enable logic as MATIEC Structured Text", "Utilities"),
+    "project-survey": CommandSpec("gx3_project_survey.py", "generate ordered project survey package", "Reports"),
+    "external-inputs": CommandSpec("gx3_external_inputs.py", "extract external/terminal contact inputs and trace boundaries", "Analysis"),
     "hmi-build-info": CommandSpec("extract_hmi_build_info.py", "extract I/O, monitor, manual-output, and single-action candidates"),
     "gtx-probe": CommandSpec("gtx_probe.py", "probe GT Designer3 GTX HMI project containers"),
     "comm-refresh": CommandSpec("extract_comm_refresh_areas.py", "extract communication units and refresh areas"),
     "comm-detail": CommandSpec("gx3_comm_detail.py", "extract detailed communication source candidates and AJ65BT-R2N settings"),
     "w3pa-probe": CommandSpec("gx3_w3pa_probe.py", "probe *.w3pa parameter strings, modules, IPs, and device candidates"),
-    "link-map": CommandSpec("gx3_link_map.py", "build/query cross-project communication device links"),
-    "live-read": CommandSpec("gx3_live_read.py", "read current PLC device values over MC Protocol/SLMP 3E binary"),
-    "device-dictionary": CommandSpec("gx3_device_dictionary.py", "export GX3 comments and xref usage as a device dictionary"),
+    "link-map": CommandSpec("gx3_link_map.py", "build/query cross-project communication device links", "Analysis"),
+    "live-read": CommandSpec("gx3_live_read.py", "read current PLC device values over MC Protocol/SLMP 3E binary", "Analysis"),
+    "device-dictionary": CommandSpec("gx3_device_dictionary.py", "export GX3 comments and xref usage as a device dictionary", "Reports"),
     "used-devices": CommandSpec("extract_used_devices_without_comments.py", "extract used devices without comments"),
     "extended-instructions": CommandSpec("extract_gx3_extended_instruction_knowledge.py", "extract instruction/device usage knowledge"),
     "dm-probe": CommandSpec("gx3_dm_probe.py", "decode *_DM.db device-memory initial/retained values"),
     "label-probe": CommandSpec("gx3_label_probe.py", "extract LabelData/SourceInfo labels, comments, arrays, and device assignments"),
     "mildb-probe": CommandSpec("gx3_mildb_probe.py", "extract *_MilDB.db rows and MIL device references"),
     "parse-gaps": CommandSpec("analyze_gx3_intermediate_parse_gaps.py", "summarize intermediate parse gaps"),
-    "index-lite": CommandSpec("gx3_index_lite.py", "build/query lightweight SQLite index"),
-    "lint": CommandSpec("gx3_lint.py", "static lint checks: coils, writers, alarms, unused/comment issues, links, math/type"),
-    "xref": CommandSpec("gx3_xref.py", "full read/write cross-reference: build/where-used/downstream/export"),
+    "index-lite": CommandSpec("gx3_index_lite.py", "build/query lightweight SQLite index", "Getting Started"),
+    "lint": CommandSpec("gx3_lint.py", "static lint checks: coils, writers, alarms, unused/comment issues, links, math/type", "Analysis"),
+    "xref": CommandSpec("gx3_xref.py", "full read/write cross-reference: build/where-used/downstream/export", "Getting Started"),
     "alarm-map": CommandSpec("gx3_alarm_map.py", "alarm/fault inventory with trigger, hold, and reset conditions"),
     "exec-config": CommandSpec("gx3_exec_config.py", "program execution order, POU groups, and unit configuration"),
     "motion-rd77": CommandSpec("gx3_motion_rd77.py", "RD77 simple-motion buffer access map with official G labels"),
@@ -74,14 +85,14 @@ COMMANDS: dict[str, CommandSpec] = {
     "program-map": CommandSpec("gx3_program_map.py", "LDDB -> POU name / program file / step mapping"),
     "timing-chart": CommandSpec("gx3_timing_chart.py", "generate generic handoff timing drafts from link-map and xref DBs"),
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates"),
-    "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness"),
-    "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data"),
-    "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures"),
-    "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos"),
-    "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report"),
-    "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic"),
-    "ai-context": CommandSpec("gx3_ai_context.py", "bundle compact evidence for GPT review or handoff"),
-    "evidence-bundle": CommandSpec("gx3_ai_context.py", "alias of ai-context"),
+    "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness", "Getting Started"),
+    "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data", "Reports"),
+    "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures", "Diagnostics"),
+    "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos", "Getting Started"),
+    "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report", "Reports"),
+    "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic", "Reports"),
+    "ai-context": CommandSpec("gx3_ai_context.py", "bundle compact evidence for GPT review or handoff", "Reports"),
+    "evidence-bundle": CommandSpec("gx3_ai_context.py", "alias of ai-context", "Reports"),
     "tools": CommandSpec("gx3_tools.py", "extra GX3 inspection utilities"),
     "inspect": CommandSpec("gx3_tools.py", "classify readable/editable project files"),
     "sourceinfo": CommandSpec("gx3_tools.py", "dump SourceInfo.CAB entries"),
@@ -317,9 +328,20 @@ def print_help() -> None:
                 "  gx3-cli context",
                 "  gx3-cli quick-device DEVICE [extra trace args...]",
                 "  gx3-cli <command> [command args...]",
+                "  gx3-cli --no-color <command> [command args...]",
                 "  gx3-cli all-reports [--root ROOT] [--prefix PREFIX]",
                 "  gx3-cli doctor --root ROOT",
                 "  gx3-cli ai-context DEVICE --root ROOT --question \"...\"",
+                "",
+                "Global options:",
+                "  --no-color     disable ANSI color output; NO_COLOR is also honored",
+                "",
+                "Command groups:",
+                "  Getting Started: doctor, index-lite, xref, synthetic-project",
+                "  Search: query-device, query-comment, query-external, query-cycle, device-map",
+                "  Analysis: trace-device, ladder-print, graph, lint, live-read, interlock-check",
+                "  Reports: project-survey, audit, reliability-report, support-bundle, ai-context",
+                "  Diagnostics: inspect, parse-gaps, coverage, failure-corpus, version",
                 "",
                 "Common examples:",
                 "  gx3-cli trace-device <DEVICE> --max-depth 3 --format text -o outputs\\device_trace.txt",
@@ -341,19 +363,42 @@ def print_help() -> None:
 def list_commands() -> None:
     width = max(len(name) for name in [*COMMANDS, "all-reports"])
     print("Available commands:")
-    for name, spec in sorted(COMMANDS.items()):
-        print(f"  {name:<{width}}  {spec.summary}")
-    print(f"  {'all-reports':<{width}}  run the main read-only report generators in sequence")
-    print(f"  {'context':<{width}}  print compact analysis entry points and ignore rules")
-    print(f"  {'quick-device':<{width}}  compact strict trace for one device")
-    print(f"  {'query-device':<{width}}  query one device from the lightweight SQLite index")
-    print(f"  {'query-comment':<{width}}  search comments from the lightweight SQLite index")
-    print(f"  {'query-external':<{width}}  query external/HMI/communication boundary devices")
-    print(f"  {'query-cycle':<{width}}  list cycle/step coils from the lightweight SQLite index")
-    print(f"  {'device-map':<{width}}  device-type usage ranges, density, and free gaps from the SQLite index")
+    extra = {
+        "all-reports": CommandSpec("", "run the main read-only report generators in sequence", "Reports"),
+        "context": CommandSpec("", "print compact analysis entry points and ignore rules", "Getting Started"),
+        "quick-device": CommandSpec("", "compact strict trace for one device", "Analysis"),
+        "query-device": CommandSpec("", "query one device from the lightweight SQLite index", "Search"),
+        "query-comment": CommandSpec("", "search comments from the lightweight SQLite index", "Search"),
+        "query-external": CommandSpec("", "query external/HMI/communication boundary devices", "Search"),
+        "query-cycle": CommandSpec("", "list cycle/step coils from the lightweight SQLite index", "Search"),
+        "device-map": CommandSpec("", "device-type usage ranges, density, and free gaps from the SQLite index", "Search"),
+    }
+    all_specs = {**COMMANDS, **extra}
+    for category, description in COMMAND_CATEGORIES:
+        names = sorted(name for name, spec in all_specs.items() if spec.category == category)
+        if not names:
+            continue
+        print("")
+        print(f"{category}: {description}")
+        for name in names:
+            print(f"  {name:<{width}}  {all_specs[name].summary}")
+    other = sorted(name for name, spec in all_specs.items() if spec.category not in {c[0] for c in COMMAND_CATEGORIES})
+    if other:
+        print("")
+        print("Other: Lower-level commands kept for compatibility.")
+        for name in other:
+            print(f"  {name:<{width}}  {all_specs[name].summary}")
     print("")
     print("Pass command arguments after the command name. Example:")
     print("  gx3-cli trace-device <DEVICE> --max-depth 3")
+
+
+def strip_global_flags(argv: list[str]) -> list[str]:
+    return [arg for arg in argv if arg != "--no-color"]
+
+
+def color_enabled(no_color: bool = False) -> bool:
+    return not no_color and "NO_COLOR" not in os.environ and bool(getattr(sys.stdout, "isatty", lambda: False)())
 
 
 def latest_survey_index(output_dir: Path) -> Path:
@@ -484,6 +529,8 @@ def run_index_query(subcommand: str, argv: list[str]) -> int:
         argv = [*argv_without_db, "--db", db]
     elif root:
         argv = [*argv_without_db, "--db", index_db_for_root(root)]
+    if root:
+        argv = [*argv, "--root", root]
     return run_python_script(COMMANDS["index-lite"].script, [subcommand, *argv])
 
 
@@ -626,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = list(sys.argv[1:] if argv is None else argv)
+    no_color = "--no-color" in args
+    color_enabled(no_color)
+    args = strip_global_flags(args)
     if args and args[0] in {"--version", "-V"}:
         print(version_line("gx3-cli"))
         return 0

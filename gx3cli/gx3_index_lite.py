@@ -18,6 +18,15 @@ from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root
 DEVICE_RE = re.compile(r"^([A-Z]+)(-?\d+)$", re.IGNORECASE)
 DRIVER_ROLES = {"c", "SET", "RST", "PLS", "PLF", "OUT__16", "OUTH__16"}
 CONDITION_ROLES = {"a", "b"}
+SYNONYM_GROUPS = [
+    ("異常", "故障", "アラーム", "警報", "トラブル", "alarm", "fault", "error"),
+    ("自動", "オート", "AUTO", "auto", "automatic"),
+    ("手動", "マニュアル", "MANUAL", "manual"),
+    ("起動", "始動", "スタート", "START", "start"),
+    ("停止", "ストップ", "STOP", "stop"),
+    ("完了", "終了", "COMPLETE", "complete", "done"),
+    ("確認", "チェック", "OK", "check", "confirm"),
+]
 
 
 def clean_cell(value: object) -> str:
@@ -382,24 +391,42 @@ def print_rows(rows: list[sqlite3.Row], columns: list[str]) -> None:
         print("  ".join(clean_cell(row[col]).ljust(widths[col]) for col in columns))
 
 
+def row_dict(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    if isinstance(row, sqlite3.Row):
+        return {key: row[key] for key in row.keys()}
+    return dict(row)
+
+
+def print_json(command: str, root: str | None, results: list[sqlite3.Row | dict[str, object]]) -> None:
+    payload = {
+        "command": command,
+        "root": root or "",
+        "results": [row_dict(row) for row in results],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def expanded_terms(text: str) -> list[str]:
+    terms = {text}
+    folded = text.casefold()
+    for group in SYNONYM_GROUPS:
+        if any(term.casefold() in folded or folded in term.casefold() for term in group):
+            terms.update(group)
+    return sorted(terms)
+
+
 def query_device(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_existing(Path(args.db or default_db_path()))
     rec = con.execute("select * from devices where device=?", (device,)).fetchone()
     if not rec:
-        print(f"device not found: {device}")
+        if args.json:
+            print_json("query-device", args.root, [])
+        else:
+            print(f"device not found: {device}")
+        con.close()
         return 1
-    print(f"{rec['device']} {rec['comment'] or ''}".rstrip())
-    print(f"occurrences={rec['occurrences']} driver_rows={rec['driver_rows']} condition_uses={rec['condition_uses']} roles={rec['roles']}")
     ext = con.execute("select * from external_sources where device=?", (device,)).fetchone()
-    if ext:
-        print(
-            "external: "
-            f"{ext['source_kind']} / {ext['semantic_group']} / {ext['source_detail']} "
-            f"{ext['refresh_device_range'] or ext['source_unit_area']}"
-        )
-    print("")
-    print("Driver rows:")
     rows = con.execute(
         """
         select role, lddb, pos, title, row_conditions
@@ -410,6 +437,48 @@ def query_device(args: argparse.Namespace) -> int:
         """,
         (device, args.limit),
     ).fetchall()
+    if args.json:
+        print_json(
+            "query-device",
+            args.root,
+            [
+                {
+                    "device": rec["device"],
+                    "comment": rec["comment"] or "",
+                    "occurrences": rec["occurrences"],
+                    "driver_rows": rec["driver_rows"],
+                    "condition_uses": rec["condition_uses"],
+                    "roles": rec["roles"],
+                    "external": row_dict(ext) if ext else None,
+                    "drivers": [row_dict(row) for row in rows],
+                    "conditions": [
+                        row_dict(row)
+                        for row in con.execute(
+                            """
+                            select role, lddb, pos, title
+                            from device_usages
+                            where device=? and is_condition=1
+                            order by lddb, pos
+                            limit ?
+                            """,
+                            (device, args.limit),
+                        ).fetchall()
+                    ],
+                }
+            ],
+        )
+        con.close()
+        return 0
+    print(f"{rec['device']} {rec['comment'] or ''}".rstrip())
+    print(f"occurrences={rec['occurrences']} driver_rows={rec['driver_rows']} condition_uses={rec['condition_uses']} roles={rec['roles']}")
+    if ext:
+        print(
+            "external: "
+            f"{ext['source_kind']} / {ext['semantic_group']} / {ext['source_detail']} "
+            f"{ext['refresh_device_range'] or ext['source_unit_area']}"
+        )
+    print("")
+    print("Driver rows:")
     print_rows(rows, ["role", "lddb", "pos", "title", "row_conditions"])
     print("")
     print("Condition uses:")
@@ -430,18 +499,22 @@ def query_device(args: argparse.Namespace) -> int:
 
 def query_comment(args: argparse.Namespace) -> int:
     con = open_existing(Path(args.db or default_db_path()))
-    like = f"%{args.text}%"
+    terms = expanded_terms(args.text) if args.expand_synonyms else [args.text]
+    clauses = " or ".join("comment like ?" for _ in terms)
     rows = con.execute(
-        """
+        f"""
         select device, comment, occurrences, driver_rows, condition_uses
         from devices
-        where comment like ?
+        where {clauses}
         order by occurrences desc
         limit ?
         """,
-        (like, args.limit),
+        (*[f"%{term}%" for term in terms], args.limit),
     ).fetchall()
-    print_rows(rows, ["device", "comment", "occurrences", "driver_rows", "condition_uses"])
+    if args.json:
+        print_json("query-comment", args.root, rows)
+    else:
+        print_rows(rows, ["device", "comment", "occurrences", "driver_rows", "condition_uses"])
     con.close()
     return 0
 
@@ -528,7 +601,10 @@ def query_cycle(args: argparse.Namespace) -> int:
                 "first_title": row["first_title"],
             }
         )
-    print_rows(out_rows, ["device", "kind", "comment", "first_pos", "first_title"])
+    if args.json:
+        print_json("query-cycle", args.root, out_rows)
+    else:
+        print_rows(out_rows, ["device", "kind", "comment", "first_pos", "first_title"])
     con.close()
     return 0
 
@@ -602,13 +678,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("device", help="query one device")
     p.add_argument("device")
     p.add_argument("--db", default=None)
+    p.add_argument("--root", default="")
     p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
     p.set_defaults(func=query_device)
 
     p = sub.add_parser("comment", help="search device comments")
     p.add_argument("text")
     p.add_argument("--db", default=None)
+    p.add_argument("--root", default="")
     p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
+    p.add_argument("--expand-synonyms", action="store_true", help="expand common Japanese/English shop-floor synonyms")
     p.set_defaults(func=query_comment)
 
     p = sub.add_parser("external", help="query external/HMI/communication boundary devices")
@@ -625,6 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--start", default="0", help="start device number")
     p.add_argument("--end", default="999999", help="end device number")
     p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--root", default="")
+    p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
     p.set_defaults(func=query_cycle)
 
     p = sub.add_parser("device-map", help="device-type usage ranges, density, and free gaps")
@@ -641,7 +724,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     return int(args.func(args))
 

@@ -42,6 +42,7 @@
 | ファイル | 役割 |
 |---|---|
 | `USER_MANUAL_JA.md` | 人間向けの基本操作、MCP 設定、主要コマンド。 |
+| `USER_MANUAL_EN.md` | 英語圏利用者向けのインストール、最初の3コマンド、主要ワークフロー。 |
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
@@ -138,6 +139,7 @@
 | ファイル | 検証対象 |
 |---|---|
 | `test_gx3_mcp_server.py` | MCP initialize/tools/list、変更系コマンド拒否。 |
+| `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |
 | `test_gx3_lint.py` | lint rule 群。 |
 | `test_gx3_ladder_logic.py` | ラダー論理生成。 |
 | `test_gx3_ladder_print_filter.py` | ladder-print の section/device filter。 |
