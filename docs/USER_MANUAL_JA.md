@@ -57,6 +57,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | writer/reader と POU/step を見る | `gx3-cli xref where-used M100 --root project.gx3` |
 | コイル成立条件を追う | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
+| 現在値をラダー根拠へ重ねる | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | GX 印刷風のラダー根拠を見る | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
 | 2 つのコイルが同時 ON 可能か静的確認する | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | 静的チェックを走らせる | `gx3-cli lint project.gx3` |
@@ -98,6 +99,15 @@ gx3-cli reliability-report --root project.gx3 -o reliability.md
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
 ```
+
+JSON を保存して `ladder-print` に渡すと、GX 印刷風のラダー根拠に現在値を重ねられます。
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json -o live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
+```
+
+A 接点/B 接点には `live:ON pass`、`live:OFF block` のような注記を付けます。コイルは現在値を表示します。これは診断用の重ね合わせで、常時監視ループではありません。
 
 このコマンドは CLI 専用です。MCP からは公開せず、PLC 書き込み、run/stop、download、online edit は実装しません。
 

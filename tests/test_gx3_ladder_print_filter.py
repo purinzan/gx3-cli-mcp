@@ -5,7 +5,11 @@ extracted project. Key regression: an empty-title statement row (invisible in
 the printed output) must NOT end a --section selection early.
 """
 
-from gx3cli.gx3_ladder_print import scan_sections, select_entries
+import json
+import tempfile
+from pathlib import Path
+
+from gx3cli.gx3_ladder_print import load_live_values, scan_sections, truthy_live_value, select_entries
 
 
 def entry(blocktype, pos, title=None, devices=(), lines=None):
@@ -59,6 +63,24 @@ def main():
 
     # --device case-insensitive.
     assert select_entries(entries, device="d5330")
+
+    assert truthy_live_value(True) is True
+    assert truthy_live_value(0) is False
+    assert truthy_live_value("ON") is True
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "live.json"
+        path.write_text(
+            json.dumps({"device": "D100", "values": [12, 34]}),
+            encoding="utf-8",
+        )
+        assert load_live_values(str(path)) == {"D100": 12, "D101": 34}
+
+        path.write_text(
+            json.dumps({"values": {"x1a": True, "M10": False}}),
+            encoding="utf-8",
+        )
+        assert load_live_values(str(path)) == {"X1A": True, "M10": False}
 
     print("all ladder-print filter checks passed")
 

@@ -251,6 +251,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | Generate structure/device-flow graphs | `gx3-cli graph --root project.gx3 --type structure --format mermaid` |
 | Read current PLC values | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
+| Overlay current values on ladder evidence | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | Print ladder evidence | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
@@ -367,6 +368,17 @@ device range each time.
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
 ```
+
+Save JSON output and pass it to `ladder-print` when you want GX-print-style
+rung citations with current-value annotations:
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json -o live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
+```
+
+Contacts are annotated as `live:ON pass`, `live:OFF block`, and so on. Coils
+show their current value. This is a diagnostic overlay, not a PLC monitor loop.
 
 Use this only on equipment you are authorized to access. The command implements
 read-only batch reads; write, run/stop, download, and online edit operations are
