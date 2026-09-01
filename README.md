@@ -124,8 +124,10 @@ What it does:
   and reads the SQLite databases and text inside it. The format was worked out
   by looking at project files the author is authorised to work with.
 - It uses only the Python standard library — `zipfile` and `sqlite3`. The
-  project has **no third-party dependencies** and bundles, links against, or
-  redistributes **no Mitsubishi Electric code, libraries, or assets** of any kind.
+  project has **no third-party Python dependencies** and bundles, links against,
+  or redistributes **no Mitsubishi Electric code, libraries, or assets** of any
+  kind. If a `.gx3` uses a 7z-style container, the CLI can try a locally
+  installed archive tool such as 7-Zip/7zz/bsdtar for extraction.
 
 What it does not do:
 
@@ -136,7 +138,9 @@ What it does not do:
   saved with the compressed/lightweight option is password protected, and this
   project contains **no code to decrypt one and will not gain any** — that
   format is listed as unsupported in [Scope](#scope) and stays that way by
-  choice, not by oversight.
+  choice, not by oversight. Some official sample `.gx3` files are 7z/AES
+  containers; if a normal archive tool cannot extract them, export or extract
+  them with GX Works3 first and pass the extracted project folder to this CLI.
 - It does **not** modify the project. The archive is extracted to a local cache
   and only that copy is read; the original file is never written back to.
 - It does **not** communicate with a PLC, a network, or any remote service.
