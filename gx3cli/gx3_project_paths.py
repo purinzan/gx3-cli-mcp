@@ -181,6 +181,12 @@ def resolve_project_root(path: str | Path) -> Path:
     return root
 
 
+# Where a failing run should send the user. A message that says "make a support
+# bundle" and then stops leaves them with nowhere to put it, which is how a
+# parser gap stays invisible: the tool fails and the user closes the window.
+REPORT_URL = "https://github.com/purinzan/gx3-cli-mcp/issues/new?template=parser-gap.yml"
+
+
 def project_root_error_message(reason: str) -> str:
     return "\n".join(
         [
@@ -188,9 +194,19 @@ def project_root_error_message(reason: str) -> str:
             f"Reason: {reason}",
             "",
             "Next steps:",
-            "  - Confirm the input is a supported GX Works3 .gx3 file or an extracted project folder.",
-            "  - For parser coverage issues, run: gx3-cli parse-gaps --root <project>",
-            "  - For support, create a redacted bundle: gx3-cli support-bundle --root <project>",
+            "  1. Confirm the input is a supported GX Works3 .gx3 file or an extracted",
+            "     project folder. A .gx3 saved with the compressed/lightweight option is",
+            "     password protected and cannot be read by this tool.",
+            "  2. For parser coverage issues, run:",
+            "       gx3-cli parse-gaps --root <project>",
+            "  3. Build a redacted bundle (no ladder body, no device comments):",
+            "       gx3-cli support-bundle --root <project>",
+            "  4. Report it, and attach that bundle:",
+            f"       {REPORT_URL}",
+            "",
+            "Reports are what fix parser gaps. Do not paste project data, device",
+            "comments, equipment names or addresses -- the bundle is redacted for",
+            "exactly that reason.",
         ]
     )
 
