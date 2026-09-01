@@ -417,6 +417,7 @@ Recommended reading:
 3. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
 4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
 5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
+6. [GitHub project review (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md): related GX Works3/GX3/MELSEC projects and design takeaways.
 
 [llms.txt](llms.txt) is a short machine-readable summary of what this project is
 and is not, for tools that index repositories for AI assistants.

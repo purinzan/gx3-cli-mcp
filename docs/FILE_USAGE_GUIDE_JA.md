@@ -44,6 +44,7 @@
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
+| `GITHUB_PROJECT_REVIEW_JA.md` | 関連する GX Works3/GX3/MELSEC GitHub プロジェクトの調査結果と設計上の取り込み候補。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
 | `mcp_client_config_console_script.json` | PATH 上の `gx3-mcp-server` を直接起動する MCP 設定例。 |
 
