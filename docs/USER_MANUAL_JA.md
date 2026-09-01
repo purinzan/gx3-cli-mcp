@@ -10,6 +10,7 @@
 - AI エージェントから MCP 経由で解析コマンドを呼び出す。
 - duplicate coil、multi-writer、dead logic、interlock などの静的チェックを行う。
 - 外部入力、HMI、通信、IP、リンク、タイミング候補を整理する。
+- 明示指定した PLC に対して、現在のデバイス値を read-only で取得する。
 
 ## できないこと
 
@@ -17,6 +18,7 @@
 - 解析結果だけで設備動作や安全性を保証すること。
 - すべての GX Works3 バージョン、PLC 機種、プログラム形式を完全保証すること。
 - プロジェクトデータを自動でオンライン送信すること。
+- `.gx3` ファイルから PLC 接続先を推測して、自動で設備に接続すること。
 
 ## インストール
 
@@ -54,6 +56,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | 使用デバイス範囲と空き領域を見る | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | writer/reader と POU/step を見る | `gx3-cli xref where-used M100 --root project.gx3` |
 | コイル成立条件を追う | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
+| 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | GX 印刷風のラダー根拠を見る | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
 | 2 つのコイルが同時 ON 可能か静的確認する | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | 静的チェックを走らせる | `gx3-cli lint project.gx3` |
@@ -86,6 +89,18 @@ gx3-cli dead-logic --root project.gx3
 gx3-cli reliability-report --root project.gx3 -o reliability.md
 ```
 
+## 現在値の読み取り
+
+`live-read` は MC Protocol/SLMP 3E binary の batch read で、明示指定した PLC から現在値を読みます。
+`.gx3` から勝手に接続先を探してオンライン監視する機能ではありません。IP、ポート、デバイス、点数を毎回指定します。
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
+```
+
+このコマンドは CLI 専用です。MCP からは公開せず、PLC 書き込み、run/stop、download、online edit は実装しません。
+
 ## MCP で AI から使う
 
 MCP クライアント設定例:
@@ -103,7 +118,7 @@ MCP クライアント設定例:
 
 PATH 上の console script を使える環境では、`docs/mcp_client_config_console_script.json` の設定も使えます。
 
-MCP では typed tool を優先してください。一般的な検索は `gx3_run_command` から `query-device`、`query-comment`、`xref`、`index-lite` を呼び出せます。`synthetic-project` はローカル CLI 専用で、MCP からは実行できません。
+MCP では typed tool を優先してください。一般的な検索は `gx3_run_command` から `query-device`、`query-comment`、`xref`、`index-lite` を呼び出せます。`synthetic-project` と `live-read` はローカル CLI 専用で、MCP からは実行できません。
 
 ## デモデータ
 
@@ -119,4 +134,5 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 - 解析結果は参考情報です。実設備への変更判断は GX Works3 と現場の検証で確認してください。
 - 一部コマンドは CSV、Markdown、ZIP、SQLite DB などをローカルに生成します。
+- `live-read` は実設備に TCP 接続します。現場ルール、PLC 設定、ネットワーク権限を確認してから使ってください。
 - AI に出力を渡す場合は、社内ルールと機密情報の扱いを確認してください。

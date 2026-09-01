@@ -77,6 +77,7 @@
 | `extract_hmi_build_info.py` | `hmi-build-info` | `gx3_run_command` | HMI/操作、単動/手動出力候補。 |
 | `extract_comm_refresh_areas.py` | `comm-refresh` | `gx3_run_command` | 通信ユニットとリフレッシュ範囲。 |
 | `gx3_comm_detail.py` | `comm-detail` | `gx3_run_command` | 詳細通信候補と AJ65BT-R2N 設定。 |
+| `gx3_live_read.py` | `live-read` | CLI only | 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する。 |
 | `gx3_w3pa_probe.py` | `w3pa-probe` | `gx3_run_command` | `.w3pa` パラメータ文字列、modules、IP、device candidates。 |
 | `gtx_probe.py` | `gtx-probe` | `gx3_run_command` | GT Designer3 `.gtx` HMI project containers。 |
 | `gx3_dm_probe.py` | `dm-probe` | `gx3_run_command` | `_DM.db` の初期値/保持値。 |
@@ -91,6 +92,8 @@
 | `gx3_timing_chart.py` | `timing-chart` | `gx3_run_command` | link-map/xref から handoff timing draft を生成する。 |
 | `gx3_dependency_flow.py` | `dependency-flow` | `gx3_run_command` | upstream coil dependency の Mermaid flow。 |
 | `gx3_ladder_diagram.py` | `ladder-diagram` | `gx3_run_command` | 対象 device の driver rows を ASCII ladder 化。 |
+| `gx3_graph.py` | `graph` | `gx3_run_command` | structure/device-flow を markdown/mermaid/json で出す統一 graph 入口。 |
+| `gx3_format.py` | internal | internal | LDDB/FBDDB/STDB/MilDB などの形式インベントリを共通化する。 |
 | `gx3_matiec_export.py` | `matiec-st` | `gx3_run_command` | enable logic を MATIEC Structured Text 化。 |
 | `gx3_semantic_diff.py` | `semantic-diff` | `gx3_semantic_diff` | 2 プロジェクトの rung-level diff。 |
 | `review_gx3_project.py` | `review` | `gx3_run_command` | 静的レビュー CSV 群。 |
@@ -134,6 +137,8 @@
 | `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
+| `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |
+| `test_gx3_live_read.py` | MC Protocol/SLMP 3E binary read frame と応答 decode。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
 
 ## 迷ったときの選び方

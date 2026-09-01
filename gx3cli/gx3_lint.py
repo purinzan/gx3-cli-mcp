@@ -91,6 +91,18 @@ FINDING_FIELDS = ["check", "severity", "device", "comment", "count", "locations"
 
 CheckFunc = Callable[["LintContext"], list[dict[str, object]]]
 CHECKS: "dict[str, tuple[CheckFunc, str]]" = {}
+CHECK_IDS = {
+    "duplicate-coil": "GX0001",
+    "multi-writer": "GX0002",
+    "alarm-quality": "GX0003",
+    "unused-device": "GX0004",
+    "comment-conflict": "GX0005",
+    "link-range": "GX0006",
+    "compare-type": "GX0101",
+    "div-by-zero": "GX0102",
+    "width-mismatch": "GX0103",
+    "signed-compare": "GX0104",
+}
 
 
 def register(name: str, description: str) -> Callable[[CheckFunc], CheckFunc]:
@@ -766,12 +778,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
 
     if args.list_checks:
         for name, (_func, desc) in CHECKS.items():
-            print(f"{name:<16} {desc}")
+            print(f"{CHECK_IDS.get(name, 'GX9999'):<7} {name:<24} {desc}")
         return 0
 
     if args.checks.strip().lower() == "all":

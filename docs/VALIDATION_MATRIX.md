@@ -13,6 +13,8 @@
 - 合成プロジェクトを使った CLI/MCP 回帰テストは通っています。
 - 実プロジェクトで見つかった解析失敗は `gx3-cli failure-corpus capture` で検体化し、`gx3-cli failure-corpus run` で形式検出 / schema / doctor / xref / ladder-print / 失敗コマンド再実行の回帰確認に回せます。
 - FBD/ST/MIL など LDDB がない形式は、未対応/非ラダー形式として検出し、LD 専用チェックはスキップします。これは「解析成功」ではなく「形式を見分けて過信を避ける」ための扱いです。
+- `gx3-cli graph` は既存の program map / device-flow 解析をまとめる可視化入口です。初期版は markdown / Mermaid / JSON 出力で、設備変更判断ではなく説明・レビュー補助として使ってください。
+- `gx3-cli live-read` は MC Protocol/SLMP 3E binary の batch read を使う CLI-only 機能です。合成 TCP サーバーで frame/decode を検証していますが、実設備では PLC 設定、ポート、ネットワーク権限、現場ルールを確認してください。
 - MCP サーバーは project-read-only の allowlist を使っています。
 - `.gx3`、`.gtx`、DB、CAB、CSV、PDF、鍵ファイルなどを公開成果物に含めないチェックを CI で実行しています。
 

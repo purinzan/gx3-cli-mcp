@@ -16,20 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, python_env
+from gx3cli.gx3_format import GX3FormatInventory, build_format_inventory
 from gx3cli.gx3_project_paths import resolve_project_root
 
 
 DEFAULT_CORPUS = ".gx3_failures"
 MANIFEST = "manifest.json"
-SUPPORTED_DB_PATTERNS = {
-    "LDDB": "*_LDDB.db",
-    "FBDDB": "*_FBDDB.db",
-    "STDB": "*_STDB.db",
-    "MilDB": "*_MilDB.db",
-    "DM": "*_DM.db",
-    "DC": "*_DC.db",
-    "StepInfo": "*_StepInfo.db",
-}
 ALLOWED_REPLAY_MODULES = {
     "gx3cli.gx3_cli",
     "gx3cli.gx3_doctor",
@@ -169,19 +161,10 @@ def lddb_files(root: Path) -> list[Path]:
     return sorted(root.glob("*_LDDB.db"))
 
 
-def format_inventory(root: Path) -> dict[str, int]:
-    return {name: len(list(root.glob(pattern))) for name, pattern in SUPPORTED_DB_PATTERNS.items()}
-
-
-def unsupported_program_detail(inventory: dict[str, int]) -> str:
-    parts = [f"{name}={count}" for name, count in inventory.items() if count and name != "LDDB"]
-    return "unsupported/non-ladder formats detected: " + ", ".join(parts) if parts else "no known program DB files"
-
-
-def check_schema(root: Path, inventory: dict[str, int]) -> tuple[bool, str]:
+def check_schema(root: Path, inventory: GX3FormatInventory) -> tuple[bool, str]:
     lddbs = lddb_files(root)
     if not lddbs:
-        detail = unsupported_program_detail(inventory)
+        detail = inventory.unsupported_program_detail()
         if detail.startswith("unsupported/"):
             return True, f"no *_LDDB.db files; {detail}"
         return False, "no *_LDDB.db files and no known GX3 program DB files"
@@ -284,12 +267,11 @@ def run_case(case_file: Path, reports_dir: Path) -> dict[str, object]:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     checks: list[dict[str, object]] = []
-    inventory = format_inventory(root)
-    inventory_detail = ", ".join(f"{name}={count}" for name, count in inventory.items() if count) or "no known GX3 DB files"
-    checks.append({"name": "format_inventory", "passed": True, "detail": inventory_detail, "formats": inventory})
+    inventory = build_format_inventory(root)
+    checks.append({"name": "format_inventory", "passed": True, "detail": inventory.detail(), "formats": inventory.as_dict()})
 
-    has_lddb = inventory.get("LDDB", 0) > 0
-    unsupported_detail = unsupported_program_detail(inventory)
+    has_lddb = inventory.has_ladder
+    unsupported_detail = inventory.unsupported_program_detail()
     ok, detail = check_schema(root, inventory)
     checks.append({"name": "schema", "passed": ok, "detail": detail})
 

@@ -47,8 +47,9 @@ PROJECT_MUTATING_COMMANDS = {"intermediate", "roundtrip", "instruction-edit-test
 # Commands that do not mutate a PLC project but create local demo artifacts.
 # Keep these in the local CLI only so the MCP surface stays analysis-focused.
 LOCAL_STATE_COMMANDS = {"synthetic-project"}
+EXTERNAL_IO_COMMANDS = {"live-read"}
 
-MCP_DISABLED_COMMANDS = PROJECT_MUTATING_COMMANDS | LOCAL_STATE_COMMANDS
+MCP_DISABLED_COMMANDS = PROJECT_MUTATING_COMMANDS | LOCAL_STATE_COMMANDS | EXTERNAL_IO_COMMANDS
 
 # Query verbs implemented directly in gx3_cli (not in COMMANDS).
 QUERY_COMMANDS = {
@@ -400,6 +401,8 @@ def run_cli(command: str, args: list[str], root: str | None, timeout_seconds: in
         raise ValueError(f"command '{command}' modifies the project and is disabled on the MCP server")
     if command in LOCAL_STATE_COMMANDS:
         raise ValueError(f"command '{command}' creates local demo artifacts and is disabled on the MCP server")
+    if command in EXTERNAL_IO_COMMANDS:
+        raise ValueError(f"command '{command}' connects to external equipment and is disabled on the MCP server")
     if command not in READ_ONLY_COMMANDS:
         raise ValueError(f"unknown or non-allowed command: {command}")
 

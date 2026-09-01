@@ -33,6 +33,8 @@ Electric.
 - It does not provide a GUI in this release.
 - It does not require a license token or paid-plan token.
 - The MCP server does not expose project-mutating commands.
+- `live-read` can contact a PLC, but only when you explicitly provide the
+  connection details. It is CLI-only and read-only.
 
 ## Install
 
@@ -83,9 +85,12 @@ When you pass a `.gx3` file, the tool extracts it into
 | Show used/free device ranges | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | Show writers/readers | `gx3-cli xref where-used M100 --root project.gx3` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
+| Generate structure/device-flow graphs | `gx3-cli graph --root project.gx3 --type structure --format mermaid` |
+| Read current PLC values | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | Print ladder evidence | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
+| List lint checks and rule IDs | `gx3-cli lint --list-checks` |
 | Create a support summary | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
 | Capture a parser failure as a regression case | `gx3-cli failure-corpus capture --root project.gx3 --case-id case-name --reason "what failed"` |
 | Rerun captured failure cases | `gx3-cli failure-corpus run` |
@@ -142,6 +147,7 @@ Use a synthetic project for screenshots, tutorials, and first-time tests.
 ```powershell
 gx3-cli synthetic-project demo.gx3 --overwrite
 gx3-cli doctor --root demo.gx3
+gx3-cli graph --root demo.gx3 --type structure --format mermaid
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
 
@@ -164,11 +170,29 @@ unsupported formats, and ladder-only checks are skipped instead of being treated
 as raw extraction failures. This turns one-off GX3 failures into reusable
 regression fixtures.
 
+## Optional Live Read
+
+`gx3-cli live-read` reads current PLC device values over MC Protocol/SLMP 3E
+binary batch read. It does not infer connection targets from a `.gx3` file and
+it is not exposed through MCP; you must explicitly provide the PLC IP/port and
+device range each time.
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
+```
+
+Use this only on equipment you are authorized to access. The command implements
+read-only batch reads; write, run/stop, download, and online edit operations are
+out of scope.
+
 ## Data And Safety
 
 - Project files stay on your machine unless you pass outputs to another tool.
 - Some commands create local files such as SQLite indexes, CSV reports, ZIP
   support bundles, or Markdown summaries.
+- `live-read` can open a TCP connection to real equipment only from the CLI and
+  only with explicit connection parameters.
 - Analysis output is advisory. Verify findings in GX Works3 and through your
   own safety/quality process before changing real equipment.
 - The tool is not a substitute for PLC validation, machine safety review, or
