@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import canonical_device as _canonical_device, format_device as _format_device
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root, load_rows
@@ -36,10 +37,10 @@ def default_db_path(root: Path | None = None) -> str:
 
 
 def normalize_device(value: str) -> str:
-    match = DEVICE_RE.fullmatch(value.strip())
-    if not match:
-        raise SystemExit(f"invalid device: {value}")
-    return f"{match.group(1).upper()}{int(match.group(2))}"
+    try:
+        return _canonical_device(value)
+    except ValueError:
+        raise SystemExit(f"invalid device: {value}") from None
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -152,7 +153,9 @@ def create_schema(con: sqlite3.Connection) -> None:
     )
 
 
-def row_id(lddb: str, pos: int) -> str:
+def row_id(lddb: str, pos: int, block_id: str = "") -> str:
+    if block_id:
+        return f"{lddb}:{pos}:{block_id}"
     return f"{lddb}:{pos}"
 
 
@@ -177,6 +180,7 @@ def build_index(args: argparse.Namespace) -> int:
             ("root", str(root)),
             ("refresh_csv", str(refresh_csv)),
             ("unit_csv", str(unit_csv)),
+            ("device_naming", DEVICE_NAMING),
             ("ladder_rows", str(len(rows))),
             ("external_sources", str(len(external_sources))),
         ],
@@ -184,7 +188,7 @@ def build_index(args: argparse.Namespace) -> int:
 
     comment_rows = []
     for (dev_type, number), info in sorted(comments.items()):
-        device = f"{dev_type}{number}"
+        device = _format_device(dev_type, number)
         comment_rows.append((device, dev_type, number, info.japanese, info.english, info.all_text))
     con.executemany(
         "insert into comments(device, device_type, number, japanese, english, all_text) values (?, ?, ?, ?, ?, ?)",
@@ -195,7 +199,7 @@ def build_index(args: argparse.Namespace) -> int:
     usage_rows = []
     device_stats: dict[str, dict[str, Any]] = {}
     for row in rows:
-        rid = row_id(row.lddb, row.pos)
+        rid = row_id(row.lddb, row.pos, row.block_id)
         ladder_rows.append(
             (
                 rid,
@@ -346,10 +350,25 @@ def build_index(args: argparse.Namespace) -> int:
     return 0
 
 
+# Bumped whenever the spelling of a stored device changes. An index written
+# before X/Y/B/W were stored in hex holds "X520" where this build looks for
+# "X208", and a silent miss reads as "device not used" -- the worst possible
+# way to be wrong about a PLC project.
+DEVICE_NAMING = "hex-1"
+
+
 def open_existing(path: Path) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
-    return connect(path)
+    con = connect(path)
+    row = con.execute("select value from meta where key='device_naming'").fetchone()
+    if row is None or row["value"] != DEVICE_NAMING:
+        raise SystemExit(
+            f"index db was built by an older version and spells devices differently: {path}\n"
+            "X, Y, B and W devices are now numbered in hexadecimal, matching GX Works3.\n"
+            "Rebuild it: gx3-cli index-lite build --root <project>"
+        )
+    return con
 
 
 def print_rows(rows: list[sqlite3.Row], columns: list[str]) -> None:

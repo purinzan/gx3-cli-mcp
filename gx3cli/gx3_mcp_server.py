@@ -35,6 +35,47 @@ from gx3cli.gx3_version import package_version, version_line
 # echoing whatever the client requested.
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {"name": "gx3-cli-mcp", "version": package_version()}
+
+# Sent in the initialize result. MCP clients place this in the model's system
+# prompt, which makes it the one place where answer formatting can be enforced
+# for every conversation instead of hoping each tool description is read.
+SERVER_INSTRUCTIONS = """\
+This server analyzes a GX Works3 PLC project. When you report anything from it
+to a user, follow these two rules without exception.
+
+1. NEVER name a device without its device comment.
+
+   Write the device and its comment together every time the device appears in
+   your answer, including in lists, tables, and restatements of a condition:
+
+       M100 (Synthetic origin-return request)
+       X16 (Synthetic emergency stop input)
+
+   A bare `M100` is not an acceptable answer to a human. The number alone is
+   meaningless to the engineer reading it, and forcing them to look each one up
+   defeats the purpose of this tool. Device comments come back from
+   `gx3_xref_where_used`, `gx3_trace_device`, and `query-device`; if a device
+   genuinely has no comment, write `M100 (no comment)` so the absence is
+   explicit rather than ambiguous.
+
+2. Explain ladder logic with the TXT ladder diagram, never with JSON.
+
+   When the answer involves how a rung is wired, show the actual ladder text
+   from `gx3_ladder_print`, or from `ladder-diagram` with `--format text`
+   (its default) or `--format markdown`. Quote it verbatim inside a code block
+   so the contacts and coils stay aligned.
+
+   Do NOT paste `--format json` output, dictionaries, or any structured dump as
+   the explanation of a circuit. JSON is for you to parse, not for a person to
+   read. A PLC engineer reads ladder; showing them the JSON that describes the
+   ladder is strictly worse than showing them the ladder.
+
+   Use `gx3_ladder_print` with `section`, `pos_range`, or `device` to narrow the
+   output to the circuit under discussion rather than dumping a whole program.
+
+These rules apply to what you show the user. You may of course request and
+parse JSON internally.
+"""
 MAX_TIMEOUT_SECONDS = 300
 DEFAULT_TIMEOUT_SECONDS = 90
 MAX_OUTPUT_CHARS = 40000
@@ -101,7 +142,10 @@ TYPED_TOOLS: list[TypedTool] = [
         description=(
             "Trace a device's ON/OFF/hold conditions from exact ladder topology. "
             "MC master-control zone conditions are folded into the enable logic, and "
-            "the output warns on multi-OUT-coil devices and rows below a conditional jump."
+            "the output warns on multi-OUT-coil devices and rows below a conditional jump. "
+            "The output carries each device's comment: keep every device paired with its "
+            "comment when you report the result, and show the rung itself with "
+            "gx3_ladder_print rather than describing it in prose."
         ),
         input_schema={
             "type": "object",
@@ -155,6 +199,8 @@ TYPED_TOOLS: list[TypedTool] = [
         command="xref",
         description=(
             "Writers and readers of a device with POU name and real step. "
+            "The first line carries the device comment; repeat it alongside the device in "
+            "your answer instead of reporting a bare device number. "
             "Requires the xref DB: run `gx3-cli xref build --root <root>` once per project first."
         ),
         input_schema={
@@ -265,10 +311,12 @@ TYPED_TOOLS: list[TypedTool] = [
         name="gx3_ladder_print",
         command="ladder-print",
         description=(
-            "Render a program in GX Works3 print-text layout. Output can be large; pass "
-            "'output' to write it to a file. To emit only the circuit under discussion, "
-            "use 'list_sections' to discover section titles, then filter with 'section', "
-            "'pos_range' (A-B), or 'device'."
+            "Render a program in GX Works3 print-text layout. This is the output to show a "
+            "user when explaining how a circuit is wired: quote it verbatim in a code block, "
+            "never a JSON dump of the same rung. Output can be large; pass 'output' to write "
+            "it to a file. To emit only the circuit under discussion, use 'list_sections' to "
+            "discover section titles, then filter with 'section', 'pos_range' (A-B), or "
+            "'device'."
         ),
         input_schema={
             "type": "object",
@@ -474,6 +522,7 @@ def handle(message: dict[str, Any]) -> dict[str, Any] | None:
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
                 "serverInfo": SERVER_INFO,
+                "instructions": SERVER_INSTRUCTIONS,
             },
         )
     if method == "notifications/initialized":

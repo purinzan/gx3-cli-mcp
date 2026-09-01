@@ -19,6 +19,7 @@ occurrence parsing for the lite index and static reviews).
 import re
 from dataclasses import dataclass
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPES,
     extract_args_text,
@@ -338,7 +339,7 @@ def decode_args(raw_args: list[str], arg_tokens: list[str], role: str) -> list[A
 def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> ArgOcc:
     dev_type = dev_type or "?"
     return ArgOcc(
-        device=f"{dev_type}{number}" if dev_type != "?" else f"?{number}",
+        device=_format_device(dev_type, number) if dev_type != "?" else f"?{number}",
         device_type=dev_type,
         number=number,
         access="",

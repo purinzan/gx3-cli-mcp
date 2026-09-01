@@ -23,10 +23,17 @@
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
+| `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
+| `server.json` | 公式 MCP レジストリ（registry.modelcontextprotocol.io）への登録定義。`version` は pyproject.toml と揃える。README 冒頭の `mcp-name:` コメントが PyPI 側の所有証明になる。 |
+| `llms.txt` | AI 向けの短い要約。何をする/しないツールかと、主要ドキュメントへのリンクを機械可読な形で置く。 |
 | `.gitignore` | キャッシュ、解析結果、GX3/GTX/DB/文書データ、desktop shell 生成物を除外する。 |
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
-| `ci.yml` | GitHub Actions。Windows 上で install、console script 確認、test、release gate、wheel build を実行する。 |
+| `test_gx3_device_name.py` | デバイス名の 16 進/10 進の整形・解釈・往復を検査する。 |
+| `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
+| `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
+| `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
+| `release.yml` | GitHub Actions。`v*` タグで wheel と sdist を build し、release gate と tag/version 一致確認を通してから Trusted Publishing で PyPI へ公開する。 |
 
 ## docs
 
@@ -135,6 +142,7 @@
 | `test_gx3_parse_gaps_zero.py` | 合成プロジェクトの parse gap 0 確認。 |
 | `test_gx3_timing_detect.py` | timing detect。 |
 | `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
+| `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
 | `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |

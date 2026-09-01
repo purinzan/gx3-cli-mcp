@@ -11,6 +11,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 
 
@@ -48,7 +49,7 @@ def device_name(dev_type: str, address: int, bit_number: int | None = None) -> s
         return f"{base}{address}{suffix}"
     if dev_type in {"X", "Y", "B", "SB", "SW", "W"}:
         return f"{dev_type}{address:X}"
-    return f"{dev_type}{address}"
+    return _format_device(dev_type, address)
 
 
 def header_tokens(data: str) -> list[str]:

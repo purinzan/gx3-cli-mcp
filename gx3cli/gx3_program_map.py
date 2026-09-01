@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_project_paths import default_project_root, iter_convertdata_entries, resolve_project_root
 
 
 BACKUP_MARKER = "BackUp".encode("utf-16-le")
@@ -219,17 +219,15 @@ def load_program_map(root: Path) -> ProgramMap:
         pm.pous[hexid] = info
         pm.pous_by_dir[dec] = info
 
-    convert = root / "ConvertData"
-    if convert.is_dir():
-        for d in sorted(convert.iterdir()):
-            link = d / "PouLinkOrder.info"
-            qpg = d / "Program.qpg"
-            if not link.exists():
-                continue
-            pou_ids = POU_ID_RE.findall(link.read_text(encoding="ascii", errors="ignore"))
+    link_entries = iter_convertdata_entries(root, "PouLinkOrder.info")
+    if link_entries:
+        qpg_by_dir = {entry.program_id: entry.path for entry in iter_convertdata_entries(root, "Program.qpg")}
+        for entry in link_entries:
+            qpg = qpg_by_dir.get(entry.program_id)
+            pou_ids = POU_ID_RE.findall(entry.path.read_text(encoding="ascii", errors="ignore"))
             names: list[str] = []
             program_file = ""
-            if qpg.exists():
+            if qpg and qpg.exists():
                 data = qpg.read_bytes()
                 idx = data.rfind(BACKUP_MARKER)
                 if idx >= 0:
@@ -247,17 +245,17 @@ def load_program_map(root: Path) -> ProgramMap:
             if len(names) != len(pou_ids):
                 if not (len(pou_ids) == 1 and program_file):
                     pm.warnings.append(
-                        f"program {d.name}: {len(pou_ids)} POUs but {len(names)} names decoded"
+                        f"program {entry.program_id}: {len(pou_ids)} POUs but {len(names)} names decoded"
                     )
                 names = [""] * len(pou_ids)
             for order, (pid, name) in enumerate(zip(pou_ids, names)):
                 info = pm.pous_by_dir.get(pid)
                 if info is None:
-                    pm.warnings.append(f"program {d.name}: unknown POU id {pid}")
+                    pm.warnings.append(f"program {entry.program_id}: unknown POU id {pid}")
                     continue
                 info.program_file = program_file
                 info.name = name or (program_file if len(pou_ids) == 1 else "")
-                info.program_dir = d.name
+                info.program_dir = entry.program_id
                 info.link_index = order
 
         # Second pass for program dirs whose POU name is known but whose
@@ -346,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = parser.parse_args(argv)
 
-    pm = load_program_map(Path(args.root))
+    pm = load_program_map(resolve_project_root(args.root))
     if args.json:
         payload = {
             "program_files": pm.program_files,

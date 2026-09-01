@@ -1,18 +1,169 @@
 # gx3-cli-mcp
 
-Local GX Works3 project analysis for engineers and AI agents.
+<!-- mcp-name: io.github.purinzan/gx3-cli-mcp -->
 
-`gx3-cli-mcp` provides a Windows-first CLI and stdio MCP server for inspecting
-GX Works3 (`.gx3`) projects on your own machine. It helps you search devices,
-comments, cross references, ladder conditions, communication boundaries, and
-static review signals without modifying the source project.
+[![PyPI](https://img.shields.io/pypi/v/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
+[![CI](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
 
-日本語: GX Works3 (`.gx3`) プロジェクトをローカルで読み取り解析し、AI
-エージェントからも使える CLI / MCP サーバーです。プロジェクトを書き換えず、
-デバイス、コメント、xref、ラダー根拠、通信境界を確認するための道具です。
+**Work out why a coil never turns on, without opening GX Works3.**
+
+`gx3-cli-mcp` reads a GX Works3 (`.gx3`) project on your own machine and
+answers questions about it: where a device is written, what has to be true for
+a coil to turn on, which conditions come from outside the PLC, and which
+branches can never be true at all. It is read-only and never writes back to the
+project.
+
+It is a CLI, and it is also a stdio MCP server, so an AI agent can answer from
+the same indexed facts instead of guessing at a binary file.
+
+That matters for three reasons:
+
+- **A GX Works3 licence is not on everyone's desk.** Maintenance, production
+  engineering, quality and upstream software all end up asking whoever has one.
+- **Following a coil upstream is where people lose the thread**, usually about
+  three cross-reference hops in. A machine does not lose the thread.
+- **You should not need to know the device number.** Search the comment you
+  actually remember, and every answer comes back with its comment attached.
+
+日本語: 三菱電機の MELSEC シーケンサ（PLC）のプロジェクトファイル `.gx3` を、
+GX Works3 を開かずに解析する CLI / MCP サーバーです。「このコイルがなぜ ON に
+ならないか」をラダーから追い、クロスリファレンスを何度も開く代わりに一度で
+答えます。読み取り専用で、元のプロジェクトファイルは書き換えません。
+ライセンスが手元に無い人でも調べられること、デバイス番号を知らなくても
+デバイスコメントから引けることを狙っています。
+
+**紹介記事: [GX Works3 を開かずにラダーを追えるようにした](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp)**
+— 何ができるかは、実際の出力つきでこちらにまとめています。
+
+## Try It Without a Real Project
+
+You do not need a `.gx3` you are allowed to share. Generate a synthetic one:
+
+```powershell
+python -m pip install gx3-cli-mcp
+gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite
+gx3-cli index-lite build --root line.gx3
+gx3-cli xref build --root line.gx3
+gx3-cli trace-device M2313 --root line.gx3 --strict-logic --compact
+```
+
+That builds a fictional 14-station transfer line — about 500 rungs across 10
+programs — and traces one step back through every station upstream of it.
 
 This is an unofficial, independent tool. It is not endorsed by Mitsubishi
 Electric.
+
+## Questions This Answers
+
+日本語の質問例も併記しています。CLI でも、MCP 経由で AI エージェントに聞く場合でも同じです。
+
+**Where is this device written, and where is it read?**
+このデバイスはどこで書かれて、どこで読まれているのか
+
+```powershell
+gx3-cli xref where-used M2313 --root project.gx3
+```
+
+**Why does this coil never turn on?**
+なぜこのコイルが ON にならないのか / 起動条件は何か
+
+```powershell
+gx3-cli trace-device M2313 --root project.gx3 --strict-logic --compact
+```
+
+**Which conditions come from outside the PLC?**
+どの条件が外部入力・HMI・通信から来ているのか（＝ラダーではなく盤を見るべきか）
+
+`trace-device` の出力に `External/HMI/communication boundaries` として出ます。
+
+**I only remember what the device is called, not its number.**
+デバイス番号は覚えていないが、コメントの文言なら分かる
+
+```powershell
+gx3-cli query-comment "クランプ確認" --root project.gx3
+```
+
+**Is anything in this project dead or contradictory?**
+二重コイル、リセットの無いラッチ、成立しない条件、矛盾したコメントはないか
+
+```powershell
+gx3-cli lint project.gx3
+gx3-cli dead-logic --root project.gx3
+```
+
+**Can an AI agent answer these instead of me typing commands?**
+コマンドを覚えずに、Claude や Cursor から日本語で聞けるか
+
+Yes — that is what the MCP server is for. See [Use With MCP](#use-with-mcp).
+`gx3-mcp-server` を Claude Desktop / Claude Code / Cursor などの MCP クライアント
+に登録すると、エージェントが上記の解析を呼び出して、根拠つきで答えます。
+
+## Scope
+
+- **Supported:** MELSEC iQ-R / iQ-F series projects saved as `.gx3` by
+  GX Works3. 三菱電機の MELSEC シーケンサ、GX Works3 の `.gx3` 形式。
+- **Not supported:** GX Works2 (`.gxw`), GX Developer (`.gpj`), and `.gx3`
+  files saved with the compressed/lightweight option, which are password
+  protected and cannot be extracted. 軽量保存された `.gx3` は展開できません。
+- **Not a substitute** for GX Works3, for PLC validation, or for your own
+  safety and quality review. Output is advisory.
+
+Verified coverage is listed in [docs/VALIDATION_MATRIX.md](docs/VALIDATION_MATRIX.md).
+
+## How This Reads `.gx3`, And What It Does Not Do
+
+This project is unofficial and independent. It is not affiliated with, endorsed
+by, or supported by Mitsubishi Electric. `GX Works3` and `MELSEC` are their
+trademarks, used here only to say what this tool reads.
+
+What it does:
+
+- It opens a `.gx3` **data file that the user already has on their own machine**
+  and reads the SQLite databases and text inside it. The format was worked out
+  by looking at project files the author is authorised to work with.
+- It uses only the Python standard library — `zipfile` and `sqlite3`. The
+  project has **no third-party dependencies** and bundles, links against, or
+  redistributes **no Mitsubishi Electric code, libraries, or assets** of any kind.
+
+What it does not do:
+
+- It does **not** decompile, disassemble, patch, instrument, or otherwise
+  analyse GX Works3 or any other Mitsubishi Electric software. It never runs
+  their software and never touches its binaries.
+- It does **not** remove, defeat, or work around any access control. A `.gx3`
+  saved with the compressed/lightweight option is password protected, and this
+  project contains **no code to decrypt one and will not gain any** — that
+  format is listed as unsupported in [Scope](#scope) and stays that way by
+  choice, not by oversight.
+- It does **not** modify the project. The archive is extracted to a local cache
+  and only that copy is read; the original file is never written back to.
+- It does **not** communicate with a PLC, a network, or any remote service.
+- It does **not** reproduce Mitsubishi Electric's software, documentation, or
+  file format specification. It reads a customer's own data.
+
+Using this tool does not change the agreements you have with Mitsubishi
+Electric. Complying with the terms of your GX Works3 licence, and with your
+employer's and customers' rules about project data, remains yours.
+
+If Mitsubishi Electric has a concern about this project, please open an issue
+or contact the author through GitHub; it will be addressed.
+
+日本語: 本プロジェクトは非公式・独立のもので、三菱電機とは無関係です。読むのは
+**利用者が自分の手元に持っているデータファイル**（`.gx3`）だけで、形式は作者が
+業務上アクセスできるプロジェクトファイルを観察して把握しました。GX Works3 を
+はじめとする三菱電機のソフトウェアを逆アセンブル・デコンパイル・改変することは
+一切していません。三菱電機のコードやライブラリを同梱・参照・再配布もしていません
+（依存パッケージはゼロで、Python 標準ライブラリのみを使います）。
+
+**保護の解除も行いません。** 軽量保存された `.gx3` はパスワード保護されており、
+本プロジェクトには復号のためのコードが存在しません。今後も実装しません。これは
+実装漏れではなく方針です。
+
+GX Works3 のライセンス条項や、勤務先・顧客のプロジェクトデータの取り扱い規則を
+守る責任は利用者にあります。三菱電機の方でご懸念があれば、Issue または GitHub
+経由でご連絡ください。対応します。
 
 ## What You Can Do
 
@@ -39,16 +190,29 @@ Electric.
 ## Install
 
 ```powershell
-python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
+python -m pip install gx3-cli-mcp
 gx3-cli --version
 gx3-mcp-server --version
 ```
 
-For local source checkout:
+Requires Python 3.10 or later. Installing into a virtual environment is
+recommended so the two console scripts stay off the system PATH.
+
+If your site blocks PyPI, install the latest source directly:
+
+```powershell
+python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
+```
+
+For a local source checkout:
 
 ```powershell
 python -m pip install -e .
 ```
+
+日本語: 通常は `pip install gx3-cli-mcp` だけで CLI と MCP サーバーの両方が
+入ります。社内プロキシで PyPI に到達できない場合のみ、上の git 直接指定を
+使ってください。
 
 ## First Analysis
 
@@ -142,7 +306,11 @@ This repository includes focused skills for agent workflows:
 
 ## Demo Project
 
-Use a synthetic project for screenshots, tutorials, and first-time tests.
+Two synthetic profiles, neither of which contains anything real. See
+[Try It Without a Real Project](#try-it-without-a-real-project) for the quick
+start.
+
+`basic` (the default) is three rungs — enough to check that a command runs:
 
 ```powershell
 gx3-cli synthetic-project demo.gx3 --overwrite
@@ -150,6 +318,24 @@ gx3-cli doctor --root demo.gx3
 gx3-cli graph --root demo.gx3 --type structure --format mermaid
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
+
+`demo-line` is a 14-station pick-and-place line: about 500 rungs across 10
+programs with roughly 500 commented devices, chained so that tracing an output
+on the last station walks back through every station upstream. Use this one for
+demos, for screenshots, and for reproducing a bug without sending anyone a real
+project.
+
+```powershell
+gx3-cli synthetic-project line.gx3 --profile demo-line --overwrite
+gx3-cli lint line.gx3
+gx3-cli dead-logic --root line.gx3
+```
+
+It also contains a small number of deliberate faults - a duplicate coil, a
+latch with no reset, a coil nobody reads, a contact that can never close, and
+two devices whose comments contradict each other - so the review commands
+report findings instead of an empty table. This is also the fastest way to
+reproduce a bug for an issue without sending anyone a real project.
 
 ## Failure Corpus
 
@@ -208,14 +394,39 @@ Recommended reading:
 4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
 5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
 
+[llms.txt](llms.txt) is a short machine-readable summary of what this project is
+and is not, for tools that index repositories for AI assistants.
+
 MCP configuration examples:
 
 - [MCP client config](docs/mcp_client_config.json): robust `python -m gx3cli.gx3_mcp_server` launch.
 - [MCP client config, console script](docs/mcp_client_config_console_script.json): direct `gx3-mcp-server` launch when PATH is reliable.
 
-Distribution terms are defined in [LICENSE.txt](LICENSE.txt).
+## License In Plain Words
+
+Full terms are in [LICENSE.txt](LICENSE.txt); this section is only a summary and
+the license text governs.
+
+This is **source-available proprietary software**, not open source. In practice:
+
+- You **may** clone it, read the source, and run it for evaluation and for
+  internal analysis work, including inside a company.
+- You **may not** redistribute it, host it as a service, resell it, or ship it
+  as part of a paid product or commercial service without written permission.
+- There is **no license token, activation, or paid plan** to run it.
+- It is provided as is, with no warranty, and its output is advisory only.
+
+日本語: 社内での評価・業務利用は許諾されています。禁止しているのは再配布、
+SaaS としての提供、有償製品やサービスへの組み込みです。実行にライセンス
+キーや課金は不要です。商用利用の相談は Issue からご連絡ください。
 
 ## For Contributors
+
+Bug reports, questions, and small pull requests are welcome, in Japanese or
+English. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which covers the
+no-project-data rule, the development setup, and what a useful bug report
+contains. Issues labeled `good first issue` are scoped to be approachable
+without deep knowledge of the GX Works3 file format.
 
 If you clone this repository and find a source code problem, prefer sending a
 pull request with the smallest reproduction, a focused fix, and test evidence.

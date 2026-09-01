@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     element_meta,
     extract_dim,
@@ -92,16 +93,12 @@ class FlowElement:
 
 
 def parse_device(text: str) -> tuple[str, int]:
-    value = text.strip().upper()
-    match = DEVICE_RE.fullmatch(value)
-    if not match:
-        raise ValueError(f"invalid device: {text!r}")
-    return match.group(1), int(match.group(2))
+    return _parse_device_name(text)
 
 
 def normalize_device(text: str) -> str:
     dev_type, number = parse_device(text)
-    return f"{dev_type}{number}"
+    return _format_device(dev_type, number)
 
 
 def parse_pos(value: str) -> tuple[int, int] | None:
@@ -132,7 +129,7 @@ def parse_dim_height(dim: str) -> int:
 def bit_group_members(device_type: str, number: int, k_count: int) -> tuple[str, ...]:
     if device_type not in {"X", "Y", "M", "L", "B"}:
         return ()
-    return tuple(f"{device_type}{number + offset}" for offset in range(k_count * 4))
+    return tuple(_format_device(device_type, number + offset) for offset in range(k_count * 4))
 
 
 def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
@@ -146,7 +143,7 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
         group_spans.append(match.span())
         refs.append(
             DeviceRef(
-                device=f"{device_type}{number}",
+                device=_format_device(device_type, number),
                 device_type=device_type,
                 number=number,
                 label=f"K{k_count}{device_type}{number}",
@@ -165,7 +162,7 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
         if not number_text or not default_device_type:
             continue
         number = int(number_text)
-        refs.append(DeviceRef(f"{default_device_type}{number}", default_device_type, number))
+        refs.append(DeviceRef(_format_device(default_device_type, number), default_device_type, number))
 
     seen: set[str] = set()
     unique: list[DeviceRef] = []

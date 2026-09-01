@@ -1,0 +1,51 @@
+# gx3-cli-mcp
+
+> Read-only analysis of Mitsubishi Electric MELSEC PLC projects saved by GX Works3 (`.gx3`), as a command-line tool and as a stdio MCP server. It answers where a device is used, what has to be true for a coil to turn on, which conditions arrive from outside the PLC, and which branches can never be true — without opening GX Works3 and without modifying the project.
+
+三菱電機の MELSEC シーケンサ（PLC）のプロジェクト `.gx3` を、GX Works3 を開かずに読み取り専用で解析する CLI / MCP サーバーです。ラダーのクロスリファレンスを何度も辿る代わりに、コイルの成立条件を一度で出します。
+
+## What it is for
+
+- Tracing why a coil or step never turns on, through the ladder, across programs.
+- Finding where a device is written and read, with the device comment attached.
+- Searching by device comment when the device number is not known.
+- Separating conditions that come from physical inputs, HMI or network communication, so an investigation can stop at the right boundary.
+- Static review: duplicate coils, multi-writers, latches with no reset, contacts that can never close, contradictory comments.
+- Letting an AI agent (Claude Desktop, Claude Code, Cursor, or any MCP client) answer those questions from indexed facts rather than from a binary file it cannot read.
+
+## What it is not
+
+- Not a replacement for GX Works3, and not endorsed by Mitsubishi Electric. It is an unofficial, independent tool.
+- Not a validation, certification or safety tool. Its output is advisory and must be confirmed in GX Works3 and through the operator's own safety and quality process.
+- Not able to modify a PLC project. Project-mutating commands are not exposed at all through MCP.
+- Not able to read GX Works2 (`.gxw`), GX Developer (`.gpj`), or `.gx3` files saved with the lightweight/compressed option (those are password protected).
+- Not a reverse engineering of Mitsubishi Electric software. It reads a `.gx3` data file the user already holds, using only Python's standard `zipfile` and `sqlite3`. It does not decompile, disassemble or modify GX Works3, bundles or redistributes no Mitsubishi Electric code, and contains no code to decrypt password-protected (lightweight-saved) `.gx3` files — that format is unsupported by choice. GX Works3 and MELSEC are trademarks of Mitsubishi Electric.
+
+## Key facts
+
+- Install: `pip install gx3-cli-mcp` (Python 3.10+, Windows-first; CI also runs on Linux and macOS).
+- Console scripts: `gx3-cli` (command line) and `gx3-mcp-server` (stdio MCP server).
+- Everything runs locally. The tool has no license token, no paid plan, and no reason to make network requests.
+- A synthetic project generator (`gx3-cli synthetic-project line.gx3 --profile demo-line`) builds a fictional 14-station line of about 500 rungs, so the tool can be evaluated and bugs reproduced without sharing a real customer project.
+- Source-available proprietary licence: internal evaluation and company use are permitted; redistribution, hosting as a service and inclusion in paid products are not.
+
+## Docs
+
+- [README](https://github.com/purinzan/gx3-cli-mcp/blob/main/README.md): install, the questions it answers, MCP setup, scope.
+- [User manual, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/USER_MANUAL_JA.md): 日本語の導入と操作ガイド.
+- [Agent usage guide, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/AGENT_USAGE_JA.md): how an AI agent should drive the tool, and the answer rules it must follow.
+- [Validation matrix](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/VALIDATION_MATRIX.md): verified scope and limitations.
+- [Security note, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/SECURITY_JA.md): local data handling and the read-only MCP policy.
+- [Contributing](https://github.com/purinzan/gx3-cli-mcp/blob/main/CONTRIBUTING.md): development setup, the no-project-data rule, no CLA.
+
+## Background
+
+- [Introductory article, Japanese](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp): why it exists and what its output looks like on a real-sized project.
+
+## Vocabulary
+
+Terms this project is about, for matching questions asked in either language:
+PLC, シーケンサ, 三菱電機, Mitsubishi Electric, MELSEC, iQ-R, iQ-F, GX Works3,
+ladder logic, ラダー, ラダー図, cross reference, クロスリファレンス, device comment,
+デバイスコメント, coil, コイル, contact, 接点, interlock, インターロック,
+factory automation, FA, 製造業, 保全, 生産技術, MCP, Model Context Protocol.

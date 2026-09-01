@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     element_meta,
     extract_dim,
@@ -108,16 +109,16 @@ def parse_dim_width(dim: str) -> int:
 
 
 def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) -> str:
-    match = re.fullmatch(r"([A-Z]+)(-?\d+)", device)
-    if not match:
+    parsed = _split_device(device)
+    if parsed is None:
         return ""
-    return comment_for_device(match.group(1), int(match.group(2)), comments)
+    return comment_for_device(parsed[0], parsed[1], comments)
 
 
 def bit_group_members(device_type: str, number: int, k_count: int) -> tuple[str, ...]:
     if device_type not in {"X", "Y", "M", "L", "B"}:
         return ()
-    return tuple(f"{device_type}{number + offset}" for offset in range(k_count * 4))
+    return tuple(_format_device(device_type, number + offset) for offset in range(k_count * 4))
 
 
 def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
@@ -131,7 +132,7 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
         group_spans.append(match.span())
         refs.append(
             DeviceRef(
-                device=f"{device_type}{number}",
+                device=_format_device(device_type, number),
                 device_type=device_type,
                 number=number,
                 label=f"K{k_count}{device_type}{number}",
@@ -150,7 +151,7 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
         if not number_text or not default_device_type:
             continue
         number = int(number_text)
-        refs.append(DeviceRef(f"{default_device_type}{number}", default_device_type, number))
+        refs.append(DeviceRef(_format_device(default_device_type, number), default_device_type, number))
 
     seen: set[str] = set()
     unique: list[DeviceRef] = []

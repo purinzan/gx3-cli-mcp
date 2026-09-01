@@ -14,6 +14,7 @@ import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.gx3_index_lite import default_db_path, default_project_label
 from gx3cli.gx3_ladder_diagram import output_label, render_row_diagram
 from gx3cli.gx3_ladder_logic import enable_logic_for_output, logic_to_text, normalize_device, output_elements_for, positioned_elements
@@ -432,7 +433,7 @@ def command_state_chain(args: argparse.Namespace) -> int:
     for (dev_type, number), info in comments.items():
         text = f"{info.japanese} {info.english} {info.all_text}"
         if args.text.lower() in text.lower():
-            dev = f"{dev_type}{number}"
+            dev = _format_device(dev_type, number)
             found.append({"device": dev, "comment": compact(text, 120)})
     print_table(found, ["device", "comment"], args.limit)
     return 0
