@@ -37,6 +37,18 @@ def add(checks: list[Check], name: str, status: str, detail: str) -> None:
     checks.append(Check(name, status, detail))
 
 
+def next_step(command: str) -> str:
+    return f" next: {command}"
+
+
+def build_command_for(name: str, root: Path, path: Path) -> str:
+    if name == "index-lite":
+        return f"gx3-cli index-lite build --root {root} --out {path}"
+    if name == "xref":
+        return f"gx3-cli xref build --root {root} --db {path}"
+    return f"rebuild {name} for {root}"
+
+
 def sqlite_meta(path: Path) -> dict[str, str]:
     con = sqlite3.connect(path)
     try:
@@ -92,7 +104,7 @@ def check_runtime(checks: list[Check], index_dir: Path) -> None:
 def check_input_path(checks: list[Check], raw_root: Path) -> None:
     path = raw_root.expanduser()
     if not path.exists():
-        add(checks, "input-path", "ERROR", f"missing {path}")
+        add(checks, "input-path", "ERROR", f"missing {path}; next: check --root path or set PROJECT_ROOT/GX3_ROOT")
         return
     if path.is_dir():
         add(checks, "input-kind", "OK", "extracted-folder")
@@ -111,10 +123,13 @@ def check_input_path(checks: list[Check], raw_root: Path) -> None:
 
 def check_root(checks: list[Check], root: Path) -> None:
     if not root.exists():
-        add(checks, "project-root", "ERROR", f"missing {root}")
+        add(checks, "project-root", "ERROR", f"missing {root}; next: check --root path or extract the .gx3 project")
         return
     lddb = list(root.glob("*_LDDB.db"))
-    add(checks, "project-root", "OK" if lddb else "ERROR", f"{root} ({len(lddb)} LDDB files)")
+    detail = f"{root} ({len(lddb)} LDDB files)"
+    if not lddb:
+        detail += "; next: run gx3-cli inspect --root <project.gx3> to confirm the input kind"
+    add(checks, "project-root", "OK" if lddb else "ERROR", detail)
     for required in ["CPU.PRM", "LabelData.db"]:
         path = root / required
         add(checks, required, "OK" if path.exists() else "WARN", str(path))
@@ -122,7 +137,7 @@ def check_root(checks: list[Check], root: Path) -> None:
 
 def check_db(checks: list[Check], name: str, path: Path, root: Path, stale_is_warn: bool = True) -> None:
     if not path.exists():
-        add(checks, name, "WARN", f"missing {path}")
+        add(checks, name, "WARN", f"missing {path};{next_step(build_command_for(name, root, path))}")
         return
     try:
         meta = sqlite_meta(path)
@@ -132,18 +147,23 @@ def check_db(checks: list[Check], name: str, path: Path, root: Path, stale_is_wa
     db_root = Path(meta.get("root", ""))
     detail = f"{path}"
     if db_root and db_root != root:
-        add(checks, name, "WARN", f"{detail}; meta root={db_root}")
+        add(checks, name, "WARN", f"{detail}; meta root={db_root};{next_step(build_command_for(name, root, path))}")
         return
     project_mtime = latest_project_mtime(root)
     if project_mtime and path.stat().st_mtime < project_mtime and stale_is_warn:
-        add(checks, name, "WARN", f"{detail}; older than project files")
+        add(checks, name, "WARN", f"{detail}; older than project files;{next_step(build_command_for(name, root, path))}")
         return
     add(checks, name, "OK", detail)
 
 
 def check_link_map(checks: list[Check], link_db: Path) -> None:
     if not link_db.exists():
-        add(checks, "link-map", "WARN", f"missing {link_db}")
+        add(
+            checks,
+            "link-map",
+            "WARN",
+            f"missing {link_db}; next: gx3-cli link-map build --project LABEL=<project-root> --out {link_db}",
+        )
         return
     try:
         con = sqlite3.connect(link_db)
@@ -151,9 +171,12 @@ def check_link_map(checks: list[Check], link_db: Path) -> None:
         links = con.execute("select count(*) from link_map").fetchone()[0]
         con.close()
     except sqlite3.Error as exc:
-        add(checks, "link-map", "ERROR", f"cannot read {link_db}: {exc}")
+        add(checks, "link-map", "ERROR", f"cannot read {link_db}: {exc}; next: rebuild with gx3-cli link-map build --project LABEL=<project-root> --out {link_db}")
         return
-    add(checks, "link-map", "OK" if links else "WARN", f"{link_db}; projects={projects} links={links}")
+    detail = f"{link_db}; projects={projects} links={links}"
+    if not links:
+        detail += "; next: add multiple --project entries or review communication devices"
+    add(checks, "link-map", "OK" if links else "WARN", detail)
 
 
 def print_checks(checks: list[Check]) -> None:
