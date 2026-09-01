@@ -25,6 +25,7 @@ JSON, and a console summary. Uncertain math findings are severity=info.
 """
 
 import argparse
+import contextlib
 import json
 import re
 import sqlite3
@@ -452,6 +453,9 @@ def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
 
 @register("comment-conflict", "duplicate or contradictory device comments")
 def check_comment_conflict(ctx: LintContext) -> list[dict[str, object]]:
+    if not ctx.rows:
+        print("  comment-conflict: no ladder rows found; check skipped")
+        return []
     if ctx.lite is None:
         print("  comment-conflict: index DB not found; run `gx3_cli.py index-lite build --root <root>` first (check skipped)")
         return []
@@ -773,6 +777,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="link-map sqlite path for link-range check")
     parser.add_argument("--out-prefix", default=default_output_prefix("lint"), help="output CSV/JSON prefix")
     parser.add_argument("--list-checks", action="store_true", help="list available checks and exit")
+    parser.add_argument("--format", choices=["text", "json"], default="text", help="stdout format")
     parser.add_argument("--fail-on", default="", help="exit non-zero if any finding has one of these severities, e.g. high")
     return parser
 
@@ -796,32 +801,37 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"unknown check(s): {', '.join(unknown)} (available: {', '.join(CHECKS)})")
 
     root = Path(args.root)
-    print(f"lint root: {root}")
-    print("loading ladder rows and comments ...")
-    comments = load_comments_for_root(root)
-    rows = load_rows(root, comments)
+    status_out = sys.stderr if args.format == "json" else sys.stdout
+    with contextlib.redirect_stdout(status_out):
+        print(f"lint root: {root}")
+        print("loading ladder rows and comments ...")
+        comments = load_comments_for_root(root)
+        rows = load_rows(root, comments)
 
-    xref_path = Path(args.xref_db) if args.xref_db else xref_db_path(root)
-    lite_path = Path(args.index_db) if args.index_db else Path(lite_db_path(root))
-    link_path = Path(args.link_db) if args.link_db else Path()
-    ctx = LintContext(
-        root=root,
-        rows=rows,
-        comments=comments,
-        xref=open_optional(xref_path),
-        lite=open_optional(lite_path),
-        link=open_optional(link_path) if link_path else None,
-        project_label=project_label_from_root(root),
-    )
+        xref_path = Path(args.xref_db) if args.xref_db else xref_db_path(root)
+        lite_path = Path(args.index_db) if args.index_db else Path(lite_db_path(root))
+        link_path = Path(args.link_db) if args.link_db else Path()
+        ctx = LintContext(
+            root=root,
+            rows=rows,
+            comments=comments,
+            xref=open_optional(xref_path),
+            lite=open_optional(lite_path),
+            link=open_optional(link_path) if link_path else None,
+            project_label=project_label_from_root(root),
+        )
 
-    print(f"rows={len(rows)} xref={'ok' if ctx.xref else 'missing'} index={'ok' if ctx.lite else 'missing'} link={'ok' if ctx.link else 'missing'}")
-    print("running checks:")
-    summary = run_checks(ctx, checks, args.out_prefix)
+        print(f"rows={len(rows)} xref={'ok' if ctx.xref else 'missing'} index={'ok' if ctx.lite else 'missing'} link={'ok' if ctx.link else 'missing'}")
+        print("running checks:")
+        summary = run_checks(ctx, checks, args.out_prefix)
 
     summary_path = Path(f"{args.out_prefix}_summary.json")
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"total findings: {summary['total_findings']}")
-    print(f"summary: {summary_path}")
+    if args.format == "json":
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        print(f"total findings: {summary['total_findings']}")
+        print(f"summary: {summary_path}")
 
     if args.fail_on:
         fail_sevs = {s.strip() for s in args.fail_on.split(",") if s.strip()}

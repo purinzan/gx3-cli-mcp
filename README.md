@@ -256,6 +256,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
 | List lint checks and rule IDs | `gx3-cli lint --list-checks` |
+| Emit lint summary JSON | `gx3-cli lint project.gx3 --format json` |
 | Create a support summary | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
 | Capture a parser failure as a regression case | `gx3-cli failure-corpus capture --root project.gx3 --case-id case-name --reason "what failed"` |
 | Rerun captured failure cases | `gx3-cli failure-corpus run` |
