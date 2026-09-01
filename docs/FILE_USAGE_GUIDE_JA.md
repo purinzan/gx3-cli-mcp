@@ -149,6 +149,7 @@
 | `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
+| `test_gx3_doctor_next_steps.py` | doctor の WARN/ERROR が次の一手を出すこと。 |
 | `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |
 | `test_gx3_live_read.py` | MC Protocol/SLMP 3E binary read frame と応答 decode。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
