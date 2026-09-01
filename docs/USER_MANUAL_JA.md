@@ -51,10 +51,12 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | xref DB を作る | `gx3-cli xref build --root project.gx3` |
 | デバイス情報を見る | `gx3-cli query-device M100 --root project.gx3` |
 | コメント語句から探す | `gx3-cli query-comment "起動" --root project.gx3` |
+| 同義語も広げてコメント検索する | `gx3-cli query-comment alarm --root project.gx3 --expand-synonyms` |
 | 外部入力、HMI、通信境界を見る | `gx3-cli query-external --root project.gx3` |
 | サイクル、ステップ、状態系候補を見る | `gx3-cli query-cycle --root project.gx3` |
 | 使用デバイス範囲と空き領域を見る | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | writer/reader と POU/step を見る | `gx3-cli xref where-used M100 --root project.gx3` |
+| スクリプト向け JSON を出す | `gx3-cli query-device M100 --root project.gx3 --json` |
 | デバイス辞書を出力する | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | コイル成立条件を追う | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |

@@ -255,10 +255,12 @@ When you pass a `.gx3` file, the tool extracts it into
 | Build cross references | `gx3-cli xref build --root project.gx3` |
 | Look up one device | `gx3-cli query-device M100 --root project.gx3` |
 | Search by comment text | `gx3-cli query-comment "起動" --root project.gx3` |
+| Search comments with synonyms | `gx3-cli query-comment alarm --root project.gx3 --expand-synonyms` |
 | Show external/HMI/communication boundary devices | `gx3-cli query-external --root project.gx3` |
 | Find cycle, step, or state candidates | `gx3-cli query-cycle --root project.gx3` |
 | Show used/free device ranges | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | Show writers/readers | `gx3-cli xref where-used M100 --root project.gx3` |
+| Emit script-friendly JSON | `gx3-cli query-device M100 --root project.gx3 --json` |
 | Export device dictionary | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | Generate structure/device-flow graphs | `gx3-cli graph --root project.gx3 --type structure --format mermaid` |
@@ -416,11 +418,12 @@ out of scope.
 Recommended reading:
 
 1. [User manual (JA)](docs/USER_MANUAL_JA.md): Japanese install and usage guide.
-2. [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md): how AI agents should use the indexed tools.
-3. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
-4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
-5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
-6. [GitHub project review (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md): related GX Works3/GX3/MELSEC projects and design takeaways.
+2. [User manual (EN)](docs/USER_MANUAL_EN.md): English quick start and core workflows.
+3. [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md): how AI agents should use the indexed tools.
+4. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
+5. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
+6. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
+7. [GitHub project review (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md): related GX Works3/GX3/MELSEC projects and design takeaways.
 
 [llms.txt](llms.txt) is a short machine-readable summary of what this project is
 and is not, for tools that index repositories for AI assistants.

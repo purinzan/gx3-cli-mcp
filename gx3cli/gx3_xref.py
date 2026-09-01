@@ -20,6 +20,7 @@ Subcommands:
 
 import argparse
 import csv
+import json
 import re
 import sqlite3
 import sys
@@ -177,6 +178,10 @@ def fmt_row(r: sqlite3.Row) -> str:
     return f"  {r['pou']:<6} {step:<7} {opcode:<9} {r['access']:<5}{detail}{consts}{title}"
 
 
+def row_dict(row: sqlite3.Row) -> dict[str, object]:
+    return {key: row[key] for key in row.keys()}
+
+
 def where_used(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
@@ -187,10 +192,32 @@ def where_used(args: argparse.Namespace) -> int:
         print(f"no occurrences: {device}")
         return 1
     comment = next((r["comment"] for r in rows if r["comment"]), "")
-    print(f"{device} {comment}".rstrip())
     writers = [r for r in rows if r["access"] in {"write", "both"}]
     readers = [r for r in rows if r["access"] == "read"]
     refs = [r for r in rows if r["access"] == "ref"]
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "command": "xref where-used",
+                    "root": str(args.root),
+                    "results": [
+                        {
+                            "device": device,
+                            "comment": comment,
+                            "writers": [row_dict(r) for r in writers],
+                            "readers": [row_dict(r) for r in readers],
+                            "refs": [row_dict(r) for r in refs],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        con.close()
+        return 0
+    print(f"{device} {comment}".rstrip())
     print(f"\nWriters ({len(writers)}):")
     for r in writers:
         print(fmt_row(r))
@@ -391,6 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="link-map sqlite path for --cross")
     p.add_argument("--cross-limit", type=int, default=20, help="maximum linked devices to show")
     p.add_argument("--cross-xref-limit", type=int, default=80, help="maximum xref rows per linked device")
+    p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
     p.set_defaults(func=where_used)
 
     p = sub.add_parser("downstream", help="BFS impact trace from one device")
@@ -412,7 +440,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     return int(args.func(args))
 
