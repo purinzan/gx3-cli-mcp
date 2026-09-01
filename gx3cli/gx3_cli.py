@@ -13,6 +13,7 @@ import sqlite3
 
 from gx3cli.gx3_project_paths import (
     LEGACY_ROOT_ENV,
+    REPORT_URL,
     ROOT_ENV,
     ProjectRootError,
     default_comm_prefix,
@@ -290,8 +291,17 @@ def format_subprocess_failure(stderr: str) -> str:
             f"Reason: {last_line}",
             "",
             "This may be an unsupported GX Works3 format or a parser coverage gap.",
-            "Try: gx3-cli parse-gaps --root <project>",
-            "For support: gx3-cli support-bundle --root <project>",
+            "",
+            "1. See which rows could not be parsed:",
+            "     gx3-cli parse-gaps --root <project>",
+            "2. Build a redacted bundle (no ladder body, no device comments):",
+            "     gx3-cli support-bundle --root <project>",
+            "3. Report it, and attach that bundle:",
+            f"     {REPORT_URL}",
+            "",
+            "Reports are what fix parser gaps. Do not paste project data,",
+            "device comments, equipment names or addresses -- the bundle is",
+            "redacted for exactly that reason.",
         ]
     )
 
