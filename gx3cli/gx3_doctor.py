@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gx3cli.gx3_cli import BASE_DIR, COMMANDS, project_label_from_root
-from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
+from gx3cli.gx3_project_paths import (
+    ProjectRootError,
+    archive_container_kind,
+    archive_tool_candidates,
+    default_project_root,
+    resolve_project_root,
+)
 from gx3cli.gx3_version import package_version
 
 
@@ -79,6 +85,28 @@ def check_runtime(checks: list[Check], index_dir: Path) -> None:
     add(checks, "index-db-count", "OK" if index_dir.exists() else "WARN", str(len(list(index_dir.glob('*.sqlite'))) if index_dir.exists() else 0))
     root_env = os.environ.get("PROJECT_ROOT") or os.environ.get("GX3_ROOT") or ""
     add(checks, "root-env", "OK" if root_env else "WARN", root_env or "PROJECT_ROOT/GX3_ROOT not set")
+    tools = archive_tool_candidates()
+    add(checks, "7z-extractor", "OK" if tools else "WARN", ", ".join(tools) if tools else "not found; set GX3_7Z or install 7-Zip/7zz")
+
+
+def check_input_path(checks: list[Check], raw_root: Path) -> None:
+    path = raw_root.expanduser()
+    if not path.exists():
+        add(checks, "input-path", "ERROR", f"missing {path}")
+        return
+    if path.is_dir():
+        add(checks, "input-kind", "OK", "extracted-folder")
+        return
+    suffix = path.suffix.lower()
+    if suffix == ".gx3":
+        kind = archive_container_kind(path)
+        status = "OK" if kind == "zip" else ("WARN" if kind == "7z" else "ERROR")
+        detail = f".gx3 container={kind}"
+        if kind == "7z":
+            detail += "; may require 7-Zip or GX Works3 export when encrypted"
+        add(checks, "input-kind", status, detail)
+        return
+    add(checks, "input-kind", "WARN", f"file suffix={suffix or '(none)'}; expected .gx3 or extracted folder")
 
 
 def check_root(checks: list[Check], root: Path) -> None:
@@ -143,11 +171,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-script-check", action="store_true", help="skip command script presence checks")
     args = parser.parse_args(argv)
 
-    root = resolve_project_root(args.root)
-    label = project_label_from_root(root)
+    raw_root = Path(args.root)
+    label = project_label_from_root(raw_root)
     index_dir = Path(args.index_dir)
     checks: list[Check] = []
     check_runtime(checks, index_dir)
+    check_input_path(checks, raw_root)
+    try:
+        root = resolve_project_root(args.root)
+        label = project_label_from_root(root)
+    except ProjectRootError as exc:
+        add(checks, "project-root", "ERROR", str(exc))
+        print_checks(checks)
+        return 0 if args.warn_only else 1
     if not args.no_script_check:
         check_python_scripts(checks)
     check_root(checks, root)

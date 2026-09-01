@@ -42,6 +42,7 @@ PLC 技術者はラダーを読みます。ラダーを説明する JSON を見�
 - 最初に `doctor` で解析対象と補助 DB の状態を確認する。
 - 通常の検索は `index-lite`、`query-*`、`xref` を使う。
 - 回答根拠は `trace-device`、`ladder-print`、`same-row`、`block-context` で確認する。
+- 外部の live/OPC/SLMP ツールとつなぐ場合は、まず `device-dictionary` でデバイス辞書を出す。
 - 生成された抽出フォルダに対する全文検索を主手段にしない。
 - 不明な場合は `gx3-cli list` と `gx3-cli help <command> [subcommand]` を見る。
 - ファイル別の役割は `docs/FILE_USAGE_GUIDE_JA.md` を見る。
@@ -52,6 +53,7 @@ PLC 技術者はラダーを読みます。ラダーを説明する JSON を見�
 gx3-cli doctor --root project.gx3
 gx3-cli index-lite build --root project.gx3
 gx3-cli xref build --root project.gx3
+gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json
 ```
 
 `.gx3` を指定した場合は `.gx3_cache\<sha256>\` に展開されます。以後のコマンドも `--root project.gx3` のままで実行できます。
@@ -83,6 +85,7 @@ gx3-cli xref downstream M100 --root project.gx3
 ```powershell
 gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact
 gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100
+gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100 --live-values live.json --format json
 gx3-cli same-row M100 --root project.gx3
 gx3-cli block-context M100 --root project.gx3
 gx3-cli signal-classify M100 --root project.gx3

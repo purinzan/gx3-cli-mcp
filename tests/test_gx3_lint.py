@@ -18,6 +18,7 @@ from gx3cli.gx3_lint import (
     OpArg,
     RowOp,
     check_div_by_zero,
+    check_comment_conflict,
     check_multi_writer,
     check_signed_compare,
     check_width_mismatch,
@@ -104,9 +105,25 @@ def xref_ctx(records: list[dict[str, object]]) -> LintContext:
     return LintContext(root=Path("."), rows=[], comments={}, xref=con)
 
 
+def lite_ctx_without_ladder_rows() -> LintContext:
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.execute("create table comments (device text, device_type text, number integer, all_text text)")
+    con.executemany(
+        "insert into comments values (?, ?, ?, ?)",
+        [("M100", "M", 100, "duplicate label"), ("M101", "M", 101, "duplicate label")],
+    )
+    con.commit()
+    return LintContext(root=Path("."), rows=[], comments={}, lite=con)
+
+
 def test_registry_has_all_checks() -> None:
     for name in ["duplicate-coil", "multi-writer", "div-by-zero", "width-mismatch", "signed-compare"]:
         assert name in CHECKS, f"missing check: {name}"
+
+
+def test_comment_conflict_skips_without_ladder_rows() -> None:
+    assert check_comment_conflict(lite_ctx_without_ladder_rows()) == []
 
 
 def test_const_int() -> None:
@@ -358,4 +375,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

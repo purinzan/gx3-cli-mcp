@@ -18,6 +18,8 @@
 | ファイル | 役割 |
 |---|---|
 | `README.md` | GitHub のトップ説明。インストール、MCP 設定、基本ワークフロー、全 Markdown へのリンクを持つ。 |
+| `CONTRIBUTING.md` | クローンした利用者/開発者向けの Windows-first PR 手順。ソース問題を再現、検体化、修正、検証して PR する流れ。 |
+| `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
@@ -44,6 +46,7 @@
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
+| `GITHUB_PROJECT_REVIEW_JA.md` | 関連する GX Works3/GX3/MELSEC GitHub プロジェクトの調査結果と設計上の取り込み候補。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
 | `mcp_client_config_console_script.json` | PATH 上の `gx3-mcp-server` を直接起動する MCP 設定例。 |
 
@@ -52,6 +55,15 @@
 | ファイル | 役割 |
 |---|---|
 | `release_gate.py` | 開発者/メンテナ向けの混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
+
+## skills
+
+| ファイル | 役割 |
+|---|---|
+| `skills/gx3-existing-project-audit/SKILL.md` | 既存 `.gx3` の read-only 解析手順。doctor/index/xref/survey/trace/ladder-print の使い分け。 |
+| `skills/gx3-existing-project-audit/agents/openai.yaml` | OpenAI/Codex 側の表示メタデータ。 |
+| `skills/gx3-failure-corpus/SKILL.md` | 解析失敗を `.gx3_failures` の回帰検体へ昇格する手順。 |
+| `skills/gx3-failure-corpus/agents/openai.yaml` | OpenAI/Codex 側の表示メタデータ。 |
 
 ## gx3cli の公開入口
 
@@ -64,6 +76,7 @@
 | `gx3_xref.py` | `xref` | `gx3_xref_where_used`, `gx3_run_command` | writer/reader、下流影響、CSV export。 |
 | `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
+| `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
 | `gx3_tools.py` | `tools`, `inspect`, `sourceinfo`, `version`, `ip-map`, `scon-map`, `query-instruction`, `diff`, `block-context`, `same-row`, `signal-classify`, `impact-add-nc`, `state-chain` | `gx3_run_command` | 補助調査、近傍根拠、状態/命令検索。 |
 | `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。 |
 | `gx3_dead_logic.py` | `dead-logic` | `gx3_dead_logic` | 常時 OFF、未読 coil/word、SET without RST。 |
@@ -75,6 +88,7 @@
 | `extract_hmi_build_info.py` | `hmi-build-info` | `gx3_run_command` | HMI/操作、単動/手動出力候補。 |
 | `extract_comm_refresh_areas.py` | `comm-refresh` | `gx3_run_command` | 通信ユニットとリフレッシュ範囲。 |
 | `gx3_comm_detail.py` | `comm-detail` | `gx3_run_command` | 詳細通信候補と AJ65BT-R2N 設定。 |
+| `gx3_live_read.py` | `live-read` | CLI only | 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する。`--dry-run` / `--explain-frame` は接続せず送信予定 frame を表示する。 |
 | `gx3_w3pa_probe.py` | `w3pa-probe` | `gx3_run_command` | `.w3pa` パラメータ文字列、modules、IP、device candidates。 |
 | `gtx_probe.py` | `gtx-probe` | `gx3_run_command` | GT Designer3 `.gtx` HMI project containers。 |
 | `gx3_dm_probe.py` | `dm-probe` | `gx3_run_command` | `_DM.db` の初期値/保持値。 |
@@ -89,12 +103,15 @@
 | `gx3_timing_chart.py` | `timing-chart` | `gx3_run_command` | link-map/xref から handoff timing draft を生成する。 |
 | `gx3_dependency_flow.py` | `dependency-flow` | `gx3_run_command` | upstream coil dependency の Mermaid flow。 |
 | `gx3_ladder_diagram.py` | `ladder-diagram` | `gx3_run_command` | 対象 device の driver rows を ASCII ladder 化。 |
+| `gx3_graph.py` | `graph` | `gx3_run_command` | structure/device-flow を markdown/mermaid/json で出す統一 graph 入口。 |
+| `gx3_format.py` | internal | internal | LDDB/FBDDB/STDB/MilDB などの形式インベントリを共通化する。 |
 | `gx3_matiec_export.py` | `matiec-st` | `gx3_run_command` | enable logic を MATIEC Structured Text 化。 |
 | `gx3_semantic_diff.py` | `semantic-diff` | `gx3_semantic_diff` | 2 プロジェクトの rung-level diff。 |
 | `review_gx3_project.py` | `review` | `gx3_run_command` | 静的レビュー CSV 群。 |
 | `gx3_project_survey.py` | `project-survey` | `gx3_run_command` | プロジェクト調査パッケージ。 |
 | `gx3_audit.py` | `audit` | `gx3_run_command` | doctor/index/xref/lint/dead-logic をまとめる。 |
 | `gx3_support_bundle.py` | `support-bundle` | `gx3_run_command` | ラダー本文を含めない診断 ZIP。 |
+| `gx3_failure_corpus.py` | `failure-corpus` | CLI only | 解析失敗した GX3 を回帰検体として保存し、形式検出/schema/doctor/xref/ladder-print/失敗コマンド再実行を回す。 |
 | `gx3_reliability_report.py` | `reliability-report` | `gx3_run_command` | parse gap/decoder coverage の 1 ページ報告。 |
 | `gx3_coverage.py` | `coverage`, `instruction-coverage`, `device-coverage` | `gx3_run_command` | 命令/デバイス知識の coverage。 |
 | `extract_gx3_extended_instruction_knowledge.py` | `extended-instructions` | `gx3_run_command` | 拡張命令/デバイス使用知識の抽出。 |
@@ -131,6 +148,9 @@
 | `test_gx3_version.py` | Python 3.10 で `tomllib` がない場合の version fallback。 |
 | `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
 | `test_gtx_probe.py` | GTX probe。 |
+| `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
+| `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |
+| `test_gx3_live_read.py` | MC Protocol/SLMP 3E binary read frame と応答 decode。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
 
 ## 迷ったときの選び方
@@ -143,4 +163,5 @@
 | 起動しない原因を探す | `trace-device` -> `same-row` -> `block-context` |
 | 通信や HMI が絡む | `query-external` -> `external-inputs` -> `network-map` |
 | プロジェクト全体を棚卸ししたい | `audit` -> `project-survey` -> `reliability-report` |
+| 解析失敗を再発防止したい | `failure-corpus capture` -> `failure-corpus run` |
 | サポートへ渡す | `support-bundle` |

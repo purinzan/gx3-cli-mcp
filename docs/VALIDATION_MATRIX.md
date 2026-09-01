@@ -11,6 +11,12 @@
 ## 現時点で言えること
 
 - 合成プロジェクトを使った CLI/MCP 回帰テストは通っています。
+- 実プロジェクトで見つかった解析失敗は `gx3-cli failure-corpus capture` で検体化し、`gx3-cli failure-corpus run` で形式検出 / schema / doctor / xref / ladder-print / 失敗コマンド再実行の回帰確認に回せます。
+- FBD/ST/MIL など LDDB がない形式は、未対応/非ラダー形式として検出し、LD 専用チェックはスキップします。これは「解析成功」ではなく「形式を見分けて過信を避ける」ための扱いです。
+- 三菱電機公式の e-learning / FB library サンプルには 7z/AES 形式の `.gx3` が含まれることを確認しています。CLI はコンテナ種別を検出し、外部の 7-Zip/7zz/bsdtar で展開を試みますが、暗号化されている場合は復号せず、GX Works3 で展開/エクスポートしたフォルダを入力してください。
+- `gx3-cli graph` は既存の program map / device-flow 解析をまとめる可視化入口です。初期版は markdown / Mermaid / JSON 出力で、設備変更判断ではなく説明・レビュー補助として使ってください。
+- `gx3-cli live-read` は MC Protocol/SLMP 3E binary の batch read を使う CLI-only 機能です。合成 TCP サーバーで frame/decode を検証していますが、実設備では PLC 設定、ポート、ネットワーク権限、現場ルールを確認してください。
+- `gx3-cli ladder-print --live-values` は取得済み JSON をラダー根拠に重ねます。接点単位の `pass/block` 注記であり、PLC からの継続監視やスキャン同期した波形記録ではありません。
 - MCP サーバーは project-read-only の allowlist を使っています。
 - `.gx3`、`.gtx`、DB、CAB、CSV、PDF、鍵ファイルなどを公開成果物に含めないチェックを CI で実行しています。
 
@@ -22,3 +28,12 @@
 - このツールは Mitsubishi Electric の公式または公認ツールではありません。
 
 実プロジェクトで使う場合は、`gx3-cli reliability-report --root project.gx3 -o reliability.md` を保存し、parse gap や decoder coverage を確認してください。
+
+解析できなかった `.gx3` は、修正前に以下のように保存してください。
+
+```powershell
+gx3-cli failure-corpus capture --root project.gx3 --case-id short-name --reason "what failed" --failed-command "gx3-cli xref build --root {root} --db {reports_dir}/xref.sqlite"
+gx3-cli failure-corpus run
+```
+
+顧客データを含む検体は公開リポジトリへ含めず、ローカルまたは許可された非公開環境で管理してください。

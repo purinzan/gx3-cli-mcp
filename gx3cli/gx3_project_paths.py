@@ -4,6 +4,7 @@ import os
 import hashlib
 import shutil
 import sqlite3
+import subprocess
 import zipfile
 from pathlib import Path
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ OUTPUT_PREFIX_ENV = "PROJECT_OUTPUT_PREFIX"
 LEGACY_OUTPUT_PREFIX_ENV = "GX3_OUTPUT_PREFIX"
 COMM_PREFIX_ENV = "PROJECT_COMM_PREFIX"
 LEGACY_COMM_PREFIX_ENV = "GX3_COMM_PREFIX"
+SEVEN_ZIP_ENV = "GX3_7Z"
 
 
 class ProjectRootError(ValueError):
@@ -127,8 +129,89 @@ def _project_root_inside_cache(cache_root: Path) -> Path:
     return cache_root
 
 
+def archive_container_kind(path: Path) -> str:
+    try:
+        with path.open("rb") as f:
+            head = f.read(8)
+    except OSError:
+        return "unknown"
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+        return "zip"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
+    return "unknown"
+
+
+def _short_archive_error(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "archive tool failed"
+    lines = stripped.splitlines()
+    if len(lines) > 8:
+        stripped = "\n".join(lines[:8]) + f"\n... ({len(lines) - 8} more lines)"
+    if len(stripped) > 1200:
+        stripped = stripped[:1200].rstrip() + "..."
+    return stripped
+
+
+def archive_tool_candidates() -> list[str]:
+    """Return archive tools the CLI will try for 7z-style GX3 containers."""
+
+    candidates = [os.environ[SEVEN_ZIP_ENV]] if os.environ.get(SEVEN_ZIP_ENV) else []
+    candidates.extend(tool for tool in ("7z", "7zz", "7za") if shutil.which(tool))
+    bsdtar = shutil.which("bsdtar")
+    if bsdtar:
+        candidates.append(bsdtar)
+    out: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
+
+
+def _extract_with_external_archive_tool(source: Path, dest: Path) -> bool:
+    """Extract non-ZIP GX3 containers when a local archive tool is available."""
+
+    errors: list[str] = []
+    seven_zip_candidates = [tool for tool in archive_tool_candidates() if Path(tool).name.lower() not in {"bsdtar"}]
+    for seven_zip in seven_zip_candidates:
+        try:
+            subprocess.run(
+                [seven_zip, "x", "-y", f"-o{dest}", str(source)],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            return True
+        except FileNotFoundError:
+            errors.append(f"{seven_zip}: executable not found")
+        except subprocess.CalledProcessError as exc:
+            errors.append(f"{seven_zip}: {_short_archive_error(exc.stderr or exc.stdout or str(exc))}")
+            break
+    bsdtar = shutil.which("bsdtar")
+    if bsdtar:
+        try:
+            subprocess.run(
+                [bsdtar, "-xf", str(source), "-C", str(dest)],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            return True
+        except subprocess.CalledProcessError as exc:
+            errors.append(f"bsdtar: {_short_archive_error(exc.stderr or exc.stdout or str(exc))}")
+    if errors:
+        raise ProjectRootError("cannot extract 7z-format .gx3 archive; " + " | ".join(errors))
+    return False
+
+
 def extract_gx3_archive(path: Path) -> Path:
-    """Extract a .gx3 ZIP archive into .gx3_cache/<sha256>/ and return its root."""
+    """Extract a .gx3 archive into .gx3_cache/<sha256>/ and return its root."""
 
     source = path.expanduser().resolve()
     if not source.exists():
@@ -150,11 +233,23 @@ def extract_gx3_archive(path: Path) -> Path:
         shutil.rmtree(tmp_root)
     try:
         tmp_root.mkdir(parents=True, exist_ok=False)
-        with zipfile.ZipFile(source) as zf:
-            bad_member = zf.testzip()
-            if bad_member:
-                raise ProjectRootError(f"corrupt member in .gx3 archive: {bad_member}")
-            zf.extractall(tmp_root)
+        if archive_container_kind(source) == "zip":
+            with zipfile.ZipFile(source) as zf:
+                bad_member = zf.testzip()
+                if bad_member:
+                    raise ProjectRootError(f"corrupt member in .gx3 archive: {bad_member}")
+                zf.extractall(tmp_root)
+        elif archive_container_kind(source) == "7z":
+            if not _extract_with_external_archive_tool(source, tmp_root):
+                raise ProjectRootError(
+                    "cannot open 7z-format .gx3 archive; install 7-Zip/7zz or bsdtar and retry"
+                )
+        else:
+            with zipfile.ZipFile(source) as zf:
+                bad_member = zf.testzip()
+                if bad_member:
+                    raise ProjectRootError(f"corrupt member in .gx3 archive: {bad_member}")
+                zf.extractall(tmp_root)
         (tmp_root / ".gx3_cache_complete").write_text("", encoding="utf-8")
         if cache_root.exists():
             shutil.rmtree(cache_root)
@@ -197,11 +292,14 @@ def project_root_error_message(reason: str) -> str:
             "  1. Confirm the input is a supported GX Works3 .gx3 file or an extracted",
             "     project folder. A .gx3 saved with the compressed/lightweight option is",
             "     password protected and cannot be read by this tool.",
-            "  2. For parser coverage issues, run:",
+            "  2. If the .gx3 is a 7z/encrypted container, export or extract it with",
+            "     GX Works3 first, or set GX3_7Z to your 7-Zip executable for normal",
+            "     7z containers.",
+            "  3. For parser coverage issues, run:",
             "       gx3-cli parse-gaps --root <project>",
-            "  3. Build a redacted bundle (no ladder body, no device comments):",
+            "  4. Build a redacted bundle (no ladder body, no device comments):",
             "       gx3-cli support-bundle --root <project>",
-            "  4. Report it, and attach that bundle:",
+            "  5. Report it, and attach that bundle:",
             f"       {REPORT_URL}",
             "",
             "Reports are what fix parser gaps. Do not paste project data, device",

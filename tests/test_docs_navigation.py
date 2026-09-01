@@ -29,7 +29,7 @@ def test_file_usage_guide_indexes_repository_files() -> None:
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in {".git", "__pycache__", ".pytest_cache", "build", "dist"} for part in path.parts):
+        if any(part in {".git", "__pycache__", ".pytest_cache", ".gx3_index", "build", "dist", "outputs"} for part in path.parts):
             continue
         if any(part.endswith(".egg-info") for part in path.parts):
             continue

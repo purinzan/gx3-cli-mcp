@@ -1,7 +1,25 @@
 from pathlib import Path
 
 from gx3cli.gx3_intermediate_tool import pcode_path_for_stepinfo
-from gx3cli.gx3_project_paths import convertdata_path, iter_convertdata_entries, is_extracted_gx3_root
+from gx3cli.gx3_project_paths import (
+    archive_container_kind,
+    convertdata_path,
+    iter_convertdata_entries,
+    is_extracted_gx3_root,
+)
+
+
+def test_archive_container_kind_detects_zip_and_7z(tmp_path: Path) -> None:
+    zip_file = tmp_path / "zip.gx3"
+    zip_file.write_bytes(b"PK\x03\x04rest")
+    seven_zip_file = tmp_path / "seven.gx3"
+    seven_zip_file.write_bytes(b"7z\xbc\xaf\x27\x1c\x00\x04rest")
+    unknown_file = tmp_path / "plain.gx3"
+    unknown_file.write_text("not an archive", encoding="utf-8")
+
+    assert archive_container_kind(zip_file) == "zip"
+    assert archive_container_kind(seven_zip_file) == "7z"
+    assert archive_container_kind(unknown_file) == "unknown"
 
 
 def test_iter_convertdata_entries_supports_normal_layout(tmp_path: Path) -> None:

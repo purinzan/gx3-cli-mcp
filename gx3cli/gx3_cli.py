@@ -40,6 +40,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports"),
     "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device"),
     "dependency-flow": CommandSpec("gx3_dependency_flow.py", "render upstream coil dependencies as a Mermaid flow graph"),
+    "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs"),
     "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams"),
     "ladder-print": CommandSpec("gx3_ladder_print.py", "render a whole program in GX Works3 print-text layout (matches GX print output)"),
     "matiec-st": CommandSpec("gx3_matiec_export.py", "export target device enable logic as MATIEC Structured Text"),
@@ -51,6 +52,8 @@ COMMANDS: dict[str, CommandSpec] = {
     "comm-detail": CommandSpec("gx3_comm_detail.py", "extract detailed communication source candidates and AJ65BT-R2N settings"),
     "w3pa-probe": CommandSpec("gx3_w3pa_probe.py", "probe *.w3pa parameter strings, modules, IPs, and device candidates"),
     "link-map": CommandSpec("gx3_link_map.py", "build/query cross-project communication device links"),
+    "live-read": CommandSpec("gx3_live_read.py", "read current PLC device values over MC Protocol/SLMP 3E binary"),
+    "device-dictionary": CommandSpec("gx3_device_dictionary.py", "export GX3 comments and xref usage as a device dictionary"),
     "used-devices": CommandSpec("extract_used_devices_without_comments.py", "extract used devices without comments"),
     "extended-instructions": CommandSpec("extract_gx3_extended_instruction_knowledge.py", "extract instruction/device usage knowledge"),
     "dm-probe": CommandSpec("gx3_dm_probe.py", "decode *_DM.db device-memory initial/retained values"),
@@ -73,6 +76,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates"),
     "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data"),
+    "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures"),
     "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos"),
     "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report"),
     "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic"),
@@ -527,7 +531,10 @@ def hoist_global_options(argv: list[str]) -> list[str]:
 def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
     if command in GLOBAL_ROOT_BEFORE_SUBCOMMAND:
         argv = hoist_global_options(argv)
-    argv = normalize_project_options(normalize_root_options(argv))
+    if command == "doctor":
+        argv = normalize_project_options(argv)
+    else:
+        argv = normalize_project_options(normalize_root_options(argv))
     argv = normalize_positional_project_root(command, argv)
     db, stripped = pop_option(argv, "--db")
     if db and command in {"trace-device", "dependency-flow", "ladder-diagram", "matiec-st"}:

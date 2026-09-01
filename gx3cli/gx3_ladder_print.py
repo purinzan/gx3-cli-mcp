@@ -13,6 +13,7 @@ and ambiguous characters occupy 2 columns, everything else 1.
 """
 
 import argparse
+import json
 import re
 import sys
 import unicodedata
@@ -38,7 +39,7 @@ from gx3cli.gx3_arg_decode import (
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES
 from gx3cli.gx3_ladder_logic import VERTICAL_RE, parse_pos
 from gx3cli.gx3_program_map import ProgramMap, load_program_map
-from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 from gx3cli.review_gx3_project import DEVICE_CODE_BY_TYPE, LadderRow
 from gx3cli.gx3_project_paths import find_comment_db
 
@@ -531,6 +532,87 @@ def comment_text_for(device: str, comments: dict[tuple[str, int], str]) -> str:
     return comments.get(parsed, "")
 
 
+def live_value_label(value: object) -> str:
+    if isinstance(value, bool):
+        return "ON" if value else "OFF"
+    if isinstance(value, (int, float)):
+        return f"{value}"
+    return str(value)
+
+
+def truthy_live_value(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        text = value.strip().upper()
+        if text in {"ON", "TRUE", "1"}:
+            return True
+        if text in {"OFF", "FALSE", "0"}:
+            return False
+    return None
+
+
+def next_device(device: str, offset: int) -> str | None:
+    parsed = parse_display_device(device)
+    if parsed is None:
+        return None
+    dev_type, number = parsed
+    return format_device(dev_type, number + offset)
+
+
+def load_live_values(path: str | None) -> dict[str, object]:
+    if not path:
+        return {}
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    values: dict[str, object] = {}
+    if isinstance(data, dict) and isinstance(data.get("values"), dict):
+        for device, value in data["values"].items():
+            parsed = parse_display_device(str(device))
+            values[format_device(*parsed) if parsed else str(device).upper()] = value
+        return values
+    if isinstance(data, dict) and isinstance(data.get("values"), list) and data.get("device"):
+        for offset, value in enumerate(data["values"]):
+            device = next_device(str(data["device"]), offset)
+            if device:
+                values[device] = value
+        return values
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict) or "device" not in item or "value" not in item:
+                continue
+            parsed = parse_display_device(str(item["device"]))
+            values[format_device(*parsed) if parsed else str(item["device"]).upper()] = item["value"]
+        return values
+    raise ValueError("live values must be a live-read JSON object, a device mapping, or a list of device/value objects")
+
+
+def place_live_annotation(
+    canvas: "RungCanvas",
+    y: int,
+    col: int,
+    role: str,
+    device: str,
+    live_values: dict[str, object],
+) -> None:
+    if not live_values:
+        return
+    parsed = parse_display_device(device)
+    key = format_device(*parsed) if parsed else device.upper()
+    if key not in live_values:
+        return
+    value = live_values[key]
+    state = truthy_live_value(value)
+    suffix = ""
+    if role == "a":
+        suffix = "pass" if state is True else "block" if state is False else ""
+    elif role == "b":
+        suffix = "pass" if state is False else "block" if state is True else ""
+    text = f"live:{live_value_label(value)}" + (f" {suffix}" if suffix else "")
+    canvas.comment_line(y, 0).put(col, pad_field(text, COMMENT_W)[:COMMENT_W])
+
+
 DIGIT_DEV_RE = re.compile(r"^K\d([A-Z]+)([0-9A-F]+)$")
 
 
@@ -633,6 +715,7 @@ def render_rung(
     row: LadderRow,
     comments: dict[tuple[str, int], str],
     step: int | None,
+    live_values: dict[str, object] | None = None,
 ) -> list[str]:
     ops, verticals, wires = parse_rung(row)
     vset_logical = set(verticals)
@@ -759,6 +842,7 @@ def render_rung(
             device = op.operands[0] if op.operands else "?"
             dev_line.put(col, device)
             place_comment(canvas, y, col, comment_text_for(device, comments))
+            place_live_annotation(canvas, y, col, op.role, device, live_values or {})
             add_item(y, col, col + CELL_W, op.x, op.x + 1)
         elif (
             op.is_inline_box
@@ -774,6 +858,7 @@ def render_rung(
             device = op.operands[0] if op.operands else "?"
             dev_line.put(col, device)
             place_comment(canvas, y, col, comment_text_for(device, comments))
+            place_live_annotation(canvas, y, col, "coil", device, live_values or {})
             ends_at_rail.add(y)
             add_item(y, col, RIGHT_RAIL, lx, lx)
             if cell_col(lx) < col:
@@ -940,6 +1025,7 @@ def render_entries(
     lddb_name: str,
     comments: dict[tuple[str, int], str],
     program_map: ProgramMap | None,
+    live_values: dict[str, object] | None = None,
 ) -> list[dict]:
     """Render every row once, keeping section/pos/device metadata for filtering.
 
@@ -964,20 +1050,20 @@ def render_entries(
             entries.append({
                 "blocktype": blocktype, "pos": pos,
                 "title": extract_title_text(data),
-                "devices": frozenset(), "lines": render_statement(data),
+                "devices": frozenset(), "live_devices": [], "step": None, "lines": render_statement(data),
             })
             continue
         if blocktype == 5:  # END block
             step = program_map.step_of(lddb_name, pos) if program_map else None
             entries.append({
                 "blocktype": 5, "pos": pos, "title": None,
-                "devices": frozenset(), "lines": render_end_block(step),
+                "devices": frozenset(), "live_devices": [], "step": step, "lines": render_end_block(step),
             })
             continue
         if blocktype != 0:
             entries.append({
                 "blocktype": blocktype, "pos": pos, "title": None,
-                "devices": frozenset(), "lines": [],
+                "devices": frozenset(), "live_devices": [], "step": None, "lines": [],
             })
             continue
         row = LadderRow(
@@ -996,11 +1082,17 @@ def render_entries(
         try:
             ops, _status = parse_row_occurrences(data)
             devices = frozenset(occ.device for _r, _o, occs, _c in ops for occ in occs)
+            live_devices = [
+                {"role": role, "opcode": opcode, "device": occ.device}
+                for role, opcode, occs, _c in ops
+                for occ in occs
+            ]
         except Exception:
             devices = frozenset()
+            live_devices = []
         entries.append({
             "blocktype": 0, "pos": pos, "title": None,
-            "devices": devices, "lines": render_rung(row, comments, step),
+            "devices": devices, "live_devices": live_devices, "step": step, "lines": render_rung(row, comments, step, live_values),
         })
     return entries
 
@@ -1011,11 +1103,54 @@ def render_program(
     comments: dict[tuple[str, int], str],
     program_map: ProgramMap | None,
     title: str = "",
+    live_values: dict[str, object] | None = None,
 ) -> list[str]:
     out: list[str] = []
-    for entry in render_entries(root, lddb_name, comments, program_map):
+    for entry in render_entries(root, lddb_name, comments, program_map, live_values):
         out.extend(entry["lines"])
     return out
+
+
+def live_overlay_for_devices(devices: list[dict[str, str]], live_values: dict[str, object]) -> list[dict[str, object]]:
+    overlay: list[dict[str, object]] = []
+    for row in devices:
+        device = row["device"]
+        role = row.get("role", "")
+        parsed = parse_display_device(device)
+        key = format_device(*parsed) if parsed else device.upper()
+        item: dict[str, object] = {"device": key, "role": role, "condition": "unknown"}
+        if key in live_values:
+            value = live_values[key]
+            state = truthy_live_value(value)
+            item["value"] = value
+            item["state"] = state
+            if role == "a":
+                item["condition"] = "pass" if state is True else "block" if state is False else "unknown"
+            elif role == "b":
+                item["condition"] = "pass" if state is False else "block" if state is True else "unknown"
+            else:
+                item["condition"] = "observed"
+        overlay.append(item)
+    return overlay
+
+
+def entries_to_json(root: Path, lddb_name: str, entries: list[dict], live_values: dict[str, object]) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    for entry in entries:
+        devices = sorted(str(device) for device in entry["devices"])
+        live_devices = entry.get("live_devices") or [{"device": device, "role": ""} for device in devices]
+        rows.append(
+            {
+                "blocktype": entry["blocktype"],
+                "pos": entry["pos"],
+                "step": entry.get("step"),
+                "title": entry["title"],
+                "devices": devices,
+                "live_overlay": live_overlay_for_devices(live_devices, live_values),
+                "lines": entry["lines"],
+            }
+        )
+    return {"root": str(root), "program": lddb_name, "rows": rows}
 
 
 def scan_sections(entries: list[dict]) -> list[dict]:
@@ -1082,6 +1217,8 @@ def resolve_lddb(root: Path, program: str, pm: ProgramMap) -> str:
     for p in candidates:
         if pm.label(p.name) == program:
             return p.name
+    if program in pm.program_files and len(candidates) == 1:
+        return candidates[0].name
     for p in candidates:
         if p.name.startswith(program):
             return p.name
@@ -1123,24 +1260,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         help="render only rungs that reference DEVICE (any role), plus their section title",
     )
+    parser.add_argument(
+        "--live-values",
+        help="JSON from gx3-cli live-read --format json, a device->value mapping, or a list of device/value objects",
+    )
+    parser.add_argument("--format", choices=["text", "json"], default="text", help="output rendered text or row JSON")
     return parser
 
 
-def main() -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args()
-    root = Path(args.root)
+def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    args = build_parser().parse_args(argv)
+    root = resolve_project_root(args.root)
     pm = load_program_map(root)
     lddb_name = args.program if args.program.endswith("_LDDB.db") else resolve_lddb(root, args.program, pm)
     comments = load_print_comments(root)
+    live_values = load_live_values(args.live_values)
 
     filtering = args.list_sections or args.section or args.pos_range or args.device
     if not filtering:
-        lines = render_program(root, lddb_name, comments, pm, title=args.title)
+        entries = render_entries(root, lddb_name, comments, pm, live_values=live_values)
+        lines = [line for entry in entries for line in entry["lines"]]
     else:
-        entries = render_entries(root, lddb_name, comments, pm)
+        entries = render_entries(root, lddb_name, comments, pm, live_values=live_values)
         if args.list_sections:
             lines = format_section_list(scan_sections(entries))
+            entries = []
         else:
             pos_range = None
             if args.pos_range:
@@ -1159,6 +1305,19 @@ def main() -> int:
             lines = []
             for entry in selected:
                 lines.extend(entry["lines"])
+            entries = selected
+
+    if args.format == "json":
+        text = json.dumps(entries_to_json(root, lddb_name, entries, live_values), ensure_ascii=False, indent=2)
+        if args.output:
+            out_path = Path(args.output)
+            if out_path.parent and not out_path.parent.exists():
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(text + "\n", encoding="utf-8")
+            print(f"written: {args.output} ({len(entries)} rows)")
+        else:
+            print(text)
+        return 0
 
     text = "\r\n".join(lines) + "\r\n"
     if args.output:

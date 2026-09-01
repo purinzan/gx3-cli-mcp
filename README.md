@@ -124,8 +124,10 @@ What it does:
   and reads the SQLite databases and text inside it. The format was worked out
   by looking at project files the author is authorised to work with.
 - It uses only the Python standard library — `zipfile` and `sqlite3`. The
-  project has **no third-party dependencies** and bundles, links against, or
-  redistributes **no Mitsubishi Electric code, libraries, or assets** of any kind.
+  project has **no third-party Python dependencies** and bundles, links against,
+  or redistributes **no Mitsubishi Electric code, libraries, or assets** of any
+  kind. If a `.gx3` uses a 7z-style container, the CLI can try a locally
+  installed archive tool such as 7-Zip/7zz/bsdtar for extraction.
 
 What it does not do:
 
@@ -136,7 +138,9 @@ What it does not do:
   saved with the compressed/lightweight option is password protected, and this
   project contains **no code to decrypt one and will not gain any** — that
   format is listed as unsupported in [Scope](#scope) and stays that way by
-  choice, not by oversight.
+  choice, not by oversight. Some official sample `.gx3` files are 7z/AES
+  containers; if a normal archive tool cannot extract them, export or extract
+  them with GX Works3 first and pass the extracted project folder to this CLI.
 - It does **not** modify the project. The archive is extracted to a local cache
   and only that copy is read; the original file is never written back to.
 - It does **not** communicate with a PLC, a network, or any remote service.
@@ -184,6 +188,8 @@ GX Works3 のライセンス条項や、勤務先・顧客のプロジェクト�
 - It does not provide a GUI in this release.
 - It does not require a license token or paid-plan token.
 - The MCP server does not expose project-mutating commands.
+- `live-read` can contact a PLC, but only when you explicitly provide the
+  connection details. It is CLI-only and read-only.
 
 ## Install
 
@@ -206,6 +212,13 @@ For a local source checkout:
 
 ```powershell
 python -m pip install -e .
+```
+
+If your `.gx3` is a 7z-style container, install 7-Zip or point the CLI at an
+existing executable:
+
+```powershell
+$env:GX3_7Z = "C:\Program Files\7-Zip\7z.exe"
 ```
 
 日本語: 通常は `pip install gx3-cli-mcp` だけで CLI と MCP サーバーの両方が
@@ -246,11 +259,19 @@ When you pass a `.gx3` file, the tool extracts it into
 | Find cycle, step, or state candidates | `gx3-cli query-cycle --root project.gx3` |
 | Show used/free device ranges | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | Show writers/readers | `gx3-cli xref where-used M100 --root project.gx3` |
+| Export device dictionary | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
+| Generate structure/device-flow graphs | `gx3-cli graph --root project.gx3 --type structure --format mermaid` |
+| Read current PLC values | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
+| Overlay current values on ladder evidence | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | Print ladder evidence | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
+| List lint checks and rule IDs | `gx3-cli lint --list-checks` |
+| Emit lint summary JSON | `gx3-cli lint project.gx3 --format json` |
 | Create a support summary | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+| Capture a parser failure as a regression case | `gx3-cli failure-corpus capture --root project.gx3 --case-id case-name --reason "what failed"` |
+| Rerun captured failure cases | `gx3-cli failure-corpus run` |
 
 Use the indexed commands above for normal lookup and discovery. Avoid starting
 AI workflows with raw text search over extracted GX3 files; GX Works3 projects
@@ -287,6 +308,16 @@ If your client can resolve console scripts from PATH:
 The MCP server exposes read-only analysis tools and a restricted command
 runner. Synthetic demo generation is local CLI-only.
 
+## Agent Skills
+
+This repository includes focused skills for agent workflows:
+
+- [Agent guidance](AGENTS.md): short default rules for this repository.
+- [GX3 existing project audit](skills/gx3-existing-project-audit/SKILL.md):
+  read-only `.gx3` analysis workflow.
+- [GX3 failure corpus](skills/gx3-failure-corpus/SKILL.md): capture failed
+  parser/xref/ladder-print/lint cases as regression fixtures.
+
 ## Demo Project
 
 Two synthetic profiles, neither of which contains anything real. See
@@ -298,6 +329,7 @@ start.
 ```powershell
 gx3-cli synthetic-project demo.gx3 --overwrite
 gx3-cli doctor --root demo.gx3
+gx3-cli graph --root demo.gx3 --type structure --format mermaid
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
 
@@ -319,11 +351,61 @@ two devices whose comments contradict each other - so the review commands
 report findings instead of an empty table. This is also the fastest way to
 reproduce a bug for an issue without sending anyone a real project.
 
+## Failure Corpus
+
+When a real `.gx3` exposes a parser, printer, indexing, or lint coverage gap,
+capture it before fixing the bug:
+
+```powershell
+gx3-cli failure-corpus capture --root C:\path\to\project.gx3 --case-id title-row-gap --reason "ladder-print did not detect section titles" --failed-command "gx3-cli ladder-print MAIN --root {root}"
+gx3-cli failure-corpus run
+```
+
+The command stores the case under `.gx3_failures\cases\` with a small
+`case.json` record, then reruns schema, `doctor`, `xref`, `ladder-print`, and
+the captured `--failed-command` for every active case. Use `{root}` and
+`{reports_dir}` placeholders in failed commands so fixtures remain portable.
+Projects with FBD/ST/MIL databases but no LDDB are reported as detected
+unsupported formats, and ladder-only checks are skipped instead of being treated
+as raw extraction failures. This turns one-off GX3 failures into reusable
+regression fixtures.
+
+## Optional Live Read
+
+`gx3-cli live-read` reads current PLC device values over MC Protocol/SLMP 3E
+binary batch read. It does not infer connection targets from a `.gx3` file and
+it is not exposed through MCP; you must explicitly provide the PLC IP/port and
+device range each time.
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word --dry-run
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
+```
+
+Save JSON output and pass it to `ladder-print` when you want GX-print-style
+rung citations with current-value annotations:
+
+```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json -o live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json --format json -o rung-live.json
+```
+
+Contacts are annotated as `live:ON pass`, `live:OFF block`, and so on. Coils
+show their current value. This is a diagnostic overlay, not a PLC monitor loop.
+
+Use this only on equipment you are authorized to access. The command implements
+read-only batch reads; write, run/stop, download, and online edit operations are
+out of scope.
+
 ## Data And Safety
 
 - Project files stay on your machine unless you pass outputs to another tool.
 - Some commands create local files such as SQLite indexes, CSV reports, ZIP
   support bundles, or Markdown summaries.
+- `live-read` can open a TCP connection to real equipment only from the CLI and
+  only with explicit connection parameters.
 - Analysis output is advisory. Verify findings in GX Works3 and through your
   own safety/quality process before changing real equipment.
 - The tool is not a substitute for PLC validation, machine safety review, or
@@ -338,6 +420,7 @@ Recommended reading:
 3. [Security note (JA)](docs/SECURITY_JA.md): local data handling and read-only MCP policy.
 4. [Validation matrix (JA)](docs/VALIDATION_MATRIX.md): verified scope and limitations.
 5. [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md): repository file map for agents and contributors.
+6. [GitHub project review (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md): related GX Works3/GX3/MELSEC projects and design takeaways.
 
 [llms.txt](llms.txt) is a short machine-readable summary of what this project is
 and is not, for tools that index repositories for AI assistants.
@@ -373,6 +456,11 @@ no-project-data rule, the development setup, and what a useful bug report
 contains. Issues labeled `good first issue` are scoped to be approachable
 without deep knowledge of the GX Works3 file format.
 
+If you clone this repository and find a source code problem, prefer sending a
+pull request with the smallest reproduction, a focused fix, and test evidence.
+When the bug is exposed by a `.gx3`, capture it with `failure-corpus` before
+changing parser logic so the failure becomes a regression case.
+
 Before changing or publishing this project, run the same checks used by CI:
 
 ```powershell
@@ -381,3 +469,6 @@ python scripts\release_gate.py .
 python -m build --wheel
 python scripts\release_gate.py dist\gx3_cli_mcp-*.whl
 ```
+
+See [Contributing](CONTRIBUTING.md) for the Windows-first PR workflow and data
+safety rules.

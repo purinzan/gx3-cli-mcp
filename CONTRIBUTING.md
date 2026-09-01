@@ -53,6 +53,27 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
+## If You Find A Source Code Problem
+
+If you clone this repository and find a bug in the CLI, parser, docs, tests, or
+agent guidance, please fix it in a pull request when you can. A good fix usually
+has this shape:
+
+1. Reproduce the problem with the smallest command possible.
+2. If the failure came from a `.gx3`, capture it before changing code:
+
+   ```powershell
+   gx3-cli failure-corpus capture --root C:\path\to\project.gx3 --case-id short-name --reason "what failed" --failed-command "gx3-cli <command> --root {root}"
+   ```
+
+3. Fix the source code without committing private customer projects, extracted
+   databases, generated reports, or machine-specific paths.
+4. Add or update a focused test.
+5. Run the checks below and include the results in the PR.
+
+For private GX3 projects, do not attach the project or ladder body. Describe the
+schema, format inventory, command output, or parse signature instead.
+
 ## Checks To Run
 
 Run the same four commands CI runs. All of them must pass before you open a
@@ -67,6 +88,9 @@ python scripts\release_gate.py dist\gx3_cli_mcp-*.whl
 
 On macOS or Linux, use forward slashes in those paths.
 
+The release gate is intentionally strict. If it blocks a file, either remove the
+generated/private artifact or explain why the rule itself needs to change.
+
 ## Pull Request Guidelines
 
 - Keep one pull request to one concern. Small is much easier to merge.
@@ -74,6 +98,9 @@ On macOS or Linux, use forward slashes in those paths.
 - Match the surrounding code style rather than reformatting nearby code.
 - Update the relevant guide in `docs/` when you change user-facing behavior.
 - Describe how you verified the change, and on what kind of project.
+- Include the `failure-corpus` case id when one was captured.
+- Mention whether the affected case is LD, FBD, ST, MIL, or another GX Works3
+  format when that context matters.
 
 ## Where To Start
 
@@ -99,8 +126,8 @@ Two steps, in this order.
 2. Once the release is live on PyPI, publish the same version to the official
    MCP registry. The registry verifies PyPI ownership by looking for the
    `mcp-name: io.github.purinzan/gx3-cli-mcp` comment at the top of this
-   repository's README, which is what PyPI shows as the package description --
-   so step 1 has to land first.
+   repository's README, which is what PyPI shows as the package description, so
+   step 1 has to land first.
 
    ```powershell
    mcp-publisher login github
@@ -111,7 +138,7 @@ Two steps, in this order.
    to be run by a person.
 
 PyPI never reuses a version number. If a tag is pushed before the version is
-bumped, the workflow stops before publishing -- bump and use the next number
+bumped, the workflow stops before publishing. Bump and use the next number
 rather than retrying the same one.
 
 ## Reporting Bugs
