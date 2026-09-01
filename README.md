@@ -214,6 +214,13 @@ For a local source checkout:
 python -m pip install -e .
 ```
 
+If your `.gx3` is a 7z-style container, install 7-Zip or point the CLI at an
+existing executable:
+
+```powershell
+$env:GX3_7Z = "C:\Program Files\7-Zip\7z.exe"
+```
+
 日本語: 通常は `pip install gx3-cli-mcp` だけで CLI と MCP サーバーの両方が
 入ります。社内プロキシで PyPI に到達できない場合のみ、上の git 直接指定を
 使ってください。
