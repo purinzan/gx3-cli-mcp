@@ -52,6 +52,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "w3pa-probe": CommandSpec("gx3_w3pa_probe.py", "probe *.w3pa parameter strings, modules, IPs, and device candidates"),
     "link-map": CommandSpec("gx3_link_map.py", "build/query cross-project communication device links"),
     "live-read": CommandSpec("gx3_live_read.py", "read current PLC device values over MC Protocol/SLMP 3E binary"),
+    "device-dictionary": CommandSpec("gx3_device_dictionary.py", "export GX3 comments and xref usage as a device dictionary"),
     "used-devices": CommandSpec("extract_used_devices_without_comments.py", "extract used devices without comments"),
     "extended-instructions": CommandSpec("extract_gx3_extended_instruction_knowledge.py", "extract instruction/device usage knowledge"),
     "dm-probe": CommandSpec("gx3_dm_probe.py", "decode *_DM.db device-memory initial/retained values"),
@@ -520,7 +521,10 @@ def hoist_global_options(argv: list[str]) -> list[str]:
 def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
     if command in GLOBAL_ROOT_BEFORE_SUBCOMMAND:
         argv = hoist_global_options(argv)
-    argv = normalize_project_options(normalize_root_options(argv))
+    if command == "doctor":
+        argv = normalize_project_options(argv)
+    else:
+        argv = normalize_project_options(normalize_root_options(argv))
     argv = normalize_positional_project_root(command, argv)
     db, stripped = pop_option(argv, "--db")
     if db and command in {"trace-device", "dependency-flow", "ladder-diagram", "matiec-st"}:

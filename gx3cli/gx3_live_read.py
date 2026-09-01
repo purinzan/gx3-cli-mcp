@@ -171,6 +171,28 @@ def decode_word_values(payload: bytes, value_type: str, count: int) -> list[int 
 
 
 def read_current_values(args: argparse.Namespace) -> dict[str, object]:
+    plan = explain_request(args)
+    frame = bytes.fromhex(str(plan["request_hex"]))
+    if getattr(args, "dry_run", False):
+        return plan
+    device = parse_device(args.device)
+    bit_units = args.type == "bit"
+    read_count = int(plan["read_words"] or args.count)
+    with socket.create_connection((args.ip, args.port), timeout=args.timeout) as sock:
+        sock.settimeout(args.timeout)
+        sock.sendall(frame)
+        header = read_exact(sock, 9)
+        length = int.from_bytes(header[7:9], "little")
+        payload = read_exact(sock, length)
+    raw = parse_3e_binary_response(header + payload)
+    values = decode_bit_values(raw, args.count) if bit_units else decode_word_values(raw, args.type, read_count)
+    result = dict(plan)
+    result["values"] = values
+    result["dry_run"] = False
+    return result
+
+
+def explain_request(args: argparse.Namespace) -> dict[str, object]:
     device = parse_device(args.device)
     bit_units = args.type == "bit"
     read_count = args.count * 2 if args.type in {"dword", "signed-dword", "float"} else args.count
@@ -184,25 +206,25 @@ def read_current_values(args: argparse.Namespace) -> dict[str, object]:
         station=args.station,
         timer=args.timer,
     )
-    with socket.create_connection((args.ip, args.port), timeout=args.timeout) as sock:
-        sock.settimeout(args.timeout)
-        sock.sendall(frame)
-        header = read_exact(sock, 9)
-        length = int.from_bytes(header[7:9], "little")
-        payload = read_exact(sock, length)
-    raw = parse_3e_binary_response(header + payload)
-    values = decode_bit_values(raw, args.count) if bit_units else decode_word_values(raw, args.type, read_count)
     return {
         "ip": args.ip,
         "port": args.port,
         "frame": "3e-binary",
+        "dry_run": True,
         "device": device.display,
         "device_prefix": device.prefix,
         "device_number": device.number,
+        "device_code": f"0x{DEVICE_CODES[device.prefix]:02X}",
         "type": args.type,
         "count": args.count,
         "read_words": read_count if not bit_units else None,
-        "values": values,
+        "bit_units": bit_units,
+        "network": args.network,
+        "pc": args.pc,
+        "io": args.io,
+        "station": args.station,
+        "timer": args.timer,
+        "request_hex": frame.hex(" "),
     }
 
 
@@ -211,8 +233,12 @@ def format_text(result: dict[str, object]) -> str:
     lines = [
         f"PLC: {result['ip']}:{result['port']} ({result['frame']})",
         f"Device: {result['device']} type={result['type']} count={result['count']}",
+        f"Request: device_code={result.get('device_code')} bit_units={result.get('bit_units')} hex={result.get('request_hex')}",
         "Values:",
     ]
+    if result.get("dry_run"):
+        lines[-1] = "Values: (dry-run; no PLC connection opened)"
+        return "\n".join(lines)
     if isinstance(values, list):
         for offset, value in enumerate(values):
             lines.append(f"  +{offset}: {value}")
@@ -232,6 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--io", type=lambda s: int(s, 0), default=0x03FF)
     parser.add_argument("--station", type=int, default=0)
     parser.add_argument("--timer", type=lambda s: int(s, 0), default=0x0010)
+    parser.add_argument("--dry-run", action="store_true", help="print the planned request without opening a PLC connection")
+    parser.add_argument("--explain-frame", action="store_true", help="alias for --dry-run with request frame details")
     parser.add_argument("--format", choices=["text", "json"], default="text")
     parser.add_argument("-o", "--output", help="write output to file")
     return parser
@@ -241,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    if args.explain_frame:
+        args.dry_run = True
     try:
         result = read_current_values(args)
     except (ConnectionError, OSError, RuntimeError, ValueError) as exc:

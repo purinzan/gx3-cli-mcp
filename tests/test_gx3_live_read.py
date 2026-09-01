@@ -7,6 +7,7 @@ import threading
 from gx3cli.gx3_live_read import (
     build_3e_binary_read_frame,
     decode_bit_values,
+    explain_request,
     parse_device,
     read_current_values,
 )
@@ -64,11 +65,18 @@ def main() -> None:
         io=0x03FF,
         station=0,
         timer=0x0010,
+        dry_run=False,
     )
     result = read_current_values(args)
     thread.join(2)
     assert result["values"] == [123, -1]
     assert seen and seen[0] == frame
+
+    args.dry_run = True
+    plan = read_current_values(args)
+    assert plan["dry_run"] is True
+    assert plan["request_hex"] == frame.hex(" ")
+    assert explain_request(args)["device_code"] == "0xA8"
 
     print("live-read checks passed")
 

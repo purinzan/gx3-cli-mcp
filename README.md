@@ -259,6 +259,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Find cycle, step, or state candidates | `gx3-cli query-cycle --root project.gx3` |
 | Show used/free device ranges | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | Show writers/readers | `gx3-cli xref where-used M100 --root project.gx3` |
+| Export device dictionary | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | Generate structure/device-flow graphs | `gx3-cli graph --root project.gx3 --type structure --format mermaid` |
 | Read current PLC values | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
@@ -377,6 +378,7 @@ it is not exposed through MCP; you must explicitly provide the PLC IP/port and
 device range each time.
 
 ```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word --dry-run
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
 ```
@@ -387,6 +389,7 @@ rung citations with current-value annotations:
 ```powershell
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json -o live.json
 gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json --format json -o rung-live.json
 ```
 
 Contacts are annotated as `live:ON pass`, `live:OFF block`, and so on. Coils

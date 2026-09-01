@@ -55,6 +55,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | サイクル、ステップ、状態系候補を見る | `gx3-cli query-cycle --root project.gx3` |
 | 使用デバイス範囲と空き領域を見る | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | writer/reader と POU/step を見る | `gx3-cli xref where-used M100 --root project.gx3` |
+| デバイス辞書を出力する | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | コイル成立条件を追う | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | 現在値をラダー根拠へ重ねる | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
@@ -96,6 +97,7 @@ gx3-cli reliability-report --root project.gx3 -o reliability.md
 `.gx3` から勝手に接続先を探してオンライン監視する機能ではありません。IP、ポート、デバイス、点数を毎回指定します。
 
 ```powershell
+gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word --dry-run
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
 ```
@@ -105,9 +107,20 @@ JSON を保存して `ladder-print` に渡すと、GX 印刷風のラダー根�
 ```powershell
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json -o live.json
 gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
+gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json --format json -o rung-live.json
 ```
 
 A 接点/B 接点には `live:ON pass`、`live:OFF block` のような注記を付けます。コイルは現在値を表示します。これは診断用の重ね合わせで、常時監視ループではありません。
+
+## デバイス辞書
+
+`device-dictionary` は GX3 のデバイスコメントを、外部MCP、OPC UA、Node-RED、現場メモに渡しやすい JSON/CSV にします。xref DB がある場合は read/write 回数、使用 POU、最初の step も付与します。
+
+```powershell
+gx3-cli xref build --root project.gx3
+gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json
+gx3-cli device-dictionary --root project.gx3 --format csv -o address-comment.csv
+```
 
 このコマンドは CLI 専用です。MCP からは公開せず、PLC 書き込み、run/stop、download、online edit は実装しません。
 

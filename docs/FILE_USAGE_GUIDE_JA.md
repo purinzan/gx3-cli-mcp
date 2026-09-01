@@ -74,6 +74,7 @@
 | `gx3_xref.py` | `xref` | `gx3_xref_where_used`, `gx3_run_command` | writer/reader、下流影響、CSV export。 |
 | `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
+| `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
 | `gx3_tools.py` | `tools`, `inspect`, `sourceinfo`, `version`, `ip-map`, `scon-map`, `query-instruction`, `diff`, `block-context`, `same-row`, `signal-classify`, `impact-add-nc`, `state-chain` | `gx3_run_command` | 補助調査、近傍根拠、状態/命令検索。 |
 | `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。 |
 | `gx3_dead_logic.py` | `dead-logic` | `gx3_dead_logic` | 常時 OFF、未読 coil/word、SET without RST。 |
@@ -85,7 +86,7 @@
 | `extract_hmi_build_info.py` | `hmi-build-info` | `gx3_run_command` | HMI/操作、単動/手動出力候補。 |
 | `extract_comm_refresh_areas.py` | `comm-refresh` | `gx3_run_command` | 通信ユニットとリフレッシュ範囲。 |
 | `gx3_comm_detail.py` | `comm-detail` | `gx3_run_command` | 詳細通信候補と AJ65BT-R2N 設定。 |
-| `gx3_live_read.py` | `live-read` | CLI only | 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する。 |
+| `gx3_live_read.py` | `live-read` | CLI only | 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する。`--dry-run` / `--explain-frame` は接続せず送信予定 frame を表示する。 |
 | `gx3_w3pa_probe.py` | `w3pa-probe` | `gx3_run_command` | `.w3pa` パラメータ文字列、modules、IP、device candidates。 |
 | `gtx_probe.py` | `gtx-probe` | `gx3_run_command` | GT Designer3 `.gtx` HMI project containers。 |
 | `gx3_dm_probe.py` | `dm-probe` | `gx3_run_command` | `_DM.db` の初期値/保持値。 |

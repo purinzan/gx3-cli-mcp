@@ -154,12 +154,29 @@ def _short_archive_error(text: str) -> str:
     return stripped
 
 
+def archive_tool_candidates() -> list[str]:
+    """Return archive tools the CLI will try for 7z-style GX3 containers."""
+
+    candidates = [os.environ[SEVEN_ZIP_ENV]] if os.environ.get(SEVEN_ZIP_ENV) else []
+    candidates.extend(tool for tool in ("7z", "7zz", "7za") if shutil.which(tool))
+    bsdtar = shutil.which("bsdtar")
+    if bsdtar:
+        candidates.append(bsdtar)
+    out: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
+
+
 def _extract_with_external_archive_tool(source: Path, dest: Path) -> bool:
     """Extract non-ZIP GX3 containers when a local archive tool is available."""
 
     errors: list[str] = []
-    seven_zip_candidates = [os.environ[SEVEN_ZIP_ENV]] if os.environ.get(SEVEN_ZIP_ENV) else []
-    seven_zip_candidates.extend(tool for tool in ("7z", "7zz", "7za") if shutil.which(tool))
+    seven_zip_candidates = [tool for tool in archive_tool_candidates() if Path(tool).name.lower() not in {"bsdtar"}]
     for seven_zip in seven_zip_candidates:
         try:
             subprocess.run(
