@@ -133,6 +133,7 @@
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。 |
 | `gx3_instruction_table.py` | 命令の書込み先オペランド位置。マニュアルのオペランド表 (SH-081226 ほか) から生成した数値データで、手編集しない。 |
 | `test_gx3_instruction_table.py` | 書込み先オペランド位置がマニュアルどおりであることを検査する。手書き表が個数オペランドを書込み先と誤判定していた退行を防ぐ。 |
+| `test_gx3_exec_condition.py` | 命令の実行条件 (レベル/立上り/立下り) がマニュアルどおりであることを検査する。`endswith("P")` による推測が EXP/NOP を誤判定し `+P_U` 等を見落としていた退行を防ぐ。 |
 | `gx3_project_paths.py` | `.gx3` 展開、root 解決、出力/cache path。 |
 | `gx3_redaction.py` | support/AI context 向けのマスク処理。 |
 | `gx3_version.py` | package/CLI version。 |
