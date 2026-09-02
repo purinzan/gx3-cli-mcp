@@ -9,6 +9,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from gx3cli.gx3_xref import open_xref_db
+
 
 @dataclass(frozen=True)
 class DetectedSignal:
@@ -122,9 +124,7 @@ def project_xref_paths(link_con: sqlite3.Connection) -> dict[str, Path]:
 def open_xref(path: Path) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"xref db not found: {path}")
-    con = sqlite3.connect(path)
-    con.row_factory = sqlite3.Row
-    return con
+    return open_xref_db(path)
 
 
 def first_comment(con: sqlite3.Connection, device: str) -> str:

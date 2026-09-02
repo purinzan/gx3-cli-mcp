@@ -33,7 +33,19 @@ FORBIDDEN_SUFFIXES = {
     ".pji", ".col", ".qpg", ".pcode", ".info", ".csv", ".jwt", ".jwk", ".pem", ".key",
 }
 ALLOWED_METADATA_MARKERS = ("dist-info/", ".egg-info/", "PKG-INFO", "MANIFEST.in", "pyproject.toml", "setup.cfg")
-SKIP_DIR_NAMES = {".git", "__pycache__", ".pytest_cache", "build", "dist", "dist_sdist"}
+# A virtualenv inside the checkout is not part of what gets released, and
+# scanning it reported thousands of findings from vendored packages -- the
+# gate was unusable locally while CI, which has no in-repo venv, was clean.
+SKIP_DIR_NAMES = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "dist_sdist",
+}
 
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 USER_HOME_PATTERN = r"C:" + r"\\Users\\[^\\]+"

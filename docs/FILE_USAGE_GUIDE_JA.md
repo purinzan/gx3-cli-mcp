@@ -34,6 +34,12 @@
 | `test_gx3_device_name_is_the_only_source.py` | 16 進デバイス型の定義が `gx3_device_name.py` 以外に複製されていないことを検査する。DX/DY が 10 進で出る #16 の再発を防ぐ。 |
 | `test_gx3_device_types_contacts.py` | 命名テーブルにあるデバイス型が接点としてヘッダ解析を通ることを検査する。LT/LST/LC/LZ/RD/FX/FY/FD の接点が消えて幻の命令になる退行を防ぐ。 |
 | `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
+| `test_gx3_cli_root_passthrough.py` | --root で指定したプロジェクトが、--root オプションを持たず環境変数から root を読むコマンド（used-devices / hmi-build-info / extended-instructions）まで届くことを検査する。別プロジェクトを黙って解析して成功報告する退行を防ぐ。 |
+| `test_gx3_indexed_buffer_memory.py` | インデックス修飾付きバッファメモリ（U96\G196608Z0）の Zs トークンが消費され、次オペランドの型を奪わないことを検査する。BMOV の D48200Z2 が存在しないインデックスレジスタ Z48200 として記録される退行を防ぐ。 |
+| `test_gx3_xref_decoder_version.py` | xref DB にデコーダ版が刻まれ、別バージョンが書いた DB は読み込み時に拒否されることを検査する。デコーダ修正後も古い DB が lint/trace/dead-logic に黙って読まれる退行を防ぐ。 |
+| `test_gx3_used_devices_source.py` | used-devices のデバイスが共有デコーダ由来であり、16進デバイス型がGX Works3 と同じ綴りで出力されることを検査する。型トークンと数値の位置対応で実在しないデバイスを報告する退行を防ぐ。 |
+| `test_gx3_operand_parse_is_shared.py` | ladder-print と gx3_arg_decode がヘッダトークンの歩進を自前で持たず gx3_operand_parse を共有していること、両者が同じオペランドを見ていることを検査する。同じ解読バグが二重に入る退行を防ぐ。 |
+| `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
 | `parser-gap.yml` | 解析に失敗したときの issue フォーム。実データを貼らせないための注意と確認チェックを先頭に置いている。失敗時のエラーメッセージからこのフォームへ直接リンクする。 |
@@ -132,7 +138,8 @@
 | `gx3_intermediate_tool.py` | LadderBlocks.data を解析し、中間表現/operation model を作る中核 parser。 |
 | `gx3_ladder_logic.py` | 接点/coil/AND/OR/MC zone を論理式にする共通ロジック。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
-| `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。 |
+| `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
+| `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |
 | `gx3_data_flow.py` | 命令の read/write 意味付けから保守的な引数単位のデータフロー辺を生成する。 |
 | `gx3_label_resolve.py` | `LabelData.db` を読み、ラダーの `_lid/<LabelID>/<行>` をラベル名・クラス・割付デバイスへ解決する。 |
 | `test_gx3_label_resolve.py` | ラベル方式のプログラムがラベル名として解読されることを検査する。xref が空になり下流全部が沈黙する退行を防ぐ。 |

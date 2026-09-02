@@ -3,9 +3,14 @@
 Extract devices used in GX Works3/GX3 LadderBlocks and list devices that have no
 non-empty device comment in the project device-comment DB.
 
-This script is intentionally conservative: rows whose LadderBlocks.data operand
-type count does not match parsed operand numbers are still sampled as "partial",
-and the mismatch rows are written to a separate CSV for review.
+Device occurrences come from the shared decoder (gx3_arg_decode), the same one
+the cross-reference and the lite index use. This module used to pair the header
+type tokens with the d{} numbers by position instead, which quietly went wrong
+whenever an operand carried a modifier: on one real project it reported an M80
+the rung does not contain and dropped the K4M49000 it does, on a row it called
+"exact". The count comparison is kept as a diagnostic -- rows where it
+disagrees are still written to the mismatch CSV for review -- but it no longer
+decides what the report says.
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_device_name import format_device
 from gx3cli.gx3_project_paths import default_output_path, default_project_root, find_comment_db
 
 ROOT = default_project_root()
@@ -79,7 +86,10 @@ class Usage:
 
     @property
     def device(self) -> str:
-        return f"{self.device_type}{self.number}"
+        # X, Y, B and W are numbered in hexadecimal. Spelling them here instead
+        # of asking gx3_device_name put W132 in this report as "W306", a name
+        # no other output uses and no engineer would search for.
+        return format_device(self.device_type, self.number)
 
     @property
     def confidence(self) -> str:
@@ -169,6 +179,16 @@ def load_comments() -> tuple[dict[tuple[str, int], bool], dict[tuple[str, int], 
     return has_device, {k: " / ".join(v) for k, v in comments.items()}
 
 
+def row_devices(operations: list) -> list[tuple[str, int]]:
+    """Every device the decoder found in a row, in row order with repeats."""
+    out: list[tuple[str, int]] = []
+    for _role, _opcode, args, _consts in operations:
+        for occ in args:
+            if occ.device_type and occ.number is not None:
+                out.append((occ.device_type, int(occ.number)))
+    return out
+
+
 def collect_usage() -> tuple[dict[tuple[str, int], Usage], list[dict[str, object]], Counter]:
     usage: dict[tuple[str, int], Usage] = {}
     mismatches: list[dict[str, object]] = []
@@ -196,7 +216,16 @@ def collect_usage() -> tuple[dict[tuple[str, int], Usage], list[dict[str, object
             stats["ladder_rows"] += 1
             types = parse_header_operand_types(data)
             numbers = parse_operand_numbers(data)
+            try:
+                operations, decode_status = parse_row_occurrences(data)
+            except Exception:
+                operations, decode_status = [], "partial"
+            # The counts are a diagnostic, not the answer: they disagree on
+            # rows the decoder reads correctly (a constant and a digit
+            # designation each spend tokens without spending a number).
             parse_status = "exact" if len(types) == len(numbers) else "partial"
+            if decode_status != "exact":
+                parse_status = "partial"
             if parse_status == "exact":
                 stats["exact_rows"] += 1
             else:
@@ -217,7 +246,7 @@ def collect_usage() -> tuple[dict[tuple[str, int], Usage], list[dict[str, object
             # In partial rows, zipping is a best-effort sample. Mismatch rows are
             # separately reported so they can be manually checked before using
             # those rows as authoritative.
-            for dev_type, number in zip(types, numbers):
+            for dev_type, number in row_devices(operations):
                 if dev_type not in DEVICE_CODE_BY_TYPE:
                     continue
                 key = (dev_type, int(number))

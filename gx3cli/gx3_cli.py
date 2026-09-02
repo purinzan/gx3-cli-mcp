@@ -590,7 +590,15 @@ def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
         if root and "--root" not in stripped and not any(a.startswith("--root=") for a in stripped):
             stripped.extend(["--root", root])
         return run_python_script(spec.script, stripped, root=root)
-    return run_python_script(spec.script, argv)
+    # Pass --root through the environment as well. Scripts that build their
+    # root at import time (used-devices, hmi-build-info,
+    # extended-instructions) have no --root option and read
+    # default_project_root(), which honours the environment. Without this they
+    # ignored the requested project, auto-detected another one and reported
+    # success on it -- asking for one project and being answered about another,
+    # with no warning.
+    requested_root, _ = pop_option(list(argv), "--root")
+    return run_python_script(spec.script, argv, root=requested_root)
 
 
 def run_tools_command(command: str, argv: list[str]) -> int:

@@ -28,14 +28,13 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     top_level_items,
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
+from gx3cli.gx3_operand_parse import CONST_VALUE_RE, M_CONST_MOD_RE, parse_operands
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
 from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_write_indices
 from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
-INNER_DEV_RE = re.compile(r"d\{[^{}]*?a=(-?\d+)[^{}]*?\}")
-CONST_VALUE_RE = re.compile(r"v=([^:}]+)")
 
 CONTACT_ROLES = {"a", "b", "EG"}
 COIL_ROLES = {"c"}
@@ -108,11 +107,8 @@ COMPARE_RE = re.compile(
     r"^(?:LD|AND|OR)?(?:D|E|\$|DT|TM|ED)?(?:=|<>|<=|>=|<|>)(?:_U)?$"
 )
 
-TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z"}
-SKIP_ARG_TOKENS = {"Ks", "Dots", "Digits"}
-M_CONST_BASE_RE = re.compile(r"b=c\{[^}]*v=(-?\d+)")
-M_INDEX_DEV_RE = re.compile(r"m=d\{[^}]*a=(-?\d+)")
-M_CONST_MOD_RE = re.compile(r"m=c\{[^}]*v=(-?\d+)")
+# The token tables and the operand regexes now live with the walk that uses
+# them, in gx3_operand_parse.
 
 
 @dataclass
@@ -124,6 +120,10 @@ class ArgOcc:
     arg_index: int
     detail: str = ""
     access_basis: str = ""
+    # An index register named as a modifier (the Z2 of D100Z2). The
+    # instruction reads it to work out an address; it never writes it, whatever
+    # it does to the operand the modifier belongs to.
+    is_index_register: bool = False
 
 
 def base_opcode(opcode: str) -> str:
@@ -217,8 +217,8 @@ def parse_row_occurrences(
             role = hop.op
             access = "read" if hop.op in CONTACT_ROLES else "write"
             for a in occ:
-                a.access = access
-                a.access_basis = "ladder contact/coil"
+                a.access = "read" if a.is_index_register else access
+                a.access_basis = "index register" if a.is_index_register else "ladder contact/coil"
             results.append((role, "", occ, const_summary(raw_args)))
             continue
 
@@ -226,6 +226,13 @@ def parse_row_occurrences(
         wset, rmw = write_indices(hop.op, len(raw_args))
         basis = write_index_basis(hop.op, len(raw_args))
         for a in occ:
+            if a.is_index_register:
+                # It shares its arg_index with the operand it modifies, so the
+                # write set would otherwise report the destination's Z as
+                # written -- a device the instruction only ever reads.
+                a.access = "read"
+                a.access_basis = "index register"
+                continue
             if wset is None:
                 a.access = "ref"
             elif a.arg_index in wset:
@@ -250,165 +257,96 @@ def const_summary(raw_args: list[str]) -> str:
 def decode_args(
     raw_args: list[str], arg_tokens: list[str], role: str, labels: LabelResolver | None = None
 ) -> list[ArgOcc]:
-    """Pair raw args with header type tokens and decode every device.
+    """Turn one operation's operands into the occurrences it contains.
 
-    Header token kinds per argument:
-      d{}                -> TYPE
-      c{}                -> K_/H_/E_ constant token
-      B{} buffer memory  -> Us G
-      M{} digit spec     -> TYPE Ks       (K2M35001)
-      M{} bit of word    -> TYPE Dots     (D100.5)
-      M{} const + index  -> K_n Zs        (K2400Z2 in FROM/TO offsets)
-      M{} device + index -> TYPE Zs       (D100Z2)
+    The walk over the header tokens lives in gx3_operand_parse, shared with the
+    printed rung; this turns its result into occurrences. A modified device
+    yields two: the device, and the index register the instruction reads to
+    reach it.
     """
     occs: list[ArgOcc] = []
-    ti = 0
-    n_tokens = len(arg_tokens)
+    for operand in parse_operands(raw_args, arg_tokens):
+        arg_index = operand.arg_index
 
-    def peek() -> str:
-        return arg_tokens[ti] if ti < n_tokens else ""
-
-    def advance() -> str:
-        nonlocal ti
-        tok = peek()
-        if tok:
-            ti += 1
-        return tok
-
-    def skip_to_meaningful() -> None:
-        nonlocal ti
-        while ti < n_tokens:
-            tok = arg_tokens[ti]
-            if (
-                tok in DEVICE_TYPES
-                or tok in TYPE_TOKEN_ALIASES
-                or tok in SKIP_ARG_TOKENS
-                or tok == "G"
-                or re.match(r"^[KHE]_", tok)
-                or tok == "String"
-            ):
-                return
-            ti += 1
-
-    def take_type() -> str:
-        skip_to_meaningful()
-        while ti < n_tokens:
-            tok = advance()
-            if tok in SKIP_ARG_TOKENS:
-                continue
-            alias = TYPE_TOKEN_ALIASES.get(tok, tok)
-            if alias in DEVICE_TYPES or alias == "U":
-                return alias
-            if re.match(r"^[KHE]_", tok) or tok == "String":
-                skip_to_meaningful()
-                continue
-            return ""
-        return ""
-
-    def take_if(*names: str) -> str:
-        skip_to_meaningful()
-        if peek() in names:
-            return advance()
-        return ""
-
-    def take_if_const() -> str:
-        skip_to_meaningful()
-        tok = peek()
-        if re.match(r"^[KHE]_", tok) or tok == "String":
-            return advance()
-        return ""
-
-    for arg_index, arg in enumerate(raw_args):
-        if arg.startswith("l{"):
-            # A label reference. The arg itself is a placeholder ("l{id=#}");
-            # the identity is the "_lid/<LabelID>/<row>" header token.
-            token = next((t for t in arg_tokens[ti:] if t.startswith(LABEL_TOKEN_PREFIX)), "")
-            if token:
-                ti = arg_tokens.index(token, ti) + 1
-            occs.append(make_label_occ(token, arg_index, labels))
+        if operand.kind == "label":
+            occs.append(make_label_occ(operand.label_token, arg_index, labels))
             continue
-        if arg.startswith("c{"):
-            take_if_const()
-            continue
-        if arg.startswith("d{"):
-            dev_type = take_type()
-            m = INNER_DEV_RE.search(arg)
-            if not m or dev_type not in DEVICE_TYPES:
-                continue
-            occs.append(make_occ(dev_type, int(m.group(1)), arg_index))
-        elif arg.startswith("B{"):
-            inner = INNER_DEV_RE.findall(arg)
-            dev_type = take_type()
-            if dev_type == "U" and len(inner) >= 2:
-                unit = int(inner[0])
-                offset = int(inner[1])
-                take_if("G")
+
+        if operand.kind == "const":
+            if operand.index_reg:
+                # K2400Z2: the constant is an offset, the index register is a
+                # device the instruction reads.
+                detail = f"base=K{operand.const_value}+Z{operand.index_reg}"
                 occs.append(
-                    ArgOcc(
-                        device=f"U{unit:X}\\G{offset}",
-                        device_type="UG",
-                        number=offset,
-                        access="",
-                        arg_index=arg_index,
-                        detail=f"unit=0x{unit:X}",
-                    )
+                    make_occ("Z", int(operand.index_reg), arg_index, detail=detail, index_register=True)
                 )
-                for extra in inner[2:]:
-                    occs.append(make_occ("Z", int(extra), arg_index, detail="index register"))
-            elif inner:
-                occs.append(make_occ(dev_type, int(inner[0]), arg_index, detail="range/indexed"))
-        elif arg.startswith("M{"):
-            const_base = M_CONST_BASE_RE.search(arg)
-            index_dev = M_INDEX_DEV_RE.search(arg)
-            const_mod = M_CONST_MOD_RE.search(arg)
-            buffer_inner = INNER_DEV_RE.findall(arg) if "B{" in arg else []
-            if buffer_inner:
-                dev_type = take_type()
-                if dev_type == "U" and len(buffer_inner) >= 2:
-                    unit = int(buffer_inner[0])
-                    offset = int(buffer_inner[1])
-                    take_if("G")
-                    take_if("Dots")
-                    bit = const_mod.group(1) if const_mod else ""
-                    suffix = f".{bit}" if bit else ""
-                    detail = f"unit=0x{unit:X}" + (f" bit={bit}" if bit else "")
-                    occs.append(
-                        ArgOcc(
-                            device=f"U{unit:X}\\G{offset}{suffix}",
-                            device_type="UG",
-                            number=offset,
-                            access="",
-                            arg_index=arg_index,
-                            detail=detail,
-                        )
-                    )
-                    continue
-            if const_base:
-                # constant base with index register: K2400Z2 (header: K_n Zs)
-                take_if_const()
-                take_if("Zs", "Z")
-                if index_dev:
-                    detail = f"base=K{const_base.group(1)}+Z{index_dev.group(1)}"
-                    occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail=detail))
-                continue
-            dev_type = take_type()
-            m = INNER_DEV_RE.search(arg)
-            if not m:
-                continue
-            number = int(m.group(1))
-            if index_dev and index_dev.group(1) != m.group(1):
-                take_if("Zs", "Z")
-                occs.append(make_occ(dev_type, number, arg_index, detail=f"Z{index_dev.group(1)} indexed"))
-                occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail="index register"))
-            elif const_mod:
-                mod_tok = take_if("Ks", "Dots")
-                kind = "digit" if mod_tok == "Ks" else ("bit" if mod_tok == "Dots" else "mod")
-                occs.append(make_occ(dev_type, number, arg_index, detail=f"{kind}=K{const_mod.group(1)}"))
-            else:
-                take_if("Ks", "Dots", "Zs")
-                occs.append(make_occ(dev_type, number, arg_index, detail="modified"))
-        else:
             continue
+
+        if operand.kind == "buffer":
+            suffix = ""
+            detail = f"unit=0x{operand.unit:X}"
+            if operand.bit:
+                suffix = f".{operand.bit}"
+                detail += f" bit={operand.bit}"
+            elif operand.index_reg:
+                suffix = f"Z{operand.index_reg}"
+                detail += f" Z{operand.index_reg} indexed"
+            occs.append(
+                ArgOcc(
+                    device=f"U{operand.unit:X}\\G{operand.number}{suffix}",
+                    device_type="UG",
+                    number=int(operand.number),
+                    access="",
+                    arg_index=arg_index,
+                    detail=detail,
+                )
+            )
+            if operand.index_reg:
+                occs.append(
+                    make_occ("Z", int(operand.index_reg), arg_index, detail="index register", index_register=True)
+                )
+            for extra in operand.extra_numbers:
+                occs.append(make_occ("Z", int(extra), arg_index, detail="index register", index_register=True))
+            continue
+
+        if operand.kind != "device" or operand.number is None:
+            continue
+
+        number = int(operand.number)
+        if operand.raw.startswith("d{"):
+            # A plain device: an unrecognised type here means the header and
+            # the element disagreed, and a guess would be worse than a gap.
+            if operand.device_type in DEVICE_TYPES:
+                occs.append(make_occ(operand.device_type, number, arg_index))
+            continue
+
+        if operand.raw.startswith("B{"):
+            occs.append(make_occ(operand.device_type, number, arg_index, detail="range/indexed"))
+            continue
+
+        if operand.index_reg:
+            occs.append(
+                make_occ(operand.device_type, number, arg_index, detail=f"Z{operand.index_reg} indexed")
+            )
+            occs.append(
+                make_occ("Z", int(operand.index_reg), arg_index, detail="index register", index_register=True)
+            )
+            continue
+
+        if operand.digit:
+            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"digit=K{operand.digit}"))
+            continue
+        if operand.bit:
+            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"bit=K{operand.bit}"))
+            continue
+
+        const_mod = M_CONST_MOD_RE.search(operand.raw)
+        if const_mod:
+            # A modifier the header named no token for. It stays reported as a
+            # modification rather than being spelled into the device name.
+            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"mod=K{const_mod.group(1)}"))
+            continue
+        occs.append(make_occ(operand.device_type, number, arg_index, detail="modified"))
 
     return occs
 
@@ -440,7 +378,9 @@ def make_label_occ(token: str, arg_index: int, labels: LabelResolver | None) -> 
     )
 
 
-def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> ArgOcc:
+def make_occ(
+    dev_type: str, number: int, arg_index: int, detail: str = "", index_register: bool = False
+) -> ArgOcc:
     dev_type = dev_type or "?"
     return ArgOcc(
         device=_format_device(dev_type, number) if dev_type != "?" else f"?{number}",
@@ -449,4 +389,5 @@ def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> Ar
         access="",
         arg_index=arg_index,
         detail=detail,
+        is_index_register=index_register,
     )

@@ -43,7 +43,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     top_level_items,
 )
 from gx3cli.gx3_arg_decode import ArgOcc, base_opcode, decode_args
-from gx3cli.gx3_xref import default_db_path as xref_db_path
+from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
 from gx3cli.gx3_index_lite import default_db_path as lite_db_path
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 from gx3cli.gx3_cli import project_label_from_root
@@ -844,6 +844,17 @@ def check_signed_compare(ctx: LintContext) -> list[dict[str, object]]:
 # --------------------------------------------------------------------------
 
 
+def open_checked_xref(path: Path) -> sqlite3.Connection | None:
+    """The xref db, refused when another decoder version wrote it.
+
+    open_optional() serves the lite index and the link map too, and the lite
+    index carries its own guard, so only this one goes through the xref check.
+    """
+    if not path.exists():
+        return None
+    return open_xref_db(path, read_only=True)
+
+
 def open_optional(path: Path) -> sqlite3.Connection | None:
     if not path.exists():
         return None
@@ -919,7 +930,7 @@ def main(argv: list[str] | None = None) -> int:
             root=root,
             rows=rows,
             comments=comments,
-            xref=open_optional(xref_path),
+            xref=open_checked_xref(xref_path),
             lite=open_optional(lite_path),
             link=open_optional(link_path) if link_path else None,
             project_label=project_label_from_root(root),
