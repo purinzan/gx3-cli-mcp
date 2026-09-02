@@ -19,6 +19,7 @@ from pathlib import Path
 
 from gx3cli.extract_comm_refresh_areas import iter_utf16_strings_any_alignment, read_size_after_device_string
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
+from gx3cli.gx3_device_name import device_radix
 
 
 DEVICE_RE = re.compile(r"^(?:SB|SW|SM|SD|ZR|X|Y|W|B|D|M|L|R|F|V|TC|TS|TN|CN)[0-9A-F]+$")
@@ -80,7 +81,7 @@ def end_device(start: str, count: int) -> str:
     if not match or count <= 0:
         return ""
     prefix, raw = match.groups()
-    base = 16 if prefix in {"X", "Y", "B", "W", "SB", "SW"} else 10
+    base = device_radix(prefix)
     try:
         value = int(raw, base)
     except ValueError:

@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root, find_comment_db
+from gx3cli.gx3_device_name import device_radix
 
 ROOT = default_project_root()
 UNIT_CONFIG = ROOT / "UnitConfig.dat"
@@ -270,7 +271,7 @@ def end_device(start: str, count: int) -> str:
     if not match or count <= 0:
         return ""
     prefix, number = match.groups()
-    base = 16 if prefix in {"X", "Y", "B", "W", "SB", "SW"} else 10
+    base = device_radix(prefix)
     end_value = int(number, base) + count - 1
     if base == 16:
         return f"{prefix}{end_value:0{len(number)}X}"

@@ -16,6 +16,7 @@ from gx3cli.gx3_external_inputs import (
     load_unit_io_areas,
 )
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
+from gx3cli.gx3_device_name import device_radix, format_device
 from gx3cli.review_gx3_project import (
     CommentInfo,
     LadderRow,
@@ -197,14 +198,12 @@ def device_value(text: str) -> tuple[str, int] | None:
             break
     if not prefix or not value or not re.fullmatch(r"[0-9A-F]+", value):
         return None
-    base = 16 if prefix in {"X", "Y", "B", "W", "SB", "SW"} else 10
+    base = device_radix(prefix)
     return prefix, int(value, base)
 
 
 def device_text(prefix: str, value: int) -> str:
-    if prefix in {"X", "Y", "B", "W", "SB", "SW"}:
-        return f"{prefix}{value:X}"
-    return f"{prefix}{value}"
+    return format_device(prefix, value)
 
 
 def range_text(prefix: str, start: int, points: int) -> str:

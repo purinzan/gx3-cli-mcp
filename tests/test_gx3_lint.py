@@ -21,6 +21,7 @@ from gx3cli.gx3_lint import (
     check_comment_conflict,
     check_multi_writer,
     check_signed_compare,
+    check_operand_device,
     check_width_mismatch,
     const_int,
     decode_row_ops,
@@ -339,6 +340,94 @@ def test_width_mismatch_no_conflict() -> None:
     dmov = RowOp(role="DMOV", opcode="DMOV", base="DMOV", args=[dev(0, "D100", "D", 100, "read"), dev(1, "D200", "D", 200, "write")])
     mov = RowOp(role="MOV", opcode="MOV", base="MOV", args=[dev(0, "D50", "D", 50, "read"), dev(1, "D300", "D", 300, "write")])
     assert check_width_mismatch(ctx_with([(r1, [dmov]), (r2, [mov])])) == []
+
+
+def test_operand_device_accepts_what_the_manuals_allow() -> None:
+    # SET M22 and RST M22 are ordinary. A check that flagged them would be
+    # worse than no check, so this is the first thing to hold.
+    row = make_row("A", 0)
+    for opcode in ("SET", "RST"):
+        op = RowOp(role=opcode, opcode=opcode, base=opcode, args=[dev(0, "M22", "M", 22, "write")])
+        assert check_operand_device(ctx_with([(row, [op])])) == [], opcode
+
+
+def test_operand_device_flags_a_device_the_manuals_do_not_list() -> None:
+    # SIN takes word devices; an X on its source means either the program is
+    # invalid or the row decoded onto the wrong operand.
+    row = make_row("A", 0)
+    op = RowOp(
+        role="SIN", opcode="SIN", base="SIN",
+        args=[dev(0, "X20", "X", 32, "read"), dev(1, "D200", "D", 200, "write")],
+    )
+    findings = check_operand_device(ctx_with([(row, [op])]))
+    assert len(findings) == 1, findings
+    assert findings[0]["device"] == "X20"
+    assert "(s)" in str(findings[0]["detail"])
+
+
+def test_operand_device_is_silent_on_unknown_opcodes() -> None:
+    row = make_row("A", 0)
+    op = RowOp(
+        role="ZZUNKNOWN", opcode="ZZUNKNOWN", base="ZZUNKNOWN",
+        args=[dev(0, "X20", "X", 32, "read")],
+    )
+    assert check_operand_device(ctx_with([(row, [op])])) == []
+
+
+def test_width_mismatch_covers_double_precision() -> None:
+    # EDMOV is double precision: its destination occupies four words, not two.
+    # It used to be listed as a 32-bit instruction, so D202 and D203 were left
+    # unguarded while D201 was watched.
+    r1 = make_row("A", 0)
+    r2 = make_row("A", 1024)
+    edmov = RowOp(
+        role="EDMOV", opcode="EDMOV", base="EDMOV",
+        args=[dev(0, "D100", "D", 100, "read"), dev(1, "D200", "D", 200, "write")],
+    )
+    for number in (201, 202, 203):
+        mov = RowOp(
+            role="MOV", opcode="MOV", base="MOV",
+            args=[dev(0, "D50", "D", 50, "read"), dev(1, f"D{number}", "D", number, "write")],
+        )
+        findings = check_width_mismatch(ctx_with([(r1, [edmov]), (r2, [mov])]))
+        assert len(findings) == 1, (number, findings)
+        assert "64-bit" in str(findings[0]["detail"]), findings
+
+
+def test_width_mismatch_leaves_single_word_instructions_alone() -> None:
+    # DSFL shifts one word; its "D" is not a double-word marker. It used to be
+    # in the hand-written 32-bit list, so it claimed a high word it never
+    # occupies and reported an overlap that does not exist.
+    r1 = make_row("A", 0)
+    r2 = make_row("A", 1024)
+    dsfl = RowOp(
+        role="DSFL", opcode="DSFL", base="DSFL",
+        args=[dev(0, "D200", "D", 200, "write"), const(1, "4")],
+    )
+    mov = RowOp(
+        role="MOV", opcode="MOV", base="MOV",
+        args=[dev(0, "D50", "D", 50, "read"), dev(1, "D201", "D", 201, "write")],
+    )
+    assert check_width_mismatch(ctx_with([(r1, [dsfl]), (r2, [mov])])) == []
+
+
+def test_signed_compare_uses_the_operand_type_range() -> None:
+    # LD<_U is unsigned 16-bit: 40000 fits, -1 does not. Reading the width off
+    # the opcode name could not tell, and the old COMPARE_RE did not match the
+    # _U opcodes at all.
+    row = make_row("A", 0)
+    fits = RowOp(
+        role="LD<_U", opcode="LD<_U", base="LD<_U",
+        args=[dev(0, "D10", "D", 10, "read"), const(1, "40000")],
+    )
+    assert check_signed_compare(ctx_with([(row, [fits])])) == []
+    below = RowOp(
+        role="LD<_U", opcode="LD<_U", base="LD<_U",
+        args=[dev(0, "D10", "D", 10, "read"), const(1, "-1")],
+    )
+    findings = check_signed_compare(ctx_with([(row, [below])]))
+    assert len(findings) == 1, findings
+    assert "uint16" in str(findings[0]["detail"]), findings
 
 
 def test_signed_compare_out_of_range_constant() -> None:
