@@ -103,6 +103,47 @@ def test_module_dedicated_instructions_are_covered() -> None:
     assert _writes("G.OUTPUT", 4) == {3}
 
 
+def test_division_is_not_lost_to_the_cell_separator() -> None:
+    # The instruction symbol is literally "/". Reading the manual tables with
+    # " / " as the separator between paragraphs inside a cell ate it, and the
+    # whole division family went missing.
+    assert _writes("/", 3) == {2}
+    assert _writes("D/", 3) == {2}
+    assert _writes("B/P", 3) == {2}
+
+
+def test_instructions_with_no_st_form_are_still_covered() -> None:
+    # SIN has no ST form ("SIN命令はST，FBD/LDでは対応していません"), so the ST
+    # block on its page names only SINP. Letting the signatures replace the
+    # heading rather than add to it dropped SIN itself.
+    assert _writes("SIN", 2) == {1}
+    assert _writes("SINP", 2) == {1}
+    assert _writes("SQRT", 2) == {1}
+
+
+def test_zero_operand_instructions_are_classified() -> None:
+    # They have no operands, so nothing hangs on this at decode time -- but the
+    # coverage report should not call them unknown.
+    for opcode in ("STOP", "COM", "DCONTSW", "END", "NOP", "ANB", "ORB", "IRET"):
+        assert _writes(opcode, 0) == set(), opcode
+
+
+def test_operands_named_differently_in_st_and_the_table() -> None:
+    # RTMRD is (J/U)(s1)(s2)(s3)(d1)(d2) in the operand table and (J,s1,s2,s3,
+    # s4,d) in ST. The names do not line up, but the count does, so the table
+    # still decides.
+    assert _writes("J.RTMRD", 6) == {4, 5}
+    assert _writes("ZP.RTMRD", 6) == {4, 5}
+
+
+def test_a_page_documenting_two_instructions_does_not_mix_them() -> None:
+    # RND and SRND share a page. RND is (d) and SRND is (s); reading the
+    # signatures per page rather than per section gave RND the operands of
+    # SRND.
+    assert _writes("RND", 1) == {0}
+    assert _writes("SRND", 1) == set()
+
+
 def test_unknown_opcode_still_reports_unknown() -> None:
     # Nothing in this change should make an unrecognised opcode look classified.
     assert write_indices("NOT_A_REAL_INSTRUCTION", 2) == (None, False)

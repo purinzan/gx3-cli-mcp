@@ -68,6 +68,14 @@ WRITE_ARG_TABLE: dict[str, object] = {
     "SFTBL": {0}, "SFTBR": {0}, "SFTBRP": {0},
     "FROM": {2}, "DFRO": {2}, "DFROM": {2}, "TO": set(), "DTO": set(),
     "CJ": set(), "CALL": set(), "ECALL": set(), "BREAK": set(), "ME": set(), "EI": set(), "LEDR": set(), "NOPLF": set(), "RET": set(), "FEND": set(), "GOEND": set(),
+    # No device operands at all, so nothing to classify -- listed so the
+    # coverage report does not call them unknown. The manuals give them no
+    # operand table and no ST form ("対応していません"), which is why they are
+    # here rather than in the generated table.
+    "ANB": set(), "ORB": set(), "END": set(), "NOP": set(), "IRET": set(),
+    # PHASEEND is the one instruction in its section with no "内容，範囲，デー
+    # タ型" block, where PHASE and PHASECHG beside it have one.
+    "PHASEEND": set(),
     "FOR": set(), "NEXT": set(), "INV": set(),
     # Intelligent function module random read/write.
     # Last device is the completion/status area; GP.RIRD also writes read data.
