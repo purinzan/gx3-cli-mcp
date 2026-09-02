@@ -20,7 +20,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPES,
 )
 from gx3cli.gx3_arg_decode import parse_row_occurrences
-from gx3cli.gx3_device_name import DEVICE_TYPE_BASE
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, DEVICE_TYPE_BASE
+from gx3cli.gx3_intermediate_tool import generate_rung
 
 # One contact on the device under test, driving one M coil. This is the header
 # spelling generate_rung() produces, with the contact's device type templated.
@@ -59,6 +60,22 @@ def test_every_named_device_type_parses_as_a_contact() -> None:
 
 def test_parser_set_stays_derived_from_the_naming_table() -> None:
     assert DEVICE_TYPES == set(DEVICE_TYPE_BASE) | ACCESS_TOKENS
+
+
+def test_generated_logic_accepts_long_timer_counter_bits() -> None:
+    for dev_type in ("FX", "FY", "LT", "LST", "LC", "TS", "TC", "STS", "STC", "CS", "CC", "LTS", "LTC", "LSTS", "LSTC", "LCS", "LCC"):
+        data, _rowsize, _written = generate_rung({"device": f"{dev_type}5"}, {"type": "coil", "device": "M55"})
+        assert f"a:{dev_type}:" in data, dev_type
+
+
+def test_generated_logic_rejects_word_only_device_types() -> None:
+    for dev_type in sorted(set(DEVICE_TYPE_BASE) - BIT_DEVICE_TYPES):
+        try:
+            generate_rung({"device": f"{dev_type}5"}, {"type": "coil", "device": "M55"})
+        except ValueError as exc:
+            assert "device type not supported" in str(exc), dev_type
+        else:
+            raise AssertionError(f"{dev_type} should not generate as a ladder contact")
 
 
 def main() -> int:

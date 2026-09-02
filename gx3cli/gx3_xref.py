@@ -85,6 +85,7 @@ def build(args: argparse.Namespace) -> int:
             arg_index integer,
             const_args text,
             detail text,
+            access_basis text,
             lddb text not null,
             pos integer not null,
             pou text,
@@ -122,6 +123,7 @@ def build(args: argparse.Namespace) -> int:
                         (
                             occ.device, occ.device_type, occ.number, occ.access,
                             role, opcode, occ.arg_index, consts, occ.detail,
+                            occ.access_basis,
                             lddb, pos, pou, step, current_title, comment, status,
                         )
                     )
@@ -129,8 +131,8 @@ def build(args: argparse.Namespace) -> int:
         """
         insert into xref(
             device, device_type, number, access, role, opcode, arg_index, const_args,
-            detail, lddb, pos, pou, step, title, comment, parse_status
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            detail, access_basis, lddb, pos, pou, step, title, comment, parse_status
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         records,
     )
@@ -178,8 +180,9 @@ def fmt_row(r: sqlite3.Row) -> str:
     opcode = r["opcode"] or r["role"]
     detail = f" [{r['detail']}]" if r["detail"] else ""
     consts = f" k={r['const_args']}" if r["const_args"] else ""
+    basis = f" basis={r['access_basis']}" if "access_basis" in r.keys() and r["access_basis"] else ""
     title = f" | {r['title']}" if r["title"] else ""
-    return f"  {r['pou']:<6} {step:<7} {opcode:<9} {r['access']:<5}{detail}{consts}{title}"
+    return f"  {r['pou']:<6} {step:<7} {opcode:<9} {r['access']:<5}{detail}{consts}{basis}{title}"
 
 
 def row_dict(row: sqlite3.Row) -> dict[str, object]:
@@ -379,7 +382,7 @@ def export(args: argparse.Namespace) -> int:
     out = Path(args.output)
     fields = [
         "device", "device_type", "number", "access", "role", "opcode", "arg_index",
-        "const_args", "detail", "lddb", "pos", "pou", "step", "title", "comment", "parse_status",
+        "const_args", "detail", "access_basis", "lddb", "pos", "pou", "step", "title", "comment", "parse_status",
     ]
     with out.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)

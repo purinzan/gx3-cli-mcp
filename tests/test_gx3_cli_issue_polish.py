@@ -65,6 +65,7 @@ def test_xref_where_used_emits_json() -> None:
         assert payload["root"] == str(root)
         assert payload["results"][0]["device"] == "M100"
         assert "writers" in payload["results"][0]
+        assert any(row["access_basis"] == "ladder contact/coil" for row in payload["results"][0]["readers"])
 
 
 def main() -> None:

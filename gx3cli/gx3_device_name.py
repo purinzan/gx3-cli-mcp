@@ -60,6 +60,19 @@ DEVICE_TYPE_BASE: dict[str, int] = {
     "LCS": 10, "LCC": 10, "LCN": 10,
 }
 
+# Devices that can behave as ladder bit operands in contacts/coils. Timer and
+# counter current-value forms (TN/CN/...) remain word-like and are intentionally
+# excluded.
+BIT_DEVICE_TYPES = frozenset(
+    {
+        "X", "Y", "DX", "DY", "FX", "FY",
+        "M", "L", "B", "SM", "SB", "F", "V", "S",
+        "T", "ST", "C", "LT", "LST", "LC",
+        "TS", "TC", "STS", "STC", "CS", "CC",
+        "LTS", "LTC", "LSTS", "LSTC", "LCS", "LCC",
+    }
+)
+
 # Device types GX Works3 numbers in hexadecimal.
 HEX_DEVICE_TYPES = frozenset(name for name, base in DEVICE_TYPE_BASE.items() if base == 16)
 
