@@ -31,7 +31,7 @@ from gx3cli.gx3_intermediate_tool import parse_header_ops
 from gx3cli.gx3_operand_parse import CONST_VALUE_RE, M_CONST_MOD_RE, parse_operands
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
-from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_write_indices
+from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_operand_names, manual_write_indices
 from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
@@ -124,6 +124,11 @@ class ArgOcc:
     # instruction reads it to work out an address; it never writes it, whatever
     # it does to the operand the modifier belongs to.
     is_index_register: bool = False
+    # How many devices this operand covers. A block instruction names a count
+    # operand, so BMOV ... D64061 K4 writes D64061 through D64064 while naming
+    # only the first. 1 is an ordinary single device; 0 means the instruction
+    # covers a run whose length is held in a device and cannot be known here.
+    range_len: int = 1
 
 
 def base_opcode(opcode: str) -> str:
@@ -225,6 +230,12 @@ def parse_row_occurrences(
         occ = decode_args(raw_args, arg_tokens, hop.op, labels)
         wset, rmw = write_indices(hop.op, len(raw_args))
         basis = write_index_basis(hop.op, len(raw_args))
+        # Only the destination is given a span. Whether a source covers the
+        # same run differs by instruction -- BMOV reads (n) words, FMOV repeats
+        # one -- and the operand tables do not say which, so claiming a read
+        # range here would be a guess. Missing a read is a smaller wrong answer
+        # than inventing one.
+        span, span_basis = block_span(hop.op, raw_args)
         for a in occ:
             if a.is_index_register:
                 # It shares its arg_index with the operand it modifies, so the
@@ -237,11 +248,53 @@ def parse_row_occurrences(
                 a.access = "ref"
             elif a.arg_index in wset:
                 a.access = "both" if rmw else "write"
+                if span != 1:
+                    a.range_len = span
+                    a.detail = (a.detail + "; " if a.detail else "") + (
+                        f"covers {span} devices" if span else "covers a run of unknown length"
+                    )
             else:
                 a.access = "read"
             a.access_basis = basis
         results.append((hop.op, hop.op, occ, const_summary(raw_args)))
     return results, status
+
+
+def block_span(opcode: str, raw_args: list[str]) -> tuple[int, str]:
+    """How many devices a block instruction's destination covers.
+
+    The manuals name a count operand "(n)" on the instructions that work on a
+    run of devices: BMOV, FMOV, BKRST, BK+ and the rest. The ladder names only
+    the first device of the run, so a cross-reference built from the operands
+    alone records D64061 for a "BMOV .. D64061 K4" and nothing for the D64062,
+    D64063 and D64064 it also writes. Searching for one of those answered "no
+    occurrences", which reads as "nothing writes this device".
+
+    Returns (length, basis): 1 for an ordinary single device, and 0 for a run
+    whose count is held in a device, so its end is not knowable statically.
+    """
+    argc = len(raw_args)
+    names = manual_operand_names(opcode, argc)
+    if names is None:
+        base = base_opcode(opcode)
+        if base != opcode:
+            names = manual_operand_names(base, argc)
+    if names is None or "(n)" not in names:
+        return 1, ""
+
+    count_arg = raw_args[names.index("(n)")]
+    if not count_arg.startswith("c{"):
+        # The count is a device: the run is as long as that device says at
+        # runtime, which no static reading can pin down.
+        return 0, "manual count operand (n), length in a device"
+    match = CONST_VALUE_RE.search(count_arg)
+    try:
+        length = int(match.group(1)) if match else 0
+    except ValueError:
+        length = 0
+    if length < 1:
+        return 0, "manual count operand (n), length unreadable"
+    return length, "manual count operand (n)"
 
 
 def const_summary(raw_args: list[str]) -> str:
