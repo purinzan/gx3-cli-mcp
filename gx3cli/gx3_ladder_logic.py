@@ -9,12 +9,15 @@ from typing import Any
 
 from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
+    LABEL_DEVICE_TYPE,
     element_meta,
+    header_tokens,
     extract_dim,
     extract_elements,
     parse_header_ops,
 )
 from gx3cli.review_gx3_project import LadderRow, operation_device_types
+from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
 CONTACT_ROLES = {"a", "b"}
@@ -204,8 +207,11 @@ def constants_from_raw(raw: str) -> list[str]:
     return out[:3]
 
 
-def positioned_elements(row: LadderRow) -> list[FlowElement]:
+def positioned_elements(
+    row: LadderRow, labels: LabelResolver | None = None
+) -> list[FlowElement]:
     header_ops = parse_header_ops(row.data)
+    tokens = header_tokens(row.data)
     op_device_types = operation_device_types(row.data)
     raw_elements = extract_elements(row.data)
     elements: list[FlowElement] = []
@@ -237,6 +243,11 @@ def positioned_elements(row: LadderRow) -> list[FlowElement]:
             category = str(row.operations[op_index].get("category", "")) if op_index < len(row.operations) else ""
 
         devices = device_refs_from_raw(raw, default_device_type)
+        if not devices and default_device_type == LABEL_DEVICE_TYPE:
+            # A label contact carries no device in the element; its identity is
+            # the "_lid/<LabelID>/<row>" token that follows the role in the
+            # header. Without this the whole rung reads as UNKNOWN.
+            devices = label_refs(tokens, header.token_index, labels)
         elements.append(
             FlowElement(
                 kind=kind,
@@ -256,6 +267,26 @@ def positioned_elements(row: LadderRow) -> list[FlowElement]:
     for element in elements:
         element.end_x = element.x if element.is_driver else element.x + 1
     return elements
+
+
+def label_refs(
+    tokens: list[str], token_index: int, labels: LabelResolver | None
+) -> list[DeviceRef]:
+    """The label a role token points at, as a device reference."""
+    token = tokens[token_index + 1] if token_index + 1 < len(tokens) else ""
+    parsed = split_label_token(token)
+    if parsed is None:
+        return []
+    ref = labels.resolve_token(token) if labels is not None else None
+    name = ref.name if ref is not None else token
+    return [
+        DeviceRef(
+            device=name,
+            device_type=LABEL_DEVICE_TYPE,
+            number=parsed[1],
+            label=name,
+        )
+    ]
 
 
 def output_elements_for(row: LadderRow, device: str) -> list[FlowElement]:
@@ -496,8 +527,10 @@ def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | 
     )
 
 
-def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, Any]:
-    elements = positioned_elements(row)
+def enable_logic_for_output(
+    row: LadderRow, output: FlowElement, labels: LabelResolver | None = None
+) -> dict[str, Any]:
+    elements = positioned_elements(row, labels)
     width, height = parse_dim(row.dim or extract_dim(row.data))
     max_y = max([height - 1, output.y, *[element.y for element in elements], 0])
     formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)

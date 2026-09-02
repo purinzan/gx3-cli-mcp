@@ -55,6 +55,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs", "Analysis"),
     "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams", "Analysis"),
     "ladder-print": CommandSpec("gx3_ladder_print.py", "render a whole program in GX Works3 print-text layout (matches GX print output)", "Analysis"),
+    "rung-text": CommandSpec("gx3_rung_text.py", "print a program as one line per rung: condition -> driven device (compact, for reading and for agents)", "Analysis"),
     "matiec-st": CommandSpec("gx3_matiec_export.py", "export target device enable logic as MATIEC Structured Text", "Utilities"),
     "project-survey": CommandSpec("gx3_project_survey.py", "generate ordered project survey package", "Reports"),
     "external-inputs": CommandSpec("gx3_external_inputs.py", "extract external/terminal contact inputs and trace boundaries", "Analysis"),
