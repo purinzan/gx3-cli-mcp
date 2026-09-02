@@ -158,6 +158,7 @@
 |---|---|
 | `test_gx3_mcp_server.py` | MCP initialize/tools/list、変更系コマンド拒否。 |
 | `test_gx3_data_flow.py` | MOV/DMOV/BMOV、read-modify-write、未知/部分解析の value-flow 回帰。 |
+| `test_gx3_dependency_flow_topology.py` | dependency-flow が暗黙 horizontal gap、左母線推定、driver sink 越しの逆流を依存に混ぜないこと。 |
 | `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |
 | `test_gx3_lint.py` | lint rule 群。 |
 | `test_gx3_ladder_logic.py` | ラダー論理生成。 |

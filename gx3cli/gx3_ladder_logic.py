@@ -102,6 +102,17 @@ class HorizontalEdge:
     element: FlowElement | None = None
 
 
+@dataclass(frozen=True)
+class TopologyGraph:
+    """Directed left-to-right row topology with vertical merge components."""
+
+    x_values: tuple[int, ...]
+    horizontal_by_x: dict[int, tuple[HorizontalEdge, ...]]
+    vertical_by_x: dict[int, tuple[frozenset[int], ...]]
+    left_rail_rows: frozenset[int]
+    sink_nodes: frozenset[tuple[int, int]]
+
+
 def parse_device(text: str) -> tuple[str, int]:
     return _parse_device_name(text)
 
@@ -450,17 +461,14 @@ def vertical_components(row: LadderRow, elements: list[FlowElement]) -> dict[int
     return components
 
 
-def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, Any]:
-    elements = positioned_elements(row)
+def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | None = None) -> TopologyGraph:
+    """Build the explicit coordinate graph used by enable-logic analysis."""
+
     width, height = parse_dim(row.dim or extract_dim(row.data))
-    max_y = max([height - 1, output.y, *[element.y for element in elements], 0])
-    formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)
-
-    for y in range(max_y + 1):
-        formulas[(0, y)] = logic_true()
-
     edges = horizontal_edges(elements)
-    x_values = {0, output.x}
+    x_values = {0}
+    if output_x is not None:
+        x_values.add(output_x)
     for edge in edges:
         x_values.add(edge.x1)
         x_values.add(edge.x2)
@@ -473,15 +481,49 @@ def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, An
     for edge in edges:
         edges_by_x[edge.x1].append(edge)
 
-    components_by_x = vertical_components(row, elements)
+    left_rail_rows = frozenset(edge.y for edge in edges if edge.x1 == 0)
+    sink_nodes = frozenset((element.x, element.y) for element in elements if element.is_driver)
+    components_by_x = {
+        x: tuple(frozenset(component) for component in components)
+        for x, components in vertical_components(row, elements).items()
+    }
+    return TopologyGraph(
+        x_values=tuple(sorted(x_values)),
+        horizontal_by_x={x: tuple(value) for x, value in edges_by_x.items()},
+        vertical_by_x=components_by_x,
+        left_rail_rows=left_rail_rows,
+        sink_nodes=sink_nodes,
+    )
 
-    for x in sorted(x_values):
-        for component in components_by_x.get(x, []):
-            merged = or_logic([formulas[(x, y)] for y in sorted(component)])
-            for y in component:
+
+def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, Any]:
+    elements = positioned_elements(row)
+    width, height = parse_dim(row.dim or extract_dim(row.data))
+    max_y = max([height - 1, output.y, *[element.y for element in elements], 0])
+    formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)
+    graph = topology_graph(row, elements, output.x)
+    target_node = (output.x, output.y)
+
+    for y in graph.left_rail_rows:
+        if 0 <= y <= max_y:
+            formulas[(0, y)] = logic_true()
+
+    for x in graph.x_values:
+        for component in graph.vertical_by_x.get(x, ()):
+            source_ys = [
+                y
+                for y in sorted(component)
+                if (x, y) not in graph.sink_nodes or (x, y) == target_node
+            ]
+            if not source_ys:
+                continue
+            merged = or_logic([formulas[(x, y)] for y in source_ys])
+            for y in source_ys:
                 formulas[(x, y)] = merged
 
-        for edge in edges_by_x.get(x, []):
+        for edge in graph.horizontal_by_x.get(x, ()):
+            if (edge.x1, edge.y) in graph.sink_nodes:
+                continue
             incoming = formulas[(edge.x1, edge.y)]
             if is_false(incoming):
                 continue

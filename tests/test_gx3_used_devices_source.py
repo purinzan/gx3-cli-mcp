@@ -12,6 +12,7 @@ itself, which is decimal, so W132 appeared as "W306".
 """
 
 from gx3cli.extract_used_devices_without_comments import Usage, row_devices
+from gx3cli.extract_hmi_build_info import row_entries_from_data
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 
 
@@ -35,6 +36,15 @@ def test_devices_come_from_the_shared_decoder() -> None:
     assert not any(dev_type == "M" and number in (4, 80) for dev_type, number in devices), devices
 
 
+def test_hmi_build_info_uses_the_shared_decoder() -> None:
+    row_entries, status = row_entries_from_data(ROW)
+    assert status == "exact", status
+
+    assert ("M", 49000, "FROM") in row_entries, row_entries
+    # The digit count K4 is a constant, not device M4, and the rung has no M80.
+    assert not any(dev_type == "M" and number in (4, 80) for dev_type, number, _role in row_entries), row_entries
+
+
 def test_hexadecimal_types_are_spelled_the_way_gx_works3_spells_them() -> None:
     # W is one of the hexadecimal types, so W306 would be this report's own
     # spelling of a device the rest of the toolchain calls W132.
@@ -45,6 +55,7 @@ def test_hexadecimal_types_are_spelled_the_way_gx_works3_spells_them() -> None:
 
 def main() -> int:
     test_devices_come_from_the_shared_decoder()
+    test_hmi_build_info_uses_the_shared_decoder()
     test_hexadecimal_types_are_spelled_the_way_gx_works3_spells_them()
     print("used-devices source checks passed")
     return 0

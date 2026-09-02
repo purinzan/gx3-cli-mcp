@@ -98,7 +98,7 @@ def control_elements(row: LadderRow) -> list[tuple[FlowElement, str]]:
         meta = element_meta(raw)
         if parse_pos(str(meta.get("pos", ""))) is None:
             continue
-        if str(meta.get("element_kind", "")) == "wire":
+        if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             continue
         if op_index >= len(header_ops):
             continue

@@ -12,9 +12,15 @@ def logic_text_for_generated(logic):
     return logic_to_text(enable_logic_for_output(row, output))
 
 
-def manual_row(elements: str, dim: str = "3x1") -> LadderRow:
-    data = f"V1:4:1:1:1:1:a:M:c:M:cb{{fg=fg{{dim={dim}:es=[{elements}]}}}}"
-    return LadderRow("test", 0, "", "", 0, 1, data, "", [], "exact")
+def manual_row(
+    elements: str,
+    dim: str = "3x1",
+    header: str = "V1:4:1:1:1:1:a:M:c:M",
+    verticals: str = "",
+) -> LadderRow:
+    vs = f":vs=[{verticals}]" if verticals else ""
+    data = f"{header}:cb{{fg=fg{{dim={dim}:es=[{elements}]{vs}}}}}"
+    return LadderRow("test", 0, "", dim, 0, 1, data, "", [], "exact")
 
 
 def test_blank_horizontal_gap_is_not_inferred_as_a_wire():
@@ -34,9 +40,38 @@ def test_explicit_wire_carries_a_horizontal_gap():
     assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
 
 
+def test_left_rail_is_not_assumed_on_every_y_row():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=1,1}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,1}"
+    row = manual_row(f"{contact}:{coil}", dim="3x2")
+    output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, output)) == "FALSE"
+
+
+def test_driver_sink_does_not_feed_a_vertical_branch():
+    contact_a = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    coil_a = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
+    wire = "e{s=wire:pos=1,1}"
+    contact_b = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=101:vt=nn}]}:pos=2,1}"
+    coil_b = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=201:vt=nn}]}:pos=3,1}"
+    elements = f"{contact_a}:{coil_a}:{wire}:{contact_b}:{coil_b}"
+    row = manual_row(
+        elements,
+        dim="4x2",
+        header="V1:8:1:1:1:1:1:1:a:M:c:M:a:M:c:M",
+        verticals="v{pos=1,1}",
+    )
+    output_a = output_elements_for(row, "M200")[0]
+    output_b = output_elements_for(row, "M201")[0]
+    assert logic_to_text(enable_logic_for_output(row, output_a)) == "[M100]"
+    assert logic_to_text(enable_logic_for_output(row, output_b)) == "FALSE"
+
+
 def main():
     test_blank_horizontal_gap_is_not_inferred_as_a_wire()
     test_explicit_wire_carries_a_horizontal_gap()
+    test_left_rail_is_not_assumed_on_every_y_row()
+    test_driver_sink_does_not_feed_a_vertical_branch()
     cases = [
         ("single", {"device": "M100"}, "[M100]"),
         (

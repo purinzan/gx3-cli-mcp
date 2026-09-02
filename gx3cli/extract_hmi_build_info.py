@@ -7,7 +7,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gx3cli.gx3_device_name import device_radix, format_device as _format_device
+from gx3cli.gx3_device_name import device_radix, format_device
+from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_path, default_project_root, find_comment_db
 
 ROOT = default_project_root()
@@ -40,15 +41,7 @@ DEVICE_CODE_BY_TYPE = {
     "T": 66,
 }
 
-NON_REPORT_D_OPERANDS = {"Zs", "Ats", "Ks", "N", "Z", "G"}
-D_OPERAND_TYPES = set(DEVICE_CODE_BY_TYPE) | NON_REPORT_D_OPERANDS
-
-INT_TOKEN_RE = re.compile(r"-?\d+$")
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
-B_OPERAND_RE = re.compile(
-    r"B\{b=d\{s=#:a=(-?\d+):vt=nn\}:e=d\{s=#:a=(-?\d+):vt=nn\}:vt=([A-Za-z]+)\}"
-)
-D_OPERAND_RE = re.compile(r"d\{s=#:a=(-?\d+):vt=nn\}")
 
 ACTION_KEYWORDS = re.compile(
     r"前進|後退|出|戻|上昇|下降|昇降|開|閉|ロック|ﾛｯｸ|解除|"
@@ -107,10 +100,6 @@ def open_sqlite(path: Path) -> sqlite3.Connection:
     return con
 
 
-def format_device(device_type: str, number: int) -> str:
-    return _format_device(device_type, number)
-
-
 def hex_candidate(device_type: str, number: int) -> str:
     if device_radix(device_type) == 16:
         return f"{device_type}{number:X}"
@@ -158,45 +147,6 @@ def extract_title(data: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def parse_header_operand_refs(data: str) -> list[tuple[str, str]]:
-    """Return (role, device_type) entries in header order.
-
-    Example: a:X is a contact, b:X is a normally-closed contact, c:Y is a coil.
-    Function destinations such as MOV:K_1:D keep the previous functional token.
-    """
-    if ":cb{" not in data:
-        return []
-    prefix = data.split(":cb{", 1)[0]
-    tokens = prefix.split(":")[1:]  # drop V1
-    refs: list[tuple[str, str]] = []
-    last_non_int = ""
-    for token in tokens:
-        if INT_TOKEN_RE.fullmatch(token):
-            continue
-        if token in D_OPERAND_TYPES:
-            refs.append((last_non_int, token))
-        last_non_int = token
-    return refs
-
-
-def parse_operand_numbers(data: str) -> list[int]:
-    out: list[int] = []
-    i = 0
-    while i < len(data):
-        mb = B_OPERAND_RE.match(data, i)
-        if mb:
-            out.append(int(mb.group(1)))
-            i = mb.end()
-            continue
-        md = D_OPERAND_RE.match(data, i)
-        if md:
-            out.append(int(md.group(1)))
-            i = md.end()
-            continue
-        i += 1
-    return out
-
-
 def role_kind(role: str) -> str:
     if role == "a":
         return "contact_a"
@@ -207,6 +157,22 @@ def role_kind(role: str) -> str:
     if role:
         return f"function_or_compare:{role}"
     return "unknown"
+
+
+def row_entries_from_data(data: str) -> tuple[list[tuple[str, int, str]], str]:
+    """Return commentable device entries using the shared argument decoder."""
+    try:
+        decoded, parse_status = parse_row_occurrences(data)
+    except Exception:
+        return [], "partial"
+
+    row_entries: list[tuple[str, int, str]] = []
+    for role, _opcode, args, _consts in decoded:
+        for arg in args:
+            if arg.device_type not in DEVICE_CODE_BY_TYPE:
+                continue
+            row_entries.append((arg.device_type, int(arg.number), role))
+    return row_entries, parse_status
 
 
 def read_comm_areas() -> list[dict[str, object]]:
@@ -297,16 +263,8 @@ def collect_ladder_occurrences(comments: dict[tuple[str, int], CommentInfo]) -> 
             if blocktype != 0 or ":cb{" not in data:
                 continue
 
-            refs = parse_header_operand_refs(data)
-            numbers = parse_operand_numbers(data)
-            parse_status = "exact" if len(refs) == len(numbers) else "partial"
+            row_entries, parse_status = row_entries_from_data(data)
             stats[f"{parse_status}_rows"] += 1
-
-            row_entries: list[tuple[str, int, str]] = []
-            for (role, dev_type), number in zip(refs, numbers):
-                if dev_type not in DEVICE_CODE_BY_TYPE:
-                    continue
-                row_entries.append((dev_type, int(number), role))
             row_devices = [format_device(dt, n) for dt, n, _ in row_entries]
             condition_entries = [(dt, n, r) for dt, n, r in row_entries if r in {"a", "b"}]
             row_conditions = [f"{r}:{format_device(dt, n)}" for dt, n, r in condition_entries]

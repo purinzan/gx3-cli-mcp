@@ -335,7 +335,7 @@ def parse_rung(
         if pos is None:
             continue
         x, y = pos
-        if str(meta.get("element_kind", "")) == "wire":
+        if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             wires.append((x, y, x + 1))
             continue
         if op_index >= len(header_ops):
