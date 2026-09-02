@@ -48,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     index_db = Path(".gx3_index") / f"{label}.sqlite"
     xref_db = Path(".gx3_index") / f"{label}_xref.sqlite"
+    # These paths are created relative to the caller's cwd but handed to steps
+    # that run with cwd=BASE_DIR, so a relative one resolved somewhere else and
+    # lint died writing its CSVs into a directory that did not exist there.
+    out_dir = out_dir.resolve()
+    index_db = index_db.resolve()
+    xref_db = xref_db.resolve()
 
     steps: list[tuple[str, list[str]]] = [
         ("doctor_before", ["doctor", "--root", str(root), "--warn-only"]),
