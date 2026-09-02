@@ -78,7 +78,10 @@ def test_hex_set_is_derived_from_the_one_table() -> None:
     from gx3cli.gx3_device_name import DEVICE_TYPE_BASE, HEX_DEVICE_TYPES
 
     assert HEX_DEVICE_TYPES == {n for n, b in DEVICE_TYPE_BASE.items() if b == 16}
-    assert HEX_DEVICE_TYPES == {"X", "Y", "B", "W", "SB", "SW", "DX", "DY"}
+    # Hexadecimal per the device list in SH-081224 (CPU User's Manual
+    # (Application)) 22.1: X, Y, B, SB, W, SW, and the function devices FX/FY.
+    # DX/DY are the direct-access spellings of X/Y and follow them.
+    assert HEX_DEVICE_TYPES == {"X", "Y", "B", "W", "SB", "SW", "DX", "DY", "FX", "FY"}
 
 
 def test_non_devices_are_rejected() -> None:

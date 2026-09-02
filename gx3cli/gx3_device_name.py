@@ -31,6 +31,8 @@ DEVICE_TYPE_BASE: dict[str, int] = {
     "SM": 10,   # special relay
     "DX": 16,   # direct input
     "DY": 16,   # direct output
+    "FX": 16,   # function input  (SH-081224 22.1: 16 points, hexadecimal)
+    "FY": 16,   # function output (SH-081224 22.1: 16 points, hexadecimal)
     # --- word devices ------------------------------------------------------
     "D": 10,    # data register
     "W": 16,    # link register
@@ -41,6 +43,7 @@ DEVICE_TYPE_BASE: dict[str, int] = {
     "Z": 10,    # index register
     "LZ": 10,   # long index register
     "RD": 10,   # refresh data register
+    "FD": 10,   # function register (SH-081224 22.1: 5 points x 4 words)
     # --- timers and counters ----------------------------------------------
     "T": 10,    # timer
     "ST": 10,   # retentive timer

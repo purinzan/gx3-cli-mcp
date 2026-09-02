@@ -21,6 +21,16 @@ def main() -> int:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    # A file with no __main__ block runs as a script, does nothing and exits 0,
+    # so it passes without executing an assertion. Five files were in that
+    # state, one of them for as long as it had existed. Say so instead.
+    silent = [t.name for t in TESTS if "__main__" not in t.read_text(encoding="utf-8")]
+    if silent:
+        print("these test files have no runner, so nothing in them would run:")
+        for name in silent:
+            print(f"  {name}")
+        return 1
+
     failures: list[str] = []
     for test in TESTS:
         print(f"\n=== {test.name} ===")

@@ -1,4 +1,24 @@
+from __future__ import annotations
+
+"""Project layout probes, over a throwaway directory.
+
+These used to take pytest's tmp_path fixture. run_tests.py runs each test file
+as a plain script and pytest is not a dependency, so the file had no runner and
+was skipped in silence -- it passed CI without executing once. It makes its own
+temporary directory now, like the rest of the suite.
+"""
+
+import os
+import tempfile
 from pathlib import Path
+
+# A .gx3 archive records its entries with backslashes, because GX Works3 writes
+# it on Windows. Extracted on Windows those become real directories; extracted
+# on POSIX with some tools they stay in the name, and the project arrives as
+# single files called "ConvertData\\123\\Program.qpg". That layout is what the
+# two tests below are about, and it cannot occur on Windows -- there the same
+# archive produces the normal layout, which the other tests already cover.
+BACKSLASH_LAYOUT_POSSIBLE = os.sep != "\\"
 
 from gx3cli.gx3_intermediate_tool import pcode_path_for_stepinfo
 from gx3cli.gx3_project_paths import (
@@ -37,6 +57,8 @@ def test_iter_convertdata_entries_supports_normal_layout(tmp_path: Path) -> None
 
 
 def test_iter_convertdata_entries_supports_backslash_preserved_layout(tmp_path: Path) -> None:
+    if not BACKSLASH_LAYOUT_POSSIBLE:
+        return
     target = tmp_path / "ConvertData\\123\\Program.qpg"
     target.write_bytes(b"qpg")
 
@@ -55,7 +77,28 @@ def test_fbddb_project_counts_as_extracted_gx3_root(tmp_path: Path) -> None:
 
 
 def test_pcode_path_for_stepinfo_supports_backslash_preserved_layout(tmp_path: Path) -> None:
+    if not BACKSLASH_LAYOUT_POSSIBLE:
+        return
     target = tmp_path / "ConvertData\\123\\PouPCode.pcode"
     target.write_bytes(b"pcode")
 
     assert pcode_path_for_stepinfo(tmp_path, "123_StepInfo.db") == target
+
+
+def main() -> int:
+    # Collected rather than listed, so a test added later cannot be left out.
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for name, test in tests:
+        with tempfile.TemporaryDirectory() as tmp:
+            test(Path(tmp))
+    skipped = "" if BACKSLASH_LAYOUT_POSSIBLE else " (backslash-layout cases not applicable on Windows)"
+    print(f"{len(tests)} project-path checks passed{skipped}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

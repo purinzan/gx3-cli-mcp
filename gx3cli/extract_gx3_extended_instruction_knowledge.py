@@ -7,6 +7,8 @@ from pathlib import Path
 
 from gx3cli.gx3_project_paths import default_output_path, default_project_root
 
+from gx3cli.gx3_device_name import DEVICE_TYPE_BASE
+
 ROOT = default_project_root()
 
 OUT_SUMMARY = default_output_path("extended_instruction_summary", "csv")
@@ -17,33 +19,23 @@ OUT_NOTES = default_output_path("extended_instruction_knowledge", "txt")
 OUT_INTERMEDIATE_SAMPLES = default_output_path("ladder_intermediate_extended_samples", "yaml")
 
 
-DEVICE_TYPES = {
-    "X",
-    "Y",
-    "M",
-    "L",
-    "F",
-    "V",
-    "S",
-    "B",
-    "W",
-    "D",
-    "ZR",
-    "Z",
-    "T",
-    "ST",
-    "C",
-    "SM",
-    "SB",
-    "SW",
-    "SD",
-    "R",
-    "U",
-    "G",
-    "J",
-    "DX",
-    "DY",
-}
+# Device types the header parser recognises after an a/b/c/EG role token or as
+# an instruction operand.
+#
+# This is derived from the device naming table rather than hand-maintained. The
+# two used to be separate lists, and the naming table knew about LT/LST/LC/LZ/RD
+# while this one did not. A "a:LT:..." contact then failed the device check, the
+# role token was skipped, and "LT" itself matched is_op_like() -- so the row
+# parsed as a phantom "LT" instruction with no devices, the long-timer contact
+# vanished from xref, and the header/element counts still matched so the row was
+# still reported as parse_status="exact". A dropped interlock contact that
+# reports itself as a clean parse is a wrong answer, not a coverage gap.
+#
+# ACCESS_TOKENS are not devices in their own right: they are the leading tokens
+# of module/link access forms (Un\G, Jn\X, U3En\G) that the header spells out
+# as separate tokens.
+ACCESS_TOKENS = {"U", "G", "J"}
+DEVICE_TYPES = set(DEVICE_TYPE_BASE) | ACCESS_TOKENS
 
 # Label-reference tokens (symbolic devices in the newer GX Works3 generation):
 # "_lid/<label-table-id>/<n>". In the header they follow a/b/c role tokens

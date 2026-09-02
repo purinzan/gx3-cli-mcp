@@ -29,6 +29,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
 
+from gx3cli.gx3_instruction_table import manual_write_indices
+
 
 INNER_DEV_RE = re.compile(r"d\{[^{}]*?a=(-?\d+)[^{}]*?\}")
 CONST_VALUE_RE = re.compile(r"v=([^:}]+)")
@@ -66,6 +68,14 @@ WRITE_ARG_TABLE: dict[str, object] = {
     "SFTBL": {0}, "SFTBR": {0}, "SFTBRP": {0},
     "FROM": {2}, "DFRO": {2}, "DFROM": {2}, "TO": set(), "DTO": set(),
     "CJ": set(), "CALL": set(), "ECALL": set(), "BREAK": set(), "ME": set(), "EI": set(), "LEDR": set(), "NOPLF": set(), "RET": set(), "FEND": set(), "GOEND": set(),
+    # No device operands at all, so nothing to classify -- listed so the
+    # coverage report does not call them unknown. The manuals give them no
+    # operand table and no ST form ("対応していません"), which is why they are
+    # here rather than in the generated table.
+    "ANB": set(), "ORB": set(), "END": set(), "NOP": set(), "IRET": set(),
+    # PHASEEND is the one instruction in its section with no "内容，範囲，デー
+    # タ型" block, where PHASE and PHASECHG beside it have one.
+    "PHASEEND": set(),
     "FOR": set(), "NEXT": set(), "INV": set(),
     # Intelligent function module random read/write.
     # Last device is the completion/status area; GP.RIRD also writes read data.
@@ -84,7 +94,15 @@ WRITE_ARG_TABLE: dict[str, object] = {
 ARITH_OPS = {"+", "-", "*", "/", "B+", "B-", "B*", "B/", "BK+", "BK-", "BK*", "BK/", "D+", "D-", "D*", "D/",
              "E+", "E-", "E*", "E/", "$+", "WAND", "WOR", "WXOR", "WXNR",
              "DAND", "DOR", "DXOR", "DXNR"}
-COMPARE_RE = re.compile(r"^(?:(?:LD|AND|OR)?(?:D|E|\$)?|BKCMP)(?:=|<>|<=|>=|<|>)$")
+# Contact comparisons: they produce a result on the rung and write nothing.
+# BKCMP/DBKCMP used to be matched here and must not be -- a block compare
+# stores its result into (d) ("比較演算結果を格納する先頭デバイス"), so treating
+# it as a pure comparison hid every device a BKCMP writes. Those are in the
+# manual table instead. The type infixes are the signed/unsigned (_U), double
+# word (D), real (E), string ($) and date/time (DT/TM/ED) variants.
+COMPARE_RE = re.compile(
+    r"^(?:LD|AND|OR)(?:D|E|\$|DT|TM|ED)?(?:=|<>|<=|>=|<|>)(?:_U)?$"
+)
 
 TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z"}
 SKIP_ARG_TOKENS = {"Ks", "Dots", "Digits"}
@@ -119,9 +137,22 @@ def write_indices(opcode: str, argc: int) -> tuple[set[int] | None, bool]:
     if COMPARE_RE.match(op):
         return set(), False
     if op in ARITH_OPS:
+        # Kept ahead of the manual table for the read-modify-write flag: the
+        # two-operand form of "+" both reads and writes its destination, which
+        # the operand table does not express.
         if argc <= 2:
             return {argc - 1}, True
         return {argc - 1}, False
+    # The manuals name each operand, so they pin the destination down exactly.
+    # Preferred over the table below, which was written by hand and put the
+    # destination on the wrong operand for WTOB, BTOW, MIDR, MIDW, INSTR,
+    # STRDEL, SERDATA, BKAND, BKRST, BREAK, G.INPUT and ZP.CSET -- for most of
+    # those it named the count operand as the one being written.
+    manual = manual_write_indices(opcode, argc)
+    if manual is None and opcode != op:
+        manual = manual_write_indices(op, argc)
+    if manual is not None:
+        return manual, False
     spec = WRITE_ARG_TABLE.get(op)
     if spec is None:
         return None, False
