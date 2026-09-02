@@ -10,15 +10,24 @@ from datetime import datetime
 from pathlib import Path
 
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
-from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_project_paths import (
+    LEGACY_OUTPUT_PREFIX_ENV,
+    OUTPUT_PREFIX_ENV,
+    default_project_root,
+)
 
 
 def run_step(name: str, args: list[str], out_dir: Path, root: Path) -> dict[str, object]:
     log = out_dir / f"{name}.log"
+    env = python_env(str(root))
+    # Steps run with cwd=BASE_DIR, so a default output path lands inside the
+    # installed package. Point it at the bundle instead.
+    env[OUTPUT_PREFIX_ENV] = str(out_dir / "project")
+    env[LEGACY_OUTPUT_PREFIX_ENV] = env[OUTPUT_PREFIX_ENV]
     completed = subprocess.run(
         cli_argv(args),
         cwd=BASE_DIR,
-        env=python_env(str(root)),
+        env=env,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -81,10 +90,24 @@ def main(argv: list[str] | None = None) -> int:
                 ],
             )
         )
+    # Every step writes into the bundle. Left to themselves they write to
+    # "outputs" relative to their cwd, which is BASE_DIR -- so an audit filled
+    # gx3cli/outputs inside the installed package with one project data, and
+    # left it there.
     if not args.skip_dead_logic:
-        steps.append(("dead_logic", ["dead-logic", "--root", str(root), "--db", str(xref_db)]))
+        steps.append(
+            (
+                "dead_logic",
+                ["dead-logic", "--root", str(root), "--db", str(xref_db), "--output-dir", str(out_dir)],
+            )
+        )
     if not args.skip_network_map:
-        steps.append(("network_map", ["network-map", "--root", str(root), "--index-db", str(index_db)]))
+        steps.append(
+            (
+                "network_map",
+                ["network-map", "--root", str(root), "--index-db", str(index_db), "--output-dir", str(out_dir)],
+            )
+        )
     steps.append(("doctor_after", ["doctor", "--root", str(root), "--warn-only"]))
 
     results = [run_step(name, command, out_dir, root) for name, command in steps]
