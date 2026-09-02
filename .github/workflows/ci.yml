@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: ["main"]
+  # Every pull request, whatever it targets. Restricting this to "main" meant a
+  # pull request onto another branch -- one change stacked on the branch of an
+  # earlier one, say -- reported no checks at all, which reads as "nothing to
+  # run" rather than "not run". Pushes stay limited to main so a branch with an
+  # open pull request is not built twice.
   pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 jobs:
