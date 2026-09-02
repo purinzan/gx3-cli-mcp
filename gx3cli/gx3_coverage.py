@@ -17,6 +17,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES, KNOW
 from gx3cli.gx3_arg_decode import ARITH_OPS, COMPARE_RE, WRITE_ARG_TABLE, base_opcode, parse_row_occurrences
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_label_resolve import load_label_resolver
 
 
 CONTACT_OPS = {"a", "b", "c", "EG"}
@@ -47,6 +48,7 @@ def decoder_status(op: str) -> tuple[str, str]:
 
 
 def collect_instruction_rows(root: Path) -> list[dict[str, object]]:
+    labels = load_label_resolver(root)
     counts: Counter[str] = Counter()
     ref_counts: Counter[str] = Counter()
     partial_counts: Counter[str] = Counter()
@@ -57,7 +59,7 @@ def collect_instruction_rows(root: Path) -> list[dict[str, object]]:
                 continue
             data = str(raw.get("data", ""))
             ops = parse_header_ops(data)
-            _decoded, status = parse_row_occurrences(data)
+            _decoded, status = parse_row_occurrences(data, labels)
             for hop in ops:
                 op = hop.op
                 if op in CONTACT_OPS:
@@ -93,6 +95,7 @@ def collect_instruction_rows(root: Path) -> list[dict[str, object]]:
 
 
 def collect_device_rows(root: Path) -> list[dict[str, object]]:
+    labels = load_label_resolver(root)
     counts: Counter[str] = Counter()
     details: Counter[str] = Counter()
     samples: dict[str, str] = {}
@@ -110,7 +113,7 @@ def collect_device_rows(root: Path) -> list[dict[str, object]]:
                     samples.setdefault(alias, f"{lddb}:{int(float(raw['pos']))}")
                 elif token.startswith("_lid/"):
                     label_count += 1
-            decoded, _status = parse_row_occurrences(data)
+            decoded, _status = parse_row_occurrences(data, labels)
             for _role, _opcode, occs, _consts in decoded:
                 for occ in occs:
                     counts[occ.device_type] += 1

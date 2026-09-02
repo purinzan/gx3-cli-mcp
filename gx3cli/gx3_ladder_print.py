@@ -21,6 +21,7 @@ from pathlib import Path
 
 from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, device_radix, format_device, hex_number
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
+    LABEL_TOKEN_PREFIX,
     extract_args_text,
     extract_elements,
     element_meta,
@@ -42,6 +43,7 @@ from gx3cli.gx3_program_map import ProgramMap, load_program_map
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 from gx3cli.review_gx3_project import DEVICE_CODE_BY_TYPE, LadderRow
 from gx3cli.gx3_project_paths import find_comment_db
+from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +174,9 @@ def wrap_display(text: str, width: int, max_lines: int) -> list[str]:
 # Ordered display operands (order matters: OUT T0 K5, <> K0 D1986, ...).
 
 
-def display_operands(raw_args: list[str], arg_tokens: list[str]) -> list[str]:
+def display_operands(
+    raw_args: list[str], arg_tokens: list[str], labels: LabelResolver | None = None
+) -> list[str]:
     """Decode every argument into its display text, in instruction order."""
     out: list[str] = []
     ti = 0
@@ -233,6 +237,15 @@ def display_operands(raw_args: list[str], arg_tokens: list[str]) -> list[str]:
     const_re = re.compile(r"v=([^:}]+)")
 
     for arg in raw_args:
+        if arg.startswith("l{"):
+            # A label contact or coil. The name lives in LabelData.db; without
+            # it the rung used to print "?" where the program has a name.
+            token = next((t for t in arg_tokens[ti:] if t.startswith(LABEL_TOKEN_PREFIX)), "")
+            if token:
+                ti = arg_tokens.index(token, ti) + 1
+            ref = labels.resolve_token(token) if labels is not None and token else None
+            out.append(ref.name if ref is not None else "?")
+            continue
         if arg.startswith("c{"):
             tok = take_if_const()
             m = const_re.search(arg)
@@ -396,7 +409,9 @@ class Op:
         return (not self.is_contact) and (not self.is_coil) and self.element_kind != "ct"
 
 
-def parse_rung(row: LadderRow) -> tuple[list[Op], list[tuple[int, int]], list[tuple[int, int, int]]]:
+def parse_rung(
+    row: LadderRow, labels: LabelResolver | None = None
+) -> tuple[list[Op], list[tuple[int, int]], list[tuple[int, int, int]]]:
     """Return (ops, verticals[(x,y)], wires[(x,y,end_x)])."""
     tokens = header_tokens(row.data)
     header_ops = parse_header_ops(row.data)
@@ -426,7 +441,7 @@ def parse_rung(row: LadderRow) -> tuple[list[Op], list[tuple[int, int]], list[tu
             else len(tokens)
         )
         arg_tokens = tokens[hop.token_index + 1 : next_op_token]
-        operands = display_operands(raw_args, arg_tokens)
+        operands = display_operands(raw_args, arg_tokens, labels)
         note = ""
         if ":note=" in raw and arg_tokens:
             note = arg_tokens[-1]
@@ -716,8 +731,9 @@ def render_rung(
     comments: dict[tuple[str, int], str],
     step: int | None,
     live_values: dict[str, object] | None = None,
+    labels: LabelResolver | None = None,
 ) -> list[str]:
-    ops, verticals, wires = parse_rung(row)
+    ops, verticals, wires = parse_rung(row, labels)
     vset_logical = set(verticals)
     max_y = 0
     for op in ops:
@@ -1036,6 +1052,7 @@ def render_entries(
     from gx3cli.extract_gx3_extended_instruction_knowledge import extract_title_text
     from gx3cli.gx3_arg_decode import parse_row_occurrences
 
+    labels = load_label_resolver(root)
     rows_by_db = read_ladder_rows(root)
     raw_rows = rows_by_db.get(lddb_name)
     if raw_rows is None:
@@ -1080,7 +1097,7 @@ def render_entries(
         )
         step = program_map.step_of(lddb_name, row.pos) if program_map else None
         try:
-            ops, _status = parse_row_occurrences(data)
+            ops, _status = parse_row_occurrences(data, labels)
             devices = frozenset(occ.device for _r, _o, occs, _c in ops for occ in occs)
             live_devices = [
                 {"role": role, "opcode": opcode, "device": occ.device}
@@ -1092,7 +1109,7 @@ def render_entries(
             live_devices = []
         entries.append({
             "blocktype": 0, "pos": pos, "title": None,
-            "devices": devices, "live_devices": live_devices, "step": step, "lines": render_rung(row, comments, step, live_values),
+            "devices": devices, "live_devices": live_devices, "step": step, "lines": render_rung(row, comments, step, live_values, labels),
         })
     return entries
 

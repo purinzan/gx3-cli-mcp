@@ -33,6 +33,7 @@ from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
 from gx3cli.extract_hmi_build_info import CommentInfo
+from gx3cli.gx3_label_resolve import load_label_resolver
 
 
 DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
@@ -60,6 +61,9 @@ def build(args: argparse.Namespace) -> int:
 
     print(f"loading program map from {root} ...")
     pm = load_program_map(root)
+    labels = load_label_resolver(root)
+    if labels:
+        print(f"resolved {len(labels)} label references from LabelData.db")
     comments = load_comments_for_root(root)
     print("parsing ladder rows ...")
     rows_by_db = read_ladder_rows(root)
@@ -109,7 +113,7 @@ def build(args: argparse.Namespace) -> int:
             row_count += 1
             pos = int(float(raw["pos"]))
             step = pm.step_of(lddb, pos)
-            ops, status = parse_row_occurrences(data)
+            ops, status = parse_row_occurrences(data, labels)
             for role, opcode, occs, consts in ops:
                 for occ in occs:
                     info = comments.get((occ.device_type, occ.number), CommentInfo())

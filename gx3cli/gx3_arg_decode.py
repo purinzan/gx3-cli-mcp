@@ -29,7 +29,9 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
 
+from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
 from gx3cli.gx3_instruction_table import manual_write_indices
+from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
 INNER_DEV_RE = re.compile(r"d\{[^{}]*?a=(-?\d+)[^{}]*?\}")
@@ -163,10 +165,16 @@ def write_indices(opcode: str, argc: int) -> tuple[set[int] | None, bool]:
     return set(spec), False  # type: ignore[arg-type]
 
 
-def parse_row_occurrences(data: str) -> tuple[list[tuple[str, str, list[ArgOcc], str]], str]:
+def parse_row_occurrences(
+    data: str, labels: LabelResolver | None = None
+) -> tuple[list[tuple[str, str, list[ArgOcc], str]], str]:
     """Return ([(role, opcode, args, const_summary)], parse_status).
 
     role is a/b/c for contacts/coils, otherwise the opcode.
+
+    Pass ``labels`` to give label references their names. Without it a label
+    contact still parses, but arrives with no identity -- which is what left
+    the cross-reference empty on label-based projects.
     """
     tokens = header_tokens(data)
     header_ops = parse_header_ops(data)
@@ -182,7 +190,7 @@ def parse_row_occurrences(data: str) -> tuple[list[tuple[str, str, list[ArgOcc],
         arg_tokens = tokens[hop.token_index + 1 : next_op_token]
 
         if hop.op in CONTACT_ROLES or hop.op in COIL_ROLES:
-            occ = decode_args(raw_args, arg_tokens or [hop.device_type], hop.op)
+            occ = decode_args(raw_args, arg_tokens or [hop.device_type], hop.op, labels)
             role = hop.op
             access = "read" if hop.op in CONTACT_ROLES else "write"
             for a in occ:
@@ -190,7 +198,7 @@ def parse_row_occurrences(data: str) -> tuple[list[tuple[str, str, list[ArgOcc],
             results.append((role, "", occ, const_summary(raw_args)))
             continue
 
-        occ = decode_args(raw_args, arg_tokens, hop.op)
+        occ = decode_args(raw_args, arg_tokens, hop.op, labels)
         wset, rmw = write_indices(hop.op, len(raw_args))
         for a in occ:
             if wset is None:
@@ -213,7 +221,9 @@ def const_summary(raw_args: list[str]) -> str:
     return ",".join(values[:6])
 
 
-def decode_args(raw_args: list[str], arg_tokens: list[str], role: str) -> list[ArgOcc]:
+def decode_args(
+    raw_args: list[str], arg_tokens: list[str], role: str, labels: LabelResolver | None = None
+) -> list[ArgOcc]:
     """Pair raw args with header type tokens and decode every device.
 
     Header token kinds per argument:
@@ -283,6 +293,14 @@ def decode_args(raw_args: list[str], arg_tokens: list[str], role: str) -> list[A
         return ""
 
     for arg_index, arg in enumerate(raw_args):
+        if arg.startswith("l{"):
+            # A label reference. The arg itself is a placeholder ("l{id=#}");
+            # the identity is the "_lid/<LabelID>/<row>" header token.
+            token = next((t for t in arg_tokens[ti:] if t.startswith(LABEL_TOKEN_PREFIX)), "")
+            if token:
+                ti = arg_tokens.index(token, ti) + 1
+            occs.append(make_label_occ(token, arg_index, labels))
+            continue
         if arg.startswith("c{"):
             take_if_const()
             continue
@@ -367,6 +385,33 @@ def decode_args(raw_args: list[str], arg_tokens: list[str], role: str) -> list[A
             continue
 
     return occs
+
+
+def make_label_occ(token: str, arg_index: int, labels: LabelResolver | None) -> ArgOcc:
+    """An occurrence of a label, named if the label table could be read.
+
+    Unresolved it keeps the raw reference rather than being dropped, so the
+    row still shows that something is there and where it came from.
+    """
+    parsed = split_label_token(token)
+    ref = labels.resolve_token(token) if labels is not None and token else None
+    if ref is not None and parsed is not None:
+        return ArgOcc(
+            device=ref.name,
+            device_type=LABEL_DEVICE_TYPE,
+            number=parsed[1],
+            access="",
+            arg_index=arg_index,
+            detail=ref.detail,
+        )
+    return ArgOcc(
+        device=token or "?label",
+        device_type=LABEL_DEVICE_TYPE,
+        number=parsed[1] if parsed else 0,
+        access="",
+        arg_index=arg_index,
+        detail="label (unresolved)",
+    )
 
 
 def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> ArgOcc:
