@@ -19,6 +19,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from gx3cli.gx3_operand_parse import parse_operands
 from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, device_radix, format_device, hex_number
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     LABEL_TOKEN_PREFIX,
@@ -29,14 +30,6 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     top_level_items,
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
-from gx3cli.gx3_arg_decode import (
-    INNER_DEV_RE,
-    M_CONST_BASE_RE,
-    M_CONST_MOD_RE,
-    M_INDEX_DEV_RE,
-    SKIP_ARG_TOKENS,
-    TYPE_TOKEN_ALIASES,
-)
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES
 from gx3cli.gx3_ladder_logic import VERTICAL_RE, parse_pos
 from gx3cli.gx3_program_map import ProgramMap, load_program_map
@@ -177,81 +170,29 @@ def wrap_display(text: str, width: int, max_lines: int) -> list[str]:
 def display_operands(
     raw_args: list[str], arg_tokens: list[str], labels: LabelResolver | None = None
 ) -> list[str]:
-    """Decode every argument into its display text, in instruction order."""
+    """Decode every argument into its display text, in instruction order.
+
+    The walk over the header tokens lives in gx3_operand_parse, shared with the
+    cross-reference; this spells the result the way GX Works3 prints it, with
+    the modifier folded into the name (K4M100, D100.5, D100Z2).
+    """
     out: list[str] = []
-    ti = 0
-    n_tokens = len(arg_tokens)
-
-    def peek() -> str:
-        return arg_tokens[ti] if ti < n_tokens else ""
-
-    def advance() -> str:
-        nonlocal ti
-        tok = peek()
-        if tok:
-            ti += 1
-        return tok
-
-    def skip_to_meaningful() -> None:
-        nonlocal ti
-        while ti < n_tokens:
-            tok = arg_tokens[ti]
-            if (
-                tok in DEVICE_TYPES
-                or tok in TYPE_TOKEN_ALIASES
-                or tok in SKIP_ARG_TOKENS
-                or tok in ("G", "P", "String")
-                or re.match(r"^[KHE]_", tok)
-            ):
-                return
-            ti += 1
-
-    def take_type() -> str:
-        skip_to_meaningful()
-        while ti < n_tokens:
-            tok = advance()
-            if tok in SKIP_ARG_TOKENS:
-                continue
-            alias = TYPE_TOKEN_ALIASES.get(tok, tok)
-            if alias in DEVICE_TYPES or alias in ("U", "P"):
-                return alias
-            if re.match(r"^[KHE]_", tok) or tok == "String":
-                skip_to_meaningful()
-                continue
-            return ""
-        return ""
-
-    def take_if(*names: str) -> str:
-        skip_to_meaningful()
-        if peek() in names:
-            return advance()
-        return ""
-
-    def take_if_const() -> str:
-        skip_to_meaningful()
-        tok = peek()
-        if re.match(r"^[KHE]_", tok) or tok == "String":
-            return advance()
-        return ""
-
-    const_re = re.compile(r"v=([^:}]+)")
-
-    for arg in raw_args:
-        if arg.startswith("l{"):
-            # A label contact or coil. The name lives in LabelData.db; without
-            # it the rung used to print "?" where the program has a name.
-            token = next((t for t in arg_tokens[ti:] if t.startswith(LABEL_TOKEN_PREFIX)), "")
-            if token:
-                ti = arg_tokens.index(token, ti) + 1
-            ref = labels.resolve_token(token) if labels is not None and token else None
+    for operand in parse_operands(raw_args, arg_tokens, allow_pointer=True):
+        if operand.kind == "label":
+            ref = labels.resolve_token(operand.label_token) if labels is not None and operand.label_token else None
             out.append(ref.name if ref is not None else "?")
             continue
-        if arg.startswith("c{"):
-            tok = take_if_const()
-            m = const_re.search(arg)
-            value = m.group(1) if m else "?"
-            prefix = tok.split("_", 1)[0] if tok and tok[0] in "KHE" else "K"
-            if tok == "String":
+
+        if operand.kind == "const":
+            token = operand.const_token
+            value = operand.const_value or "?"
+            if operand.raw.startswith("M{"):
+                # A constant base with an index register: K2400Z2.
+                index = f"Z{operand.index_reg}" if operand.index_reg else ""
+                out.append(f"K{value}{index}")
+                continue
+            prefix = token.split("_", 1)[0] if token and token[0] in "KHE" else "K"
+            if token == "String":
                 out.append(f'"{value}"')
             elif prefix == "H":
                 try:
@@ -260,79 +201,36 @@ def display_operands(
                     out.append(f"H{value}")
             else:
                 out.append(f"{prefix}{value}")
-        elif arg.startswith("d{"):
-            dev_type = take_type()
-            m = INNER_DEV_RE.search(arg)
-            if m and dev_type == "P":
-                out.append(f"#P{int(m.group(1))}")
-            elif m and dev_type:
-                out.append(format_device(dev_type, int(m.group(1))))
+            continue
+
+        if operand.kind == "buffer":
+            if operand.bit:
+                modifier = f".{int(operand.bit):X}"
+            elif operand.index_reg:
+                modifier = f"Z{operand.index_reg}"
             else:
-                out.append("?")
-        elif arg.startswith("B{"):
-            inner = INNER_DEV_RE.findall(arg)
-            dev_type = take_type()
-            if dev_type == "U" and len(inner) >= 2:
-                take_if("G")
-                out.append(f"U{int(inner[0]):X}\\G{int(inner[1])}")
-            elif inner:
-                out.append(format_device(dev_type, int(inner[0])))
-            else:
-                out.append("?")
-        elif arg.startswith("M{"):
-            const_base = M_CONST_BASE_RE.search(arg)
-            index_dev = M_INDEX_DEV_RE.search(arg)
-            const_mod = M_CONST_MOD_RE.search(arg)
-            if "B{" in arg:
-                inner = INNER_DEV_RE.findall(arg)
-                dev_type = take_type()
-                if dev_type == "U" and len(inner) >= 2:
-                    take_if("G")
-                    # An index register on buffer memory (header "Zs") consumed no
-                    # token, so the next operand read it as its own device type.
-                    index_reg = ""
-                    if const_mod is None and index_dev is not None:
-                        if take_if("Zs", "Z"):
-                            index_reg = index_dev.group(1)
-                    else:
-                        take_if("Dots")
-                    modifier = (
-                        f".{int(const_mod.group(1)):X}" if const_mod
-                        else (f"Z{index_reg}" if index_reg else "")
-                    )
-                    out.append(f"U{int(inner[0]):X}\\G{int(inner[1])}{modifier}")
-                    continue
-                out.append("?")
-                continue
-            if const_base:
-                take_if_const()
-                take_if("Zs", "Z")
-                z = f"Z{index_dev.group(1)}" if index_dev else ""
-                out.append(f"K{const_base.group(1)}{z}")
-                continue
-            dev_type = take_type()
-            m = INNER_DEV_RE.search(arg)
-            if not m:
-                out.append("?")
-                continue
-            number = int(m.group(1))
-            dev_text = format_device(dev_type, number) if dev_type else f"?{number}"
-            if index_dev and index_dev.group(1) != m.group(1):
-                take_if("Zs", "Z")
-                out.append(f"{dev_text}Z{index_dev.group(1)}")
-            elif const_mod:
-                mod_tok = take_if("Ks", "Dots")
-                if mod_tok == "Ks":
-                    out.append(f"K{const_mod.group(1)}{dev_text}")
-                elif mod_tok == "Dots":
-                    out.append(f"{dev_text}.{int(const_mod.group(1)):X}")
-                else:
-                    out.append(dev_text)
-            else:
-                take_if("Ks", "Dots", "Zs")
-                out.append(dev_text)
-        else:
+                modifier = ""
+            out.append(f"U{operand.unit:X}\\G{operand.number}{modifier}")
+            continue
+
+        if operand.kind != "device" or operand.number is None:
             out.append("?")
+            continue
+
+        number = int(operand.number)
+        if operand.device_type == "P":
+            out.append(f"#P{number}")
+            continue
+        dev_text = format_device(operand.device_type, number) if operand.device_type else f"?{number}"
+        if operand.index_reg:
+            out.append(f"{dev_text}Z{operand.index_reg}")
+        elif operand.digit:
+            out.append(f"K{operand.digit}{dev_text}")
+        elif operand.bit:
+            out.append(f"{dev_text}.{int(operand.bit):X}")
+        else:
+            out.append(dev_text)
+
     return out
 
 
