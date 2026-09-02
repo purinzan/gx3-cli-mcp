@@ -92,6 +92,16 @@ class FlowElement:
         return "condition"
 
 
+@dataclass(frozen=True)
+class HorizontalEdge:
+    """One explicit horizontal conduction step in a ladder row."""
+
+    x1: int
+    y: int
+    x2: int
+    element: FlowElement | None = None
+
+
 def parse_device(text: str) -> tuple[str, int]:
     return _parse_device_name(text)
 
@@ -196,7 +206,7 @@ def positioned_elements(row: LadderRow) -> list[FlowElement]:
         if pos is None:
             continue
         x, y = pos
-        if str(meta.get("element_kind", "")) == "wire":
+        if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             elements.append(FlowElement("wire", "", "", "", "wire", x, y))
             continue
         if op_index >= len(header_ops):
@@ -232,21 +242,8 @@ def positioned_elements(row: LadderRow) -> list[FlowElement]:
         )
         op_index += 1
 
-    vertical_x_by_y: dict[int, set[int]] = defaultdict(set)
-    for x_text, y_text in VERTICAL_RE.findall(row.data):
-        vertical_x_by_y[int(y_text)].add(int(x_text))
-
-    starts_by_y: dict[int, set[int]] = defaultdict(set)
     for element in elements:
-        starts_by_y[element.y].add(element.x)
-    for y, xs in vertical_x_by_y.items():
-        starts_by_y[y].update(xs)
-        starts_by_y[y - 1].update(xs)
-    width = parse_dim_width(row.dim) or parse_dim_width(extract_dim(row.data))
-
-    for element in elements:
-        boundaries = sorted(x for x in starts_by_y[element.y] if x > element.x)
-        element.end_x = boundaries[0] if boundaries else max(width, element.x + 1)
+        element.end_x = element.x if element.is_driver else element.x + 1
     return elements
 
 
@@ -396,6 +393,25 @@ def element_condition_logic(element: FlowElement) -> dict[str, Any]:
     }
 
 
+def horizontal_edges(elements: list[FlowElement]) -> list[HorizontalEdge]:
+    """Return horizontal edges that are explicitly carried by row elements.
+
+    Earlier logic extended an element to the next element or vertical boundary
+    on the same y row. That inferred a wire through any empty horizontal gap.
+    The GX3 row data already has explicit ``wire`` elements for empty cells, so
+    topology logic should advance only through contacts, inline predicates, and
+    those explicit wires.
+    """
+
+    edges: list[HorizontalEdge] = []
+    for element in elements:
+        if element.is_driver:
+            continue
+        end_x = max(element.end_x, element.x + 1)
+        edges.append(HorizontalEdge(element.x, element.y, end_x, element))
+    return edges
+
+
 def vertical_components(row: LadderRow, elements: list[FlowElement]) -> dict[int, list[set[int]]]:
     width, height = parse_dim(row.dim or extract_dim(row.data))
     max_y = max([height - 1, *[element.y for element in elements], 0])
@@ -443,18 +459,19 @@ def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, An
     for y in range(max_y + 1):
         formulas[(0, y)] = logic_true()
 
+    edges = horizontal_edges(elements)
     x_values = {0, output.x}
-    for element in elements:
-        x_values.add(element.x)
-        x_values.add(element.end_x)
+    for edge in edges:
+        x_values.add(edge.x1)
+        x_values.add(edge.x2)
     for x_text, _ in VERTICAL_RE.findall(row.data):
         x_values.add(int(x_text))
     if width:
         x_values.add(width)
 
-    starts: dict[int, list[FlowElement]] = defaultdict(list)
-    for element in elements:
-        starts[element.x].append(element)
+    edges_by_x: dict[int, list[HorizontalEdge]] = defaultdict(list)
+    for edge in edges:
+        edges_by_x[edge.x1].append(edge)
 
     components_by_x = vertical_components(row, elements)
 
@@ -464,20 +481,18 @@ def enable_logic_for_output(row: LadderRow, output: FlowElement) -> dict[str, An
             for y in component:
                 formulas[(x, y)] = merged
 
-        for element in starts.get(x, []):
-            if element.is_driver:
-                continue
-            incoming = formulas[(element.x, element.y)]
+        for edge in edges_by_x.get(x, []):
+            incoming = formulas[(edge.x1, edge.y)]
             if is_false(incoming):
                 continue
-            condition = element_condition_logic(element)
+            condition = element_condition_logic(edge.element) if edge.element is not None else logic_true()
             if condition.get("op") == "unknown":
                 condition = {
                     **condition,
                     "warning": "treated_as_pass_through_condition",
                 }
             candidate = and_logic([incoming, condition])
-            key = (element.end_x, element.y)
+            key = (edge.x2, edge.y)
             formulas[key] = or_logic([formulas[key], candidate])
 
     return formulas[(output.x, output.y)]

@@ -12,7 +12,31 @@ def logic_text_for_generated(logic):
     return logic_to_text(enable_logic_for_output(row, output))
 
 
+def manual_row(elements: str, dim: str = "3x1") -> LadderRow:
+    data = f"V1:4:1:1:1:1:a:M:c:M:cb{{fg=fg{{dim={dim}:es=[{elements}]}}}}"
+    return LadderRow("test", 0, "", "", 0, 1, data, "", [], "exact")
+
+
+def test_blank_horizontal_gap_is_not_inferred_as_a_wire():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,0}"
+    row = manual_row(f"{contact}:{coil}")
+    output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, output)) == "FALSE"
+
+
+def test_explicit_wire_carries_a_horizontal_gap():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    wire = "e{s=wire:pos=1,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,0}"
+    row = manual_row(f"{contact}:{wire}:{coil}")
+    output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
+
+
 def main():
+    test_blank_horizontal_gap_is_not_inferred_as_a_wire()
+    test_explicit_wire_carries_a_horizontal_gap()
     cases = [
         ("single", {"device": "M100"}, "[M100]"),
         (
