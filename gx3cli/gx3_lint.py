@@ -58,7 +58,13 @@ from gx3cli.review_gx3_project import (
 )
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_arg_decode import COMPARE_RE
-from gx3cli.gx3_instruction_table import manual_operand_types, operand_range, operand_words
+from gx3cli.gx3_instruction_table import (
+    manual_allowed_devices,
+    manual_operand_names,
+    manual_operand_types,
+    operand_range,
+    operand_words,
+)
 
 
 WORD_TYPES = {"D", "W", "R", "ZR", "SD", "SW", "G", "UG"}
@@ -627,6 +633,16 @@ def check_div_by_zero(ctx: LintContext) -> list[dict[str, object]]:
     return out
 
 
+def _operand_names(op) -> tuple[str, ...] | None:
+    """The manuals' name for each operand position, in ladder order."""
+    argc = len(op.args)
+    for name in (op.opcode, op.base):
+        names = manual_operand_names(name, argc)
+        if names is not None:
+            return names
+    return None
+
+
 def _operand_types(op) -> tuple[str, ...] | None:
     """Operand type codes for this op, or None when the manuals do not say.
 
@@ -655,6 +671,45 @@ def _operand_words(op, arg) -> int:
     if types is not None and arg.index < len(types):
         return operand_words(types[arg.index])
     return 2 if op.base in LEGACY_WIDTH32_BASES else 1
+
+
+@register("operand-device", "operand uses a device type the manuals do not allow")
+def check_operand_device(ctx: LintContext) -> list[dict[str, object]]:
+    """Devices the manuals do not allow on that operand.
+
+    GX Works3 rejects an invalid device at compile time, so a converted project
+    should produce nothing here. What this catches is the decoder losing track
+    of which argument is which -- when operands shift, the device types stop
+    fitting, and a row that reads as a clean parse stops being plausible.
+    """
+    out: list[dict[str, object]] = []
+    for row in ctx.rows:
+        loc = f"{row.lddb}:{row.pos}:{row.title}"
+        for op in ctx.ops_for(row):
+            names = _operand_names(op)
+            if names is None:
+                continue
+            for arg in op.args:
+                if arg.kind != "device" or arg.detail or arg.index >= len(names):
+                    continue
+                allowed = manual_allowed_devices(op.opcode, names[arg.index]) or manual_allowed_devices(
+                    op.base, names[arg.index]
+                )
+                if not allowed or arg.device_type in allowed:
+                    continue
+                out.append(
+                    {
+                        "check": "operand-device",
+                        "severity": "medium",
+                        "device": arg.device,
+                        "comment": ctx.comment(arg.device_type, arg.number),
+                        "count": 1,
+                        "locations": loc,
+                        "detail": f"{op.opcode} {names[arg.index]} is {arg.device_type}, which the manuals do not list for it",
+                        "review_note": "either the program is invalid or this row decoded onto the wrong operand; check the rung in GX Works3",
+                    }
+                )
+    return out
 
 
 @register("width-mismatch", "multi-word destination overlapped by another op")
