@@ -73,6 +73,50 @@ def test_no_module_hardcodes_a_device_radix() -> None:
     )
 
 
+def test_no_module_spells_a_device_by_concatenation() -> None:
+    """f"{dev_type}{number}" is decimal for every device type, silently.
+
+    It needs no hexadecimal set and no radix expression, so the two checks
+    above walk straight past it. used-devices built its report's device column
+    this way and put W132 in it as "W306" -- a name no other output uses, and
+    one an engineer searching the project will not find.
+    """
+    offenders: list[str] = []
+    for path in _modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.JoinedStr):
+                continue
+            parts = node.values
+            if len(parts) != 2 or not all(isinstance(v, ast.FormattedValue) for v in parts):
+                continue
+            if any(value.format_spec is not None for value in parts):
+                # f"{dev_type}{number:X}" states its radix, and the modules
+                # that do it check device_radix() first. It is the bare
+                # {number} -- decimal, unstated -- that this is looking for.
+                continue
+            names = []
+            for value in parts:
+                target = value.value
+                if isinstance(target, ast.Attribute):
+                    names.append(target.attr.lower())
+                elif isinstance(target, ast.Name):
+                    names.append(target.id.lower())
+                else:
+                    names.append("")
+            if names[1].endswith("text"):
+                # Already spelled somewhere else; this is re-joining it, not
+                # deciding the radix.
+                continue
+            if "type" in names[0] and ("num" in names[1] or names[1] == "n"):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        "these spell a device name by concatenation, which is decimal for X, Y, "
+        "B and W; call format_device() from gx3_device_name:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def test_the_canonical_set_still_covers_the_direct_access_types() -> None:
     # DX/DY are the direct-access spellings of X/Y and FX/FY are the function
     # devices; all four are hexadecimal, and all four were what the copies
