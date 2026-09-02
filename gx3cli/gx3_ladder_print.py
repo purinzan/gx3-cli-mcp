@@ -288,9 +288,19 @@ def display_operands(
                 dev_type = take_type()
                 if dev_type == "U" and len(inner) >= 2:
                     take_if("G")
-                    take_if("Dots")
-                    bit = f".{int(const_mod.group(1)):X}" if const_mod else ""
-                    out.append(f"U{int(inner[0]):X}\\G{int(inner[1])}{bit}")
+                    # An index register on buffer memory (header "Zs") consumed no
+                    # token, so the next operand read it as its own device type.
+                    index_reg = ""
+                    if const_mod is None and index_dev is not None:
+                        if take_if("Zs", "Z"):
+                            index_reg = index_dev.group(1)
+                    else:
+                        take_if("Dots")
+                    modifier = (
+                        f".{int(const_mod.group(1)):X}" if const_mod
+                        else (f"Z{index_reg}" if index_reg else "")
+                    )
+                    out.append(f"U{int(inner[0]):X}\\G{int(inner[1])}{modifier}")
                     continue
                 out.append("?")
                 continue

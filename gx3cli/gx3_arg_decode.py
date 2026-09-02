@@ -368,10 +368,22 @@ def decode_args(
                     unit = int(buffer_inner[0])
                     offset = int(buffer_inner[1])
                     take_if("G")
-                    take_if("Dots")
+                    # Buffer memory carries either a bit position (header "Dots") or an
+                    # index register (header "Zs"). The index form consumed no token, so
+                    # its "Zs" was left for the next operand to read as its device type:
+                    # a BMOV's D48200Z2 came back as an index register Z48200, and the D
+                    # occurrence went missing from the cross-reference.
+                    index_reg = ""
+                    if const_mod is None and index_dev is not None:
+                        if take_if("Zs", "Z"):
+                            index_reg = index_dev.group(1)
+                    else:
+                        take_if("Dots")
                     bit = const_mod.group(1) if const_mod else ""
-                    suffix = f".{bit}" if bit else ""
+                    suffix = f".{bit}" if bit else (f"Z{index_reg}" if index_reg else "")
                     detail = f"unit=0x{unit:X}" + (f" bit={bit}" if bit else "")
+                    if index_reg:
+                        detail += f" Z{index_reg} indexed"
                     occs.append(
                         ArgOcc(
                             device=f"U{unit:X}\\G{offset}{suffix}",
@@ -382,6 +394,8 @@ def decode_args(
                             detail=detail,
                         )
                     )
+                    if index_reg:
+                        occs.append(make_occ("Z", int(index_reg), arg_index, detail="index register"))
                     continue
             if const_base:
                 # constant base with index register: K2400Z2 (header: K_n Zs)
