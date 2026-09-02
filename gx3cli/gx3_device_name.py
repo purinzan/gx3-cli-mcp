@@ -74,6 +74,16 @@ def hex_number(number: int) -> str:
     return f"{number:X}"
 
 
+def device_radix(dev_type: str) -> int:
+    """The base a device type's number is written in: 16 or 10.
+
+    For callers that have to keep a caller-specific format (zero padding, an
+    end-of-range calculation) and so cannot use format_device directly. They
+    still must not carry their own copy of the hex set.
+    """
+    return DEVICE_TYPE_BASE.get(dev_type.upper(), 10)
+
+
 def format_device(dev_type: str, number: int) -> str:
     """Spell a device the way it appears in GX Works3."""
     dev_type = dev_type.upper()

@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gx3cli.gx3_device_name import format_device as _format_device
+from gx3cli.gx3_device_name import device_radix, format_device as _format_device
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_path, default_project_root, find_comment_db
 
 ROOT = default_project_root()
@@ -112,7 +112,7 @@ def format_device(device_type: str, number: int) -> str:
 
 
 def hex_candidate(device_type: str, number: int) -> str:
-    if device_type in {"X", "Y", "B", "W", "SW", "SB"}:
+    if device_radix(device_type) == 16:
         return f"{device_type}{number:X}"
     return ""
 
