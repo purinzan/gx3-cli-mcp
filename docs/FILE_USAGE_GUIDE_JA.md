@@ -142,6 +142,8 @@
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |
 | `gx3_data_flow.py` | 命令の read/write 意味付けから保守的な引数単位のデータフロー辺を生成する。 |
+| `gx3_metrics.py` | プログラムごとの規模と、論理が集中している回路を出す。未知のプロジェクトをどこから読むかの入口。 |
+| `test_gx3_metrics.py` | 回路の分岐数を経路数として数え、読めなかった回路を黙って除外しないことを検査する。 |
 | `gx3_rung_text.py` | プログラムを 1 回路 1 行 (条件 -> 駆動デバイス) で出力する。`ladder-print` の罫線出力に対し、読解と MCP 経由のエージェント利用向けの圧縮表現。 |
 | `test_gx3_rung_text.py` | 回路が「条件 -> 出力」として読め、印刷レイアウトより桁違いに小さいことを検査する。 |
 | `gx3_label_resolve.py` | `LabelData.db` を読み、ラダーの `_lid/<LabelID>/<行>` をラベル名・クラス・割付デバイスへ解決する。 |
