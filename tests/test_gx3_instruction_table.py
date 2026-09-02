@@ -73,6 +73,36 @@ def test_two_operand_arithmetic_stays_read_modify_write() -> None:
     assert rmw is True
 
 
+def test_block_compare_records_its_result_area() -> None:
+    # BKCMP/DBKCMP (s1)(s2)(d)(n) store the comparison result into (d). They
+    # used to be matched by the contact-comparison regex, which answers "writes
+    # nothing", so every device a block compare writes went unrecorded.
+    assert _writes("BKCMP=", 4) == {2}
+    assert _writes("BKCMP<>P_U", 4) == {2}
+    assert _writes("DBKCMP>=", 4) == {2}
+
+
+def test_contact_comparisons_write_nothing() -> None:
+    # Including the unsigned and date/time variants, which used to fall through
+    # as unknown so their operands were reported as "ref" rather than "read".
+    for opcode, argc in (
+        ("LD=", 2), ("AND<=_U", 2), ("ORD>", 2), ("LDD>", 2),
+        ("ANDDT<", 3), ("ORTM=", 3), ("LDED>=", 3),
+    ):
+        assert _writes(opcode, argc) == set(), opcode
+
+
+def test_module_dedicated_instructions_are_covered() -> None:
+    # SH-081975. The manual documents several of these per page under a shared
+    # heading ("J(P).READ，G(P).READ"), and names the axis-numbered variants
+    # only in the ST signature block ("ENO:=G_ABRST1(EN,U,s,d);").
+    assert _writes("JP.READ", 5) == {3, 4}
+    assert _writes("GP.WRITE", 5) == {3, 4}
+    assert _writes("G.ABRST1", 3) == {2}
+    assert _writes("ZP.TEACH4", 3) == {2}
+    assert _writes("G.OUTPUT", 4) == {3}
+
+
 def test_unknown_opcode_still_reports_unknown() -> None:
     # Nothing in this change should make an unrecognised opcode look classified.
     assert write_indices("NOT_A_REAL_INSTRUCTION", 2) == (None, False)

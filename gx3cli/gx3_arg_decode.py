@@ -86,7 +86,15 @@ WRITE_ARG_TABLE: dict[str, object] = {
 ARITH_OPS = {"+", "-", "*", "/", "B+", "B-", "B*", "B/", "BK+", "BK-", "BK*", "BK/", "D+", "D-", "D*", "D/",
              "E+", "E-", "E*", "E/", "$+", "WAND", "WOR", "WXOR", "WXNR",
              "DAND", "DOR", "DXOR", "DXNR"}
-COMPARE_RE = re.compile(r"^(?:(?:LD|AND|OR)?(?:D|E|\$)?|BKCMP)(?:=|<>|<=|>=|<|>)$")
+# Contact comparisons: they produce a result on the rung and write nothing.
+# BKCMP/DBKCMP used to be matched here and must not be -- a block compare
+# stores its result into (d) ("比較演算結果を格納する先頭デバイス"), so treating
+# it as a pure comparison hid every device a BKCMP writes. Those are in the
+# manual table instead. The type infixes are the signed/unsigned (_U), double
+# word (D), real (E), string ($) and date/time (DT/TM/ED) variants.
+COMPARE_RE = re.compile(
+    r"^(?:LD|AND|OR)(?:D|E|\$|DT|TM|ED)?(?:=|<>|<=|>=|<|>)(?:_U)?$"
+)
 
 TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z"}
 SKIP_ARG_TOKENS = {"Ks", "Dots", "Digits"}
