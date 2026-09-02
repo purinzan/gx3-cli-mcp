@@ -131,6 +131,8 @@
 | `gx3_ladder_logic.py` | 接点/coil/AND/OR/MC zone を論理式にする共通ロジック。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。 |
+| `gx3_label_resolve.py` | `LabelData.db` を読み、ラダーの `_lid/<LabelID>/<行>` をラベル名・クラス・割付デバイスへ解決する。 |
+| `test_gx3_label_resolve.py` | ラベル方式のプログラムがラベル名として解読されることを検査する。xref が空になり下流全部が沈黙する退行を防ぐ。 |
 | `gx3_instruction_table.py` | 命令の書込み先オペランド位置。マニュアルのオペランド表 (SH-081226 ほか) から生成した数値データで、手編集しない。 |
 | `test_gx3_instruction_table.py` | 書込み先オペランド位置がマニュアルどおりであることを検査する。手書き表が個数オペランドを書込み先と誤判定していた退行を防ぐ。 |
 | `test_gx3_exec_condition.py` | 命令の実行条件 (レベル/立上り/立下り) がマニュアルどおりであることを検査する。`endswith("P")` による推測が EXP/NOP を誤判定し `+P_U` 等を見落としていた退行を防ぐ。 |
