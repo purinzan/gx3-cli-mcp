@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gx3cli.gx3_exec_config import program_file_names
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_program_map import PouInfo, load_program_map
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_xref import default_db_path, normalize_device
@@ -40,7 +41,6 @@ EDGE_WRITE_OPS = {
     "DDECP",
 }
 ONE_SCAN_BIT_WRITE_OPS = {"PLS", "PLF"}
-BIT_DEVICE_TYPES = {"X", "Y", "M", "L", "B", "SB", "SM", "S", "F", "V"}
 PULSE_COMMENT_RE = re.compile(
     r"(pulse|edge|one[- ]?shot|pls|plf|立上|立下|立ち上|立ち下|ﾜﾝｼｮｯﾄ|ワンショット|ﾊﾟﾙｽ|パルス)",
     re.IGNORECASE,
