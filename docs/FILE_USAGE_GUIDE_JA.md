@@ -21,6 +21,7 @@
 | `CONTRIBUTING.md` | クローンした利用者/開発者向けの Windows-first PR 手順。ソース問題を再現、検体化、修正、検証して PR する流れ。 |
 | `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
+| `Dockerfile` | Glama の自動検査などで MCP サーバーをコンテナ起動し、`initialize` / `tools/list` に応答させる。実プロジェクトは同梱しない。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
 | `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
