@@ -142,6 +142,8 @@
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |
 | `gx3_data_flow.py` | 命令の read/write 意味付けから保守的な引数単位のデータフロー辺を生成する。 |
+| `gx3_output.py` | 出力形式の共通処理。`--format` を唯一の綴りにし、既存の `--json` は同義として残す。JSON は ensure_ascii=False / indent=2 に統一。 |
+| `test_gx3_output.py` | `--json` を持つコマンドが必ず `--format` も受けること、JSON の書き方が揃っていることを検査する。 |
 | `gx3_guide.py` | プロジェクトの中身 (ラダー/ラベル/コメント/パラメータの有無、索引の構築状況) を見て、実行すべきコマンドを理由つきで挙げる。62 コマンドの入口。 |
 | `test_gx3_guide.py` | プロジェクトに無いものを勧めないこと、および `--help` に全コマンドが出ることを検査する。 |
 | `gx3_metrics.py` | プログラムごとの規模と、論理が集中している回路を出す。未知のプロジェクトをどこから読むかの入口。 |

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
 
 
@@ -195,8 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Suggest which commands to run, from what this project contains."
     )
     parser.add_argument("--root", default=str(default_project_root()))
-    parser.add_argument("--format", choices=["text", "json"], default="text")
-    parser.add_argument("-o", "--output", default="")
+    add_format_argument(parser, json_shorthand=False)
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -206,17 +206,11 @@ def main(argv: list[str] | None = None) -> int:
 
     evidence = gather(root)
     suggestions = suggest(evidence)
-    body = (
-        json.dumps(to_json(evidence, suggestions), ensure_ascii=False, indent=2)
-        if args.format == "json"
-        else "\n".join(render(evidence, suggestions))
+    return emit(
+        args,
+        text=lambda: render(evidence, suggestions),
+        data=lambda: to_json(evidence, suggestions),
     )
-    if args.output:
-        Path(args.output).write_text(body + "\n", encoding="utf-8")
-        print(f"wrote: {args.output}")
-    else:
-        print(body)
-    return 0
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_label_resolve import load_label_resolver
+from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
 DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
@@ -523,6 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cross-limit", type=int, default=20, help="maximum linked devices to show")
     p.add_argument("--cross-xref-limit", type=int, default=80, help="maximum xref rows per linked device")
     p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
+    add_format_alias(p)
     p.set_defaults(func=where_used)
 
     p = sub.add_parser("downstream", help="BFS impact trace from one device")
@@ -547,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    fold_format_alias(args)
     return int(args.func(args))
 
 

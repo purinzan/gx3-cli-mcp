@@ -10,6 +10,7 @@ from pathlib import Path
 from gx3cli.analyze_gx3_intermediate_parse_gaps import ProjectInput, collect_project, project_label_from_root
 from gx3cli.gx3_coverage import collect_device_rows, collect_instruction_rows
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
+from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
 def build_report(root: Path) -> dict[str, object]:
@@ -103,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder or .gx3")
     parser.add_argument("-o", "--output", default="gx3_reliability_report.md")
     parser.add_argument("--json", action="store_true", help="write JSON instead of Markdown")
+    add_format_alias(parser)
     args = parser.parse_args(argv)
+    fold_format_alias(args)
     root = resolve_project_root(args.root)
     report = build_report(root)
     out = Path(args.output)

@@ -38,6 +38,7 @@ from gx3cli.gx3_ladder_logic import (
 )
 from gx3cli.gx3_arg_decode import write_indices
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
+from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.review_gx3_project import LadderRow, load_rows
 
@@ -186,9 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=str(default_project_root()))
     parser.add_argument("--program", default="", help="limit to one LDDB, e.g. 001_LDDB.db")
     parser.add_argument("--device", default="", help="limit to rungs driving this device")
-    parser.add_argument("--format", choices=["text", "json"], default="text")
     parser.add_argument("--no-titles", action="store_true", help="omit section titles")
-    parser.add_argument("-o", "--output", default="")
+    add_format_argument(parser, json_shorthand=False)
     args = parser.parse_args(argv)
 
     items = collect(Path(args.root), args.program, args.device)
@@ -196,17 +196,11 @@ def main(argv: list[str] | None = None) -> int:
         print("no rungs found")
         return 0
 
-    if args.format == "json":
-        body = json.dumps(to_json(items), ensure_ascii=False, indent=2)
-    else:
-        body = "\n".join(render_text(items, show_titles=not args.no_titles)).lstrip("\n")
-
-    if args.output:
-        Path(args.output).write_text(body + "\n", encoding="utf-8")
-        print(f"wrote: {args.output}")
-    else:
-        print(body)
-    return 0
+    return emit(
+        args,
+        text=lambda: "\n".join(render_text(items, show_titles=not args.no_titles)).lstrip("\n"),
+        data=lambda: to_json(items),
+    )
 
 
 if __name__ == "__main__":

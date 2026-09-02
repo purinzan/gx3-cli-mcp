@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_rung_text import RungText, collect
 
@@ -204,8 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=str(default_project_root()))
     parser.add_argument("--xref-db", default="", help="cross-reference DB, for device totals")
     parser.add_argument("--top", type=int, default=10, help="how many rungs to list (0 for none)")
-    parser.add_argument("--format", choices=["text", "json"], default="text")
-    parser.add_argument("-o", "--output", default="")
+    add_format_argument(parser, json_shorthand=False)
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -218,17 +218,11 @@ def main(argv: list[str] | None = None) -> int:
     top = hotspots(items, args.top) if args.top > 0 else []
     totals = xref_totals(Path(args.xref_db)) if args.xref_db else {}
 
-    if args.format == "json":
-        body = json.dumps(to_json(programs, top, totals), ensure_ascii=False, indent=2)
-    else:
-        body = "\n".join(render(programs, top, totals))
-
-    if args.output:
-        Path(args.output).write_text(body + "\n", encoding="utf-8")
-        print(f"wrote: {args.output}")
-    else:
-        print(body)
-    return 0
+    return emit(
+        args,
+        text=lambda: render(programs, top, totals),
+        data=lambda: to_json(programs, top, totals),
+    )
 
 
 if __name__ == "__main__":

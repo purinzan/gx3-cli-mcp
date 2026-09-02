@@ -13,6 +13,7 @@ from gx3cli.gx3_device_name import canonical_device as _canonical_device, format
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root, load_rows
+from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
 DEVICE_RE = re.compile(r"^([A-Z]+)(-?\d+)$", re.IGNORECASE)
@@ -681,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default="")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
+    add_format_alias(p)
     p.set_defaults(func=query_device)
 
     p = sub.add_parser("comment", help="search device comments")
@@ -689,6 +691,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default="")
     p.add_argument("--limit", type=int, default=30)
     p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
+    add_format_alias(p)
     p.add_argument("--expand-synonyms", action="store_true", help="expand common Japanese/English shop-floor synonyms")
     p.set_defaults(func=query_comment)
 
@@ -708,6 +711,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=200)
     p.add_argument("--root", default="")
     p.add_argument("--json", action="store_true", help="emit a common JSON envelope")
+    add_format_alias(p)
     p.set_defaults(func=query_cycle)
 
     p = sub.add_parser("device-map", help="device-type usage ranges, density, and free gaps")
@@ -727,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    fold_format_alias(args)
     return int(args.func(args))
 
 

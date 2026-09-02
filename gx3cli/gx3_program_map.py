@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gx3cli.gx3_project_paths import default_project_root, iter_convertdata_entries, resolve_project_root
+from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
 BACKUP_MARKER = "BackUp".encode("utf-16-le")
@@ -342,7 +343,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Show LDDB -> POU/program mapping.")
     parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    add_format_alias(parser)
     args = parser.parse_args(argv)
+    fold_format_alias(args)
 
     pm = load_program_map(resolve_project_root(args.root))
     if args.json:
