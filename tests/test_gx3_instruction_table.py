@@ -154,3 +154,22 @@ def test_table_is_indexed_within_the_operand_count() -> None:
         for argc, indices in by_argc.items():
             assert all(0 <= i < argc for i in indices), (opcode, argc, indices)
             assert manual_write_indices(opcode, argc) == set(indices)
+
+
+def main() -> int:
+    # run_tests.py runs each file as a plain script, so the tests have to be
+    # called from here. Collected rather than listed, so a test added later
+    # cannot be silently left out.
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for name, test in tests:
+        test()
+    print(f"{len(tests)} checks passed in {__file__.rsplit('/', 1)[-1]}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
