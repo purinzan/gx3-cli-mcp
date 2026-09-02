@@ -50,6 +50,7 @@ COMMAND_CATEGORIES = [
 COMMANDS: dict[str, CommandSpec] = {
     "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports", "Reports"),
     "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device", "Analysis"),
+    "data-flow": CommandSpec("gx3_data_flow.py", "build argument-level source-to-destination value-flow edges", "Analysis"),
     "dependency-flow": CommandSpec("gx3_dependency_flow.py", "render upstream coil dependencies as a Mermaid flow graph", "Analysis"),
     "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs", "Analysis"),
     "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams", "Analysis"),
