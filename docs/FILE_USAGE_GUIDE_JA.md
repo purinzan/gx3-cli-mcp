@@ -30,6 +30,7 @@
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
 | `test_gx3_device_name.py` | デバイス名の 16 進/10 進の整形・解釈・往復を検査する。 |
+| `test_gx3_device_name_is_the_only_source.py` | 16 進デバイス型の定義が `gx3_device_name.py` 以外に複製されていないことを検査する。DX/DY が 10 進で出る #16 の再発を防ぐ。 |
 | `test_gx3_device_types_contacts.py` | 命名テーブルにあるデバイス型が接点としてヘッダ解析を通ることを検査する。LT/LST/LC/LZ/RD/FX/FY/FD の接点が消えて幻の命令になる退行を防ぐ。 |
 | `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |

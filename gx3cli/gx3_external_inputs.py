@@ -14,13 +14,13 @@ from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import LadderRow, comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
+from gx3cli.gx3_device_name import device_radix
 
 
 CONTACT_ROLES = {"a", "b"}
 PREDICATE_CONDITION_ROLES = {"=", "==", "<>", "<=", ">=", "<", ">"}
 CONDITION_ROLES = CONTACT_ROLES | PREDICATE_CONDITION_ROLES
 DRIVER_ROLES = {"c", "SET", "PLS", "PLF", "OUT__16", "OUTH__16", "RST"}
-HEX_DEVICE_TYPES = {"X", "Y", "B", "W", "SB", "SW"}
 CONSTANT_DEVICES = {
     "SM400": ("constant_true", "always_on"),
     "SM401": ("constant_false", "always_off"),
@@ -72,7 +72,7 @@ def device_address_value(device_type: str, number: int | str) -> int:
     if isinstance(number, int):
         return number
     text = str(number).upper()
-    base = 16 if device_type.upper() in HEX_DEVICE_TYPES else 10
+    base = device_radix(device_type)
     return int(text, base)
 
 
@@ -85,7 +85,7 @@ def parse_device_text(device: str) -> tuple[str, int] | None:
 
 
 def plc_device_text(device_type: str, number: int, fallback: str = "") -> str:
-    if device_type.upper() in HEX_DEVICE_TYPES:
+    if device_radix(device_type) == 16:
         return f"{device_type}{number:X}"
     return fallback or _format_device(device_type, number)
 

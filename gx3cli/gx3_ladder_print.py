@@ -19,7 +19,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, format_device, hex_number
+from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, device_radix, format_device, hex_number
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     extract_args_text,
     extract_elements,
@@ -325,7 +325,7 @@ def parse_display_device(text: str) -> tuple[str, int] | None:
     if not m:
         return None
     dev_type = m.group(1)
-    base = 16 if dev_type in HEX_DEVICE_TYPES else 10
+    base = device_radix(dev_type)
     try:
         return dev_type, int(m.group(2), base)
     except ValueError:

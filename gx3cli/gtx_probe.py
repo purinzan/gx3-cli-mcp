@@ -9,6 +9,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from gx3cli.gx3_device_name import device_radix
 
 
 MARKERS: tuple[tuple[str, bytes], ...] = (
@@ -387,12 +388,12 @@ def alternate_devices(device: str) -> list[str]:
         return [device.upper()]
     dev_type, number_text = match.groups()
     out = [f"{dev_type}{number_text.upper()}"]
-    if dev_type in {"X", "Y", "B", "W", "SB", "SW"} and re.search(r"[A-Fa-f]", number_text):
+    if device_radix(dev_type) == 16 and re.search(r"[A-Fa-f]", number_text):
         try:
             out.append(f"{dev_type}{int(number_text, 16)}")
         except ValueError:
             pass
-    elif dev_type in {"X", "Y", "B", "W", "SB", "SW"}:
+    elif device_radix(dev_type) == 16:
         try:
             out.append(f"{dev_type}{int(number_text):X}")
         except ValueError:
