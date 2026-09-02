@@ -57,6 +57,8 @@ from gx3cli.review_gx3_project import (
     write_csv,
 )
 from gx3cli.extract_hmi_build_info import CommentInfo
+from gx3cli.gx3_arg_decode import COMPARE_RE
+from gx3cli.gx3_instruction_table import manual_operand_types, operand_range, operand_words
 
 
 WORD_TYPES = {"D", "W", "R", "ZR", "SD", "SW", "G", "UG"}
@@ -77,15 +79,16 @@ INTERFACE_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-DIV_BASES = {"/", "D/", "B/", "E/", "$/"}
-# 32-bit (double word) instruction bases. E-float ops are also 32-bit wide.
-WIDTH32_BASES = {
-    "D+", "D-", "D*", "D/", "DMOV", "DCML", "DAND", "DOR", "DXOR", "DXNR",
-    "DINC", "DDEC", "DBCD", "DBIN", "DFLT", "DINT", "DNEG", "DXCH", "DFMOV",
-    "DWSUM", "DSUM", "DROL", "DROR", "DRCL", "DRCR", "DSFL", "DSFR",
-    "E+", "E-", "E*", "E/", "EMOV", "EDMOV", "ENEG", "ECMP",
-}
-COMPARE_RE = re.compile(r"^(?:(?:LD|AND|OR)?(?:D|E|\$)?|BKCMP)(?:=|<>|<=|>=|<|>)$")
+# Division bases, from the instruction list: /, D/, B/, DB/, E/, ED/ and their
+# pulse forms. The set used to include "$/", which is not an instruction -- the
+# manuals have no string division -- and to leave out DB/ and ED/.
+DIV_BASES = {"/", "D/", "B/", "DB/", "E/", "ED/"}
+
+# 32-bit instruction bases the manuals do not carry, so they cannot be typed
+# from MANUAL_OPERAND_TYPES. These are the GX Works2-era names (iQ-R spells the
+# conversions INT2FLT/FLT2INT), kept because real projects still contain them.
+LEGACY_WIDTH32_BASES = {"DFLT", "DINT"}
+
 
 
 FINDING_FIELDS = ["check", "severity", "device", "comment", "count", "locations", "detail", "review_note"]
@@ -624,14 +627,46 @@ def check_div_by_zero(ctx: LintContext) -> list[dict[str, object]]:
     return out
 
 
-@register("width-mismatch", "32-bit destination high word reused by another op")
+def _operand_types(op) -> tuple[str, ...] | None:
+    """Operand type codes for this op, or None when the manuals do not say.
+
+    The intermediate format writes a comparison contact as a bare "<" or "=",
+    where the manuals document the family as "LD□，AND□，OR□" with one operand
+    table shared by all three, so the bare form is looked up as the LD form.
+    """
+    argc = len(op.args)
+    for name in (op.opcode, op.base):
+        types = manual_operand_types(name, argc)
+        if types is not None:
+            return types
+    if COMPARE_RE.match(op.base) and not op.base.startswith(("LD", "AND", "OR")):
+        return manual_operand_types("LD" + op.base, argc)
+    return None
+
+
+def _operand_words(op, arg) -> int:
+    """Device words this operand occupies, from the manual operand types.
+
+    Falls back to the legacy 32-bit list for the handful of GX Works2-era
+    opcodes the manuals do not carry, and to one word when nothing is known --
+    an unknown operand should not invent an overlap.
+    """
+    types = _operand_types(op)
+    if types is not None and arg.index < len(types):
+        return operand_words(types[arg.index])
+    return 2 if op.base in LEGACY_WIDTH32_BASES else 1
+
+
+@register("width-mismatch", "multi-word destination overlapped by another op")
 def check_width_mismatch(ctx: LintContext) -> list[dict[str, object]]:
-    # Registry of second (high) words written by 32-bit destinations.
+    # Registry of the words above the first one, for every multi-word write.
+    # A double-precision destination occupies four words, not two, so the
+    # instruction-wide "is this a 32-bit op" question is not enough: the width
+    # belongs to the operand. EDMOV is double precision and used to be listed
+    # as 32-bit, which guarded D+1 while D+2 and D+3 were left unwatched.
     high_words: dict[tuple[str, int], dict[str, object]] = {}
     for row in ctx.rows:
         for op in ctx.ops_for(row):
-            if op.base not in WIDTH32_BASES:
-                continue
             for arg in op.args:
                 if arg.kind != "device" or arg.device_type not in WORD_TYPES:
                     continue
@@ -639,22 +674,25 @@ def check_width_mismatch(ctx: LintContext) -> list[dict[str, object]]:
                     continue
                 if arg.detail:  # indexed / buffer / digit form: pairing unclear
                     continue
-                key = (arg.device_type, arg.number + 1)
-                high_words.setdefault(
-                    key,
-                    {
-                        "base": arg.device,
-                        "opcode": op.opcode,
-                        "loc": f"{row.lddb}:{row.pos}:{row.title}",
-                    },
-                )
+                words = _operand_words(op, arg)
+                if words < 2:
+                    continue
+                for offset in range(1, words):
+                    high_words.setdefault(
+                        (arg.device_type, arg.number + offset),
+                        {
+                            "base": arg.device,
+                            "opcode": op.opcode,
+                            "words": words,
+                            "loc": f"{row.lddb}:{row.pos}:{row.title}",
+                        },
+                    )
 
     out: list[dict[str, object]] = []
     seen: set[tuple[str, int, str, int]] = set()
     for row in ctx.rows:
         loc = f"{row.lddb}:{row.pos}:{row.title}"
         for op in ctx.ops_for(row):
-            is32 = op.base in WIDTH32_BASES
             for arg in op.args:
                 if arg.kind != "device" or arg.device_type not in WORD_TYPES or arg.detail:
                     continue
@@ -666,15 +704,16 @@ def check_width_mismatch(ctx: LintContext) -> list[dict[str, object]]:
                 if dedup in seen:
                     continue
                 seen.add(dedup)
+                width = f"{int(src['words']) * 16}-bit"
                 if arg.access in ("write", "both"):
                     severity = "medium"
-                    detail = f"{op.opcode} writes {arg.device}, the high word of 32-bit {src['opcode']} {src['base']}"
-                elif is32:
+                    detail = f"{op.opcode} writes {arg.device}, inside {width} {src['opcode']} {src['base']}"
+                elif _operand_words(op, arg) >= 2:
                     severity = "medium"
-                    detail = f"32-bit {op.opcode} base {arg.device} overlaps high word of {src['opcode']} {src['base']}"
+                    detail = f"multi-word {op.opcode} base {arg.device} overlaps {width} {src['opcode']} {src['base']}"
                 else:
                     severity = "info"
-                    detail = f"{op.opcode} reads {arg.device}, the high word of 32-bit {src['opcode']} {src['base']}"
+                    detail = f"{op.opcode} reads {arg.device}, inside {width} {src['opcode']} {src['base']}"
                 out.append(
                     {
                         "check": "width-mismatch",
@@ -684,7 +723,7 @@ def check_width_mismatch(ctx: LintContext) -> list[dict[str, object]]:
                         "count": 1,
                         "locations": f"{src['loc']}  <->  {loc}",
                         "detail": detail,
-                        "review_note": "32-bit op occupies N and N+1; another op touching N+1 may corrupt or misread the value",
+                        "review_note": f"{width} operand occupies {src['words']} consecutive words; another op touching one of them may corrupt or misread the value",
                     }
                 )
     out.sort(key=lambda item: 0 if item["severity"] == "medium" else 1)
@@ -699,27 +738,37 @@ def check_signed_compare(ctx: LintContext) -> list[dict[str, object]]:
         for op in ctx.ops_for(row):
             if not COMPARE_RE.match(op.base):
                 continue
-            is32 = op.base.startswith("D") or op.base.startswith("E") or "D" in op.base[:2]
-            wide = op.base.startswith("D") or op.base.startswith("E")
+            # The operand types say what the comparison actually is. Reading it
+            # off the opcode name got both halves wrong: "D" is double word in
+            # DMOV but date in ANDDT<, and the unsigned _U comparisons were not
+            # matched at all -- so the check that exists to find signedness
+            # mistakes could not see a single unsigned opcode.
+            types = _operand_types(op)
             for arg in op.args:
                 if arg.kind == "const":
                     value = const_int(arg.const)
                     if value is None:
                         continue
-                    if not wide and (value > 32767 or value < -32768):
-                        out.append(
-                            {
-                                "check": "signed-compare",
-                                "severity": "info",
-                                "device": f"const={arg.const}",
-                                "comment": "",
-                                "count": 1,
-                                "locations": loc,
-                                "detail": f"16-bit signed compare {op.opcode} against constant {value} outside -32768..32767",
-                                "review_note": "value does not fit a signed 16-bit word; compare result may be unexpected",
-                            }
-                        )
+                    code = types[arg.index] if types and arg.index < len(types) else ""
+                    span = operand_range(code)
+                    if span is None or span[0] <= value <= span[1]:
+                        continue
+                    out.append(
+                        {
+                            "check": "signed-compare",
+                            "severity": "info",
+                            "device": f"const={arg.const}",
+                            "comment": "",
+                            "count": 1,
+                            "locations": loc,
+                            "detail": f"{op.opcode} compares a {code} operand against constant {value}, outside {span[0]}..{span[1]}",
+                            "review_note": "value does not fit the operand type; compare result may be unexpected",
+                        }
+                    )
                 elif arg.kind == "device" and arg.device_type in {"UG"}:
+                    code = types[arg.index] if types and arg.index < len(types) else ""
+                    if code.startswith("uint"):
+                        continue  # already an unsigned compare; nothing to warn about
                     out.append(
                         {
                             "check": "signed-compare",

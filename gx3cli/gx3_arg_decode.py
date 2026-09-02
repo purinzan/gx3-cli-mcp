@@ -101,7 +101,9 @@ ARITH_OPS = {"+", "-", "*", "/", "B+", "B-", "B*", "B/", "BK+", "BK-", "BK*", "B
 # manual table instead. The type infixes are the signed/unsigned (_U), double
 # word (D), real (E), string ($) and date/time (DT/TM/ED) variants.
 COMPARE_RE = re.compile(
-    r"^(?:LD|AND|OR)(?:D|E|\$|DT|TM|ED)?(?:=|<>|<=|>=|<|>)(?:_U)?$"
+    # The LD/AND/OR prefix is optional: the intermediate format writes a bare
+    # "<" or "=" for the comparison contact, and KNOWN_OPS lists those.
+    r"^(?:LD|AND|OR)?(?:D|E|\$|DT|TM|ED)?(?:=|<>|<=|>=|<|>)(?:_U)?$"
 )
 
 TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z"}
