@@ -29,7 +29,7 @@ from pathlib import Path
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
-from gx3cli.gx3_xref import default_db_path
+from gx3cli.gx3_xref import default_db_path, open_xref_db
 
 
 INTERNAL_BIT_TYPES = ("M", "L", "B", "F", "V", "S")
@@ -94,8 +94,7 @@ def main(argv: list[str] | None = None) -> int:
             return False
         return refresh_area_for(device_type, int(m.group(1)), refresh_areas) is not None
 
-    con = sqlite3.connect(xref_path)
-    con.row_factory = sqlite3.Row
+    con = open_xref_db(xref_path)
 
     stats: dict[str, dict[str, int]] = {}
     for r in con.execute(

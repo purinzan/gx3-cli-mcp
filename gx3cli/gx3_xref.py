@@ -39,6 +39,55 @@ from gx3cli.gx3_label_resolve import load_label_resolver
 DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 
 
+# The decoding contract this database was written under. Every consumer reads
+# the stored occurrences as-is, so a database built before a decoder change
+# keeps answering with the old reading -- and lint, trace-device, dead-logic
+# and timing-chart have no way to tell. Bump this whenever the decoder changes
+# which devices a rung yields, how they are spelled, or how access is
+# classified; index-lite guards its own spelling change the same way.
+#
+#   arg-decode-2: buffer memory keeps its index register (U0\G10Z0) instead of
+#   handing the header token to the next operand, and an index register is
+#   recorded as read rather than inheriting the operand's access.
+XREF_DECODER = "arg-decode-2"
+
+
+def stamp_decoder(con: sqlite3.Connection) -> None:
+    """Record which decoder wrote this database's occurrences."""
+    con.execute("create table if not exists meta(key text primary key, value text not null)")
+    con.execute(
+        "insert or replace into meta(key, value) values ('decoder', ?)", (XREF_DECODER,)
+    )
+
+
+def rebuild_hint(path: Path) -> str:
+    return f"rebuild it: gx3-cli xref build --root <project> --db {path}"
+
+
+def check_decoder(path: Path, con: sqlite3.Connection) -> None:
+    """Refuse a database whose occurrences were decoded by another version."""
+    row = con.execute("select value from meta where key='decoder'").fetchone()
+    stored = (row[0] if row else "") if not isinstance(row, sqlite3.Row) else row["value"]
+    if stored == XREF_DECODER:
+        return
+    con.close()
+    raise SystemExit(
+        f"xref db was built by a different decoder version: {path}\n"
+        f"  stored: {stored or '(none)'}   expected: {XREF_DECODER}\n"
+        "Its occurrences are the old reading of the ladder, so every answer\n"
+        f"taken from it would be stale. {rebuild_hint(path)}"
+    )
+
+
+def open_xref_db(path: Path, read_only: bool = False) -> sqlite3.Connection:
+    """Open a cross-reference database, checked against the decoder version."""
+    uri = f"file:{path}?mode=ro" if read_only else str(path)
+    con = sqlite3.connect(uri, uri=read_only)
+    con.row_factory = sqlite3.Row
+    check_decoder(path, con)
+    return con
+
+
 def default_db_path(root: Path) -> Path:
     name = root.name
     if name.startswith("_extracted_"):
@@ -146,6 +195,7 @@ def build(args: argparse.Namespace) -> int:
     con.execute("insert into meta(key, value) values ('root', ?)", (str(root),))
     con.execute("insert into meta(key, value) values ('rows', ?)", (str(row_count),))
     con.execute("insert into meta(key, value) values ('records', ?)", (str(len(records)),))
+    stamp_decoder(con)
     con.commit()
     con.close()
     print(f"xref written: {out}")
@@ -163,9 +213,7 @@ def open_db(args: argparse.Namespace) -> sqlite3.Connection:
             f"xref db not found: {path} "
             f"(run: python -m gx3cli.gx3_cli xref build --root {root})"
         )
-    con = sqlite3.connect(path)
-    con.row_factory = sqlite3.Row
-    return con
+    return open_xref_db(path)
 
 
 def normalize_device(text: str) -> str:

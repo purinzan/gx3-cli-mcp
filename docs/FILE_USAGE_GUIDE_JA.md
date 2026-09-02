@@ -35,6 +35,7 @@
 | `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
 | `test_gx3_cli_root_passthrough.py` | --root で指定したプロジェクトが、--root オプションを持たず環境変数から root を読むコマンド（used-devices / hmi-build-info / extended-instructions）まで届くことを検査する。別プロジェクトを黙って解析して成功報告する退行を防ぐ。 |
 | `test_gx3_indexed_buffer_memory.py` | インデックス修飾付きバッファメモリ（U96\G196608Z0）の Zs トークンが消費され、次オペランドの型を奪わないことを検査する。BMOV の D48200Z2 が存在しないインデックスレジスタ Z48200 として記録される退行を防ぐ。 |
+| `test_gx3_xref_decoder_version.py` | xref DB にデコーダ版が刻まれ、別バージョンが書いた DB は読み込み時に拒否されることを検査する。デコーダ修正後も古い DB が lint/trace/dead-logic に黙って読まれる退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |

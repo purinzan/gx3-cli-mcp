@@ -69,6 +69,11 @@ def add_xref(con: sqlite3.Connection, device: str, access: str, role: str, *, op
 def create_xref(path: Path, rows: list[tuple[str, str, str, dict]]) -> None:
     con = sqlite3.connect(path)
     con.executescript(XREF_SCHEMA)
+    # A real build stamps the decoder version and readers refuse a database
+    # without it, so the fixture has to look like one.
+    from gx3cli.gx3_xref import stamp_decoder
+
+    stamp_decoder(con)
     for device, access, role, kwargs in rows:
         add_xref(con, device, access, role, **kwargs)
     con.commit()
