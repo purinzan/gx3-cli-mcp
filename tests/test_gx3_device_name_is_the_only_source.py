@@ -79,3 +79,22 @@ def test_the_canonical_set_still_covers_the_direct_access_types() -> None:
     # missed.
     for dev_type in ("X", "Y", "DX", "DY", "FX", "FY"):
         assert dev_type in HEX_DEVICE_TYPES, dev_type
+
+
+def main() -> int:
+    # run_tests.py runs each file as a plain script, so the tests have to be
+    # called from here. Collected rather than listed, so a test added later
+    # cannot be silently left out.
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for name, test in tests:
+        test()
+    print(f"{len(tests)} checks passed in {__file__.rsplit('/', 1)[-1]}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

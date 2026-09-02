@@ -13,6 +13,7 @@ import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from gx3cli.gx3_device_name import device_radix, format_device
 
 
 DEVICE_CODES = {
@@ -46,7 +47,6 @@ DEVICE_CODES = {
     "ZR": 0xB0,
 }
 
-HEX_ADDRESS_PREFIXES = {"X", "Y", "B", "W", "SB", "SW", "DX", "DY"}
 
 
 @dataclass(frozen=True)
@@ -56,9 +56,7 @@ class DeviceAddress:
 
     @property
     def display(self) -> str:
-        if self.prefix in HEX_ADDRESS_PREFIXES:
-            return f"{self.prefix}{self.number:X}"
-        return f"{self.prefix}{self.number}"
+        return format_device(self.prefix, self.number)
 
 
 def parse_device(text: str) -> DeviceAddress:
@@ -69,7 +67,7 @@ def parse_device(text: str) -> DeviceAddress:
         raw = value[len(prefix) :]
         if not raw:
             break
-        base = 16 if prefix in HEX_ADDRESS_PREFIXES else 10
+        base = device_radix(prefix)
         try:
             number = int(raw, base)
         except ValueError:
