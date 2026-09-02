@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES, KNOWN_OPS, header_tokens, parse_header_ops
-from gx3cli.gx3_arg_decode import ARITH_OPS, COMPARE_RE, WRITE_ARG_TABLE, base_opcode, parse_row_occurrences
+from gx3cli.gx3_arg_decode import base_opcode, has_manual_write_schema, parse_row_occurrences, write_index_basis, write_indices
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_label_resolve import load_label_resolver
@@ -36,12 +36,11 @@ def decoder_status(op: str) -> tuple[str, str]:
     base = base_opcode(op)
     if op in CONTACT_OPS:
         return "classified", "ladder contact/coil"
-    if base in WRITE_ARG_TABLE:
-        return "classified", "write-arg table"
-    if base in ARITH_OPS:
-        return "classified", "arithmetic table"
-    if COMPARE_RE.match(base):
-        return "classified", "compare regex"
+    if has_manual_write_schema(op):
+        return "classified", "manual operand table"
+    indices, _rmw = write_indices(op, 0)
+    if indices is not None:
+        return "classified", write_index_basis(op, 0)
     if op in KNOWN_OPS:
         return "known-header-only", "known op, but read/write table missing"
     return "unknown", "not in known op catalog"

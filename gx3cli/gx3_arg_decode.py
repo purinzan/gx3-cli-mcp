@@ -30,7 +30,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
 from gx3cli.gx3_intermediate_tool import parse_header_ops
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
-from gx3cli.gx3_instruction_table import manual_write_indices
+from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_write_indices
 from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
@@ -123,6 +123,7 @@ class ArgOcc:
     access: str
     arg_index: int
     detail: str = ""
+    access_basis: str = ""
 
 
 def base_opcode(opcode: str) -> str:
@@ -165,6 +166,28 @@ def write_indices(opcode: str, argc: int) -> tuple[set[int] | None, bool]:
     return set(spec), False  # type: ignore[arg-type]
 
 
+def write_index_basis(opcode: str, argc: int) -> str:
+    """Explain the source used to classify an instruction's write operands."""
+    op = base_opcode(opcode)
+    if COMPARE_RE.match(op):
+        return "compare regex"
+    if op in ARITH_OPS:
+        return "arithmetic read/modify/write rule" if argc <= 2 else "arithmetic last-operand rule"
+    if manual_write_indices(opcode, argc) is not None:
+        return "manual operand table"
+    if opcode != op and manual_write_indices(op, argc) is not None:
+        return "manual operand table via base opcode"
+    if op in WRITE_ARG_TABLE:
+        return "legacy write-arg table"
+    return "unknown"
+
+
+def has_manual_write_schema(opcode: str) -> bool:
+    """True when the generated manual operand table carries this opcode."""
+    op = base_opcode(opcode)
+    return opcode in MANUAL_WRITE_ARGS or op in MANUAL_WRITE_ARGS
+
+
 def parse_row_occurrences(
     data: str, labels: LabelResolver | None = None
 ) -> tuple[list[tuple[str, str, list[ArgOcc], str]], str]:
@@ -195,11 +218,13 @@ def parse_row_occurrences(
             access = "read" if hop.op in CONTACT_ROLES else "write"
             for a in occ:
                 a.access = access
+                a.access_basis = "ladder contact/coil"
             results.append((role, "", occ, const_summary(raw_args)))
             continue
 
         occ = decode_args(raw_args, arg_tokens, hop.op, labels)
         wset, rmw = write_indices(hop.op, len(raw_args))
+        basis = write_index_basis(hop.op, len(raw_args))
         for a in occ:
             if wset is None:
                 a.access = "ref"
@@ -207,6 +232,7 @@ def parse_row_occurrences(
                 a.access = "both" if rmw else "write"
             else:
                 a.access = "read"
+            a.access_basis = basis
         results.append((hop.op, hop.op, occ, const_summary(raw_args)))
     return results, status
 

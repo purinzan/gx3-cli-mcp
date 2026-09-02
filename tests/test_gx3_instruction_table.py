@@ -14,7 +14,7 @@ The manual operand tables name every operand -- (d)/(d1)/(d2) destinations,
 cases are the ones where the two tables disagreed.
 """
 
-from gx3cli.gx3_arg_decode import write_indices
+from gx3cli.gx3_arg_decode import has_manual_write_schema, write_index_basis, write_indices
 from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_write_indices
 
 
@@ -147,6 +147,15 @@ def test_a_page_documenting_two_instructions_does_not_mix_them() -> None:
 def test_unknown_opcode_still_reports_unknown() -> None:
     # Nothing in this change should make an unrecognised opcode look classified.
     assert write_indices("NOT_A_REAL_INSTRUCTION", 2) == (None, False)
+
+
+def test_write_classification_exposes_its_basis() -> None:
+    assert has_manual_write_schema("WTOB")
+    assert write_index_basis("WTOB", 3) == "manual operand table"
+    assert write_index_basis("+", 2) == "arithmetic read/modify/write rule"
+    assert write_index_basis("LD=", 2) == "compare regex"
+    assert write_index_basis("INV", 1) == "legacy write-arg table"
+    assert write_index_basis("NOT_A_REAL_INSTRUCTION", 2) == "unknown"
 
 
 def test_table_is_indexed_within_the_operand_count() -> None:

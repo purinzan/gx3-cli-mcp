@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import extract_elements, parse_header_ops
 from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_project_paths import default_output_path, default_project_root
@@ -19,7 +20,6 @@ OUT_CSV = default_output_path("ladder_intermediate_parse_gaps", "csv")
 OUT_MATRIX = default_output_path("ladder_intermediate_parse_gap_matrix", "csv")
 OUT_SUMMARY = default_output_path("ladder_intermediate_parse_gap_summary", "txt")
 
-BIT_DEVICE_TYPES = {"X", "Y", "DX", "DY", "M", "L", "B", "SM", "SB", "T", "ST", "C", "F", "V", "S"}
 WORD_DEVICE_TYPES = {"D", "W", "ZR", "R", "Z", "SW", "SD", "UG", "J"}
 MODULE_OPS = {"GP.RIWT", "GP.RIRD"}
 INDEXED_RE = re.compile(r"(?:[XMLBYMSFDWZR]+)\{")

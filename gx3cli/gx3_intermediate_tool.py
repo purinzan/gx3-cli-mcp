@@ -9,7 +9,7 @@ import zipfile
 from itertools import product
 from pathlib import Path
 
-from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     classify_op,
     element_meta,
@@ -22,7 +22,6 @@ from gx3cli.gx3_project_paths import convertdata_path, default_output_path
 
 
 SCHEMA_VERSION = "0.3"
-BIT_DEVICE_TYPES = {"X", "Y", "DX", "DY", "M", "L", "B", "SM", "SB", "T", "ST", "C", "F", "V", "S"}
 SPECIAL_CODE_TYPES = {"SM", "SB"}
 
 
