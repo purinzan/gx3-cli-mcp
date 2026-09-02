@@ -13,6 +13,7 @@ def test_mcp_initialize_and_tool_list() -> None:
     names = {tool["name"] for tool in tools["result"]["tools"]}
     assert "gx3_run_command" in names
     assert "gx3_trace_device" in names
+    assert "gx3_data_flow" in names
 
 
 def test_initialize_carries_the_answer_rules() -> None:

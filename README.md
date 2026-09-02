@@ -260,6 +260,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Find cycle, step, or state candidates | `gx3-cli query-cycle --root project.gx3` |
 | Show used/free device ranges | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | Show writers/readers | `gx3-cli xref where-used M100 --root project.gx3` |
+| Build argument-level value flow | `gx3-cli data-flow --root project.gx3 --format json` |
 | Emit script-friendly JSON | `gx3-cli query-device M100 --root project.gx3 --json` |
 | Export device dictionary | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |

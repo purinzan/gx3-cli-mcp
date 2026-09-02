@@ -215,6 +215,34 @@ TYPED_TOOLS: list[TypedTool] = [
         build_args=lambda a: ["where-used", _require(a, "device"), "--root", _require(a, "root")],
     ),
     TypedTool(
+        name="gx3_data_flow",
+        command="data-flow",
+        description=(
+            "Build conservative argument-level source-to-destination value-flow edges. "
+            "Known transfer and other classified instructions produce edges with "
+            "argument indexes, ranges, widths, execution condition, and confidence. "
+            "Unknown or partially parsed operations are returned as unresolved records; "
+            "no guessed edge is emitted. Device comments are included when available."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "root": {"type": "string", "description": "Extracted project folder."},
+                "device": {"type": "string", "description": "Only edges touching this device."},
+                "opcode": {"type": "string", "description": "Only this exact instruction opcode."},
+                "format": {"type": "string", "enum": ["text", "json", "csv"], "default": "json"},
+            },
+            "required": ["root"],
+            "additionalProperties": False,
+        },
+        build_args=lambda a: [
+            "--root", _require(a, "root"),
+            "--format", str(a.get("format", "json")),
+            *_opt(a, "device", "--device"),
+            *_opt(a, "opcode", "--opcode"),
+        ],
+    ),
+    TypedTool(
         name="gx3_lint",
         command="lint",
         description="Static lint: duplicate coils, multi-writers, alarm quality, unused/comment issues, math/type checks. Writes one CSV per check to the working directory.",
