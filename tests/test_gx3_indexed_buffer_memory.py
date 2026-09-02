@@ -55,6 +55,19 @@ def test_indexed_buffer_memory_does_not_steal_the_next_operand() -> None:
     assert ("U96\\G196608Z0", 1) in devices, devices
 
 
+def test_an_index_register_is_read_not_written() -> None:
+    # The index register shares its arg_index with the operand it modifies, so
+    # a destination's Z came back as written. BMOV writes U96\G196608Z0; it
+    # reads Z0 to work out where that is.
+    parsed, _status = parse_row_occurrences(ROW)
+    bmov = [entry for entry in parsed if entry[1] == "BMOV"][0]
+    access = {occ.device: occ.access for occ in bmov[2]}
+    assert access["U96\\G196608Z0"] == "write", access
+    assert access["Z0"] == "read", access
+    assert access["Z1"] == "read", access
+    assert access["Z2"] == "read", access
+
+
 def test_printed_operands_spell_the_rung_as_gx_does() -> None:
     ops, _verticals, _wires = parse_rung(ladder_row())
     bmov = [op for op in ops if op.role == "BMOV"]
@@ -64,6 +77,7 @@ def test_printed_operands_spell_the_rung_as_gx_does() -> None:
 
 def main() -> int:
     test_indexed_buffer_memory_does_not_steal_the_next_operand()
+    test_an_index_register_is_read_not_written()
     test_printed_operands_spell_the_rung_as_gx_does()
     print("indexed buffer memory checks passed")
     return 0

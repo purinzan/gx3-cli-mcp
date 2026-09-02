@@ -124,6 +124,10 @@ class ArgOcc:
     arg_index: int
     detail: str = ""
     access_basis: str = ""
+    # An index register named as a modifier (the Z2 of D100Z2). The
+    # instruction reads it to work out an address; it never writes it, whatever
+    # it does to the operand the modifier belongs to.
+    is_index_register: bool = False
 
 
 def base_opcode(opcode: str) -> str:
@@ -217,8 +221,8 @@ def parse_row_occurrences(
             role = hop.op
             access = "read" if hop.op in CONTACT_ROLES else "write"
             for a in occ:
-                a.access = access
-                a.access_basis = "ladder contact/coil"
+                a.access = "read" if a.is_index_register else access
+                a.access_basis = "index register" if a.is_index_register else "ladder contact/coil"
             results.append((role, "", occ, const_summary(raw_args)))
             continue
 
@@ -226,6 +230,13 @@ def parse_row_occurrences(
         wset, rmw = write_indices(hop.op, len(raw_args))
         basis = write_index_basis(hop.op, len(raw_args))
         for a in occ:
+            if a.is_index_register:
+                # It shares its arg_index with the operand it modifies, so the
+                # write set would otherwise report the destination's Z as
+                # written -- a device the instruction only ever reads.
+                a.access = "read"
+                a.access_basis = "index register"
+                continue
             if wset is None:
                 a.access = "ref"
             elif a.arg_index in wset:
@@ -354,7 +365,7 @@ def decode_args(
                     )
                 )
                 for extra in inner[2:]:
-                    occs.append(make_occ("Z", int(extra), arg_index, detail="index register"))
+                    occs.append(make_occ("Z", int(extra), arg_index, detail="index register", index_register=True))
             elif inner:
                 occs.append(make_occ(dev_type, int(inner[0]), arg_index, detail="range/indexed"))
         elif arg.startswith("M{"):
@@ -395,7 +406,7 @@ def decode_args(
                         )
                     )
                     if index_reg:
-                        occs.append(make_occ("Z", int(index_reg), arg_index, detail="index register"))
+                        occs.append(make_occ("Z", int(index_reg), arg_index, detail="index register", index_register=True))
                     continue
             if const_base:
                 # constant base with index register: K2400Z2 (header: K_n Zs)
@@ -403,7 +414,7 @@ def decode_args(
                 take_if("Zs", "Z")
                 if index_dev:
                     detail = f"base=K{const_base.group(1)}+Z{index_dev.group(1)}"
-                    occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail=detail))
+                    occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail=detail, index_register=True))
                 continue
             dev_type = take_type()
             m = INNER_DEV_RE.search(arg)
@@ -413,7 +424,7 @@ def decode_args(
             if index_dev and index_dev.group(1) != m.group(1):
                 take_if("Zs", "Z")
                 occs.append(make_occ(dev_type, number, arg_index, detail=f"Z{index_dev.group(1)} indexed"))
-                occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail="index register"))
+                occs.append(make_occ("Z", int(index_dev.group(1)), arg_index, detail="index register", index_register=True))
             elif const_mod:
                 mod_tok = take_if("Ks", "Dots")
                 kind = "digit" if mod_tok == "Ks" else ("bit" if mod_tok == "Dots" else "mod")
@@ -454,7 +465,9 @@ def make_label_occ(token: str, arg_index: int, labels: LabelResolver | None) -> 
     )
 
 
-def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> ArgOcc:
+def make_occ(
+    dev_type: str, number: int, arg_index: int, detail: str = "", index_register: bool = False
+) -> ArgOcc:
     dev_type = dev_type or "?"
     return ArgOcc(
         device=_format_device(dev_type, number) if dev_type != "?" else f"?{number}",
@@ -463,4 +476,5 @@ def make_occ(dev_type: str, number: int, arg_index: int, detail: str = "") -> Ar
         access="",
         arg_index=arg_index,
         detail=detail,
+        is_index_register=index_register,
     )
