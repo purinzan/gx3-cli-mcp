@@ -20,6 +20,7 @@ from gx3cli.gx3_ladder_diagram import output_label, render_row_diagram
 from gx3cli.gx3_ladder_logic import enable_logic_for_output, logic_to_text, normalize_device, output_elements_for, positioned_elements
 from gx3cli.gx3_project_paths import default_project_root, find_comment_db
 from gx3cli.review_gx3_project import LadderRow, comment_for_device, load_comments_for_root, load_rows
+from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
 IP_RE = re.compile(r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)")
@@ -683,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--data-chars", type=int, default=220)
     p.add_argument("--json", action="store_true")
+    add_format_alias(p)
     p.set_defaults(func=command_query_instruction)
 
     p = sub.add_parser("diff", help="compare two .gx3 ZIPs and optional SQLite/TXC details")
@@ -737,6 +739,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    fold_format_alias(args)
     return int(args.func(args))
 
 
