@@ -30,6 +30,7 @@
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
 | `run_tests.py` | 標準テスト入口。 |
 | `test_gx3_device_name.py` | デバイス名の 16 進/10 進の整形・解釈・往復を検査する。 |
+| `test_gx3_device_types_contacts.py` | 命名テーブルにあるデバイス型が接点としてヘッダ解析を通ることを検査する。LT/LST/LC/LZ/RD/FX/FY/FD の接点が消えて幻の命令になる退行を防ぐ。 |
 | `gx3_device_name.py` | デバイス名の唯一の定義。X/Y/B/W などを 16 進、それ以外を 10 進として整形・解釈する。表示も入力もここを通す。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
@@ -129,6 +130,8 @@
 | `gx3_ladder_logic.py` | 接点/coil/AND/OR/MC zone を論理式にする共通ロジック。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。 |
+| `gx3_instruction_table.py` | 命令の書込み先オペランド位置。マニュアルのオペランド表 (SH-081226 ほか) から生成した数値データで、手編集しない。 |
+| `test_gx3_instruction_table.py` | 書込み先オペランド位置がマニュアルどおりであることを検査する。手書き表が個数オペランドを書込み先と誤判定していた退行を防ぐ。 |
 | `gx3_project_paths.py` | `.gx3` 展開、root 解決、出力/cache path。 |
 | `gx3_redaction.py` | support/AI context 向けのマスク処理。 |
 | `gx3_version.py` | package/CLI version。 |

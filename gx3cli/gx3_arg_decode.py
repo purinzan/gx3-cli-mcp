@@ -29,6 +29,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
 
+from gx3cli.gx3_instruction_table import manual_write_indices
+
 
 INNER_DEV_RE = re.compile(r"d\{[^{}]*?a=(-?\d+)[^{}]*?\}")
 CONST_VALUE_RE = re.compile(r"v=([^:}]+)")
@@ -119,9 +121,22 @@ def write_indices(opcode: str, argc: int) -> tuple[set[int] | None, bool]:
     if COMPARE_RE.match(op):
         return set(), False
     if op in ARITH_OPS:
+        # Kept ahead of the manual table for the read-modify-write flag: the
+        # two-operand form of "+" both reads and writes its destination, which
+        # the operand table does not express.
         if argc <= 2:
             return {argc - 1}, True
         return {argc - 1}, False
+    # The manuals name each operand, so they pin the destination down exactly.
+    # Preferred over the table below, which was written by hand and put the
+    # destination on the wrong operand for WTOB, BTOW, MIDR, MIDW, INSTR,
+    # STRDEL, SERDATA, BKAND, BKRST, BREAK, G.INPUT and ZP.CSET -- for most of
+    # those it named the count operand as the one being written.
+    manual = manual_write_indices(opcode, argc)
+    if manual is None and opcode != op:
+        manual = manual_write_indices(op, argc)
+    if manual is not None:
+        return manual, False
     spec = WRITE_ARG_TABLE.get(op)
     if spec is None:
         return None, False
