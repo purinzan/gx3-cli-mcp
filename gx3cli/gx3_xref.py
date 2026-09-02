@@ -49,7 +49,9 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   arg-decode-2: buffer memory keeps its index register (U0\G10Z0) instead of
 #   handing the header token to the next operand, and an index register is
 #   recorded as read rather than inheriting the operand's access.
-XREF_DECODER = "arg-decode-2"
+#   arg-decode-3: a block instruction's destination records how many devices
+#   the run covers, so a search finds a device the run writes without naming.
+XREF_DECODER = "arg-decode-3"
 
 
 def stamp_decoder(con: sqlite3.Connection) -> None:
@@ -128,6 +130,10 @@ def build(args: argparse.Namespace) -> int:
             device text not null,
             device_type text not null,
             number integer not null,
+            -- How many devices this occurrence covers. A block instruction
+            -- names only the first device of the run it writes, so a search
+            -- for one in the middle has to match on the span, not the name.
+            range_len integer not null default 1,
             access text not null,
             role text not null,
             opcode text,
@@ -170,7 +176,7 @@ def build(args: argparse.Namespace) -> int:
                     comment = info.japanese or info.english or info.all_text or ""
                     records.append(
                         (
-                            occ.device, occ.device_type, occ.number, occ.access,
+                            occ.device, occ.device_type, occ.number, occ.range_len, occ.access,
                             role, opcode, occ.arg_index, consts, occ.detail,
                             occ.access_basis,
                             lddb, pos, pou, step, current_title, comment, status,
@@ -179,15 +185,17 @@ def build(args: argparse.Namespace) -> int:
     con.executemany(
         """
         insert into xref(
-            device, device_type, number, access, role, opcode, arg_index, const_args,
-            detail, access_basis, lddb, pos, pou, step, title, comment, parse_status
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            device, device_type, number, range_len, access, role, opcode, arg_index,
+            const_args, detail, access_basis, lddb, pos, pou, step, title, comment,
+            parse_status
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         records,
     )
     con.executescript(
         """
         create index idx_xref_device on xref(device);
+        create index idx_xref_span on xref(device_type, number);
         create index idx_xref_row on xref(lddb, pos);
         create index idx_xref_access on xref(access);
         """
@@ -237,12 +245,53 @@ def row_dict(row: sqlite3.Row) -> dict[str, object]:
     return {key: row[key] for key in row.keys()}
 
 
+def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sqlite3.Row]:
+    """Occurrences of a device, including the runs that cover it unnamed.
+
+    A block instruction names only the first device it writes, so "where is
+    D64063 written" answered "no occurrences" while a BMOV four devices earlier
+    was writing it.
+
+    A run whose length is held in a device (range_len 0) is still found only
+    under the device that starts it: how far it reaches is not knowable without
+    running the program, and a guess here would put occurrences on devices the
+    instruction may never touch.
+    """
+    parsed = _split_device(device)
+    if parsed is None:
+        return con.execute(
+            "select * from xref where device=? order by pou, pos limit ?", (device, limit)
+        ).fetchall()
+    dev_type, number = parsed
+    return con.execute(
+        """
+        select * from xref
+        where device = ?
+           or (device_type = ?
+               and number <= ?
+               and range_len > 1
+               and ? < number + range_len)
+        order by pou, pos limit ?
+        """,
+        (device, dev_type, number, number, limit),
+    ).fetchall()
+
+
+def span_note(row: sqlite3.Row, device: str) -> str:
+    """Say so when a row was found by its run rather than by its name."""
+    if "range_len" not in row.keys() or row["device"] == device:
+        return ""
+    length = row["range_len"] or 0
+    if length > 1:
+        last = _format_device(row["device_type"], row["number"] + length - 1)
+        return f" [within {row['device']}..{last}]"
+    return ""
+
+
 def where_used(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
-    rows = con.execute(
-        "select * from xref where device=? order by pou, pos limit ?", (device, args.limit)
-    ).fetchall()
+    rows = rows_for_device(con, device, args.limit)
     if not rows:
         print(f"no occurrences: {device}")
         return 1
@@ -275,14 +324,14 @@ def where_used(args: argparse.Namespace) -> int:
     print(f"{device} {comment}".rstrip())
     print(f"\nWriters ({len(writers)}):")
     for r in writers:
-        print(fmt_row(r))
+        print(fmt_row(r) + span_note(r, device))
     print(f"\nReaders ({len(readers)}):")
     for r in readers:
-        print(fmt_row(r))
+        print(fmt_row(r) + span_note(r, device))
     if refs:
         print(f"\nUnclassified refs ({len(refs)}):")
         for r in refs:
-            print(fmt_row(r))
+            print(fmt_row(r) + span_note(r, device))
     con.close()
     if args.cross:
         print_cross_where_used(args, device)

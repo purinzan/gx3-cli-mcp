@@ -39,6 +39,7 @@
 | `test_gx3_xref_decoder_version.py` | xref DB にデコーダ版が刻まれ、別バージョンが書いた DB は読み込み時に拒否されることを検査する。デコーダ修正後も古い DB が lint/trace/dead-logic に黙って読まれる退行を防ぐ。 |
 | `test_gx3_used_devices_source.py` | used-devices のデバイスが共有デコーダ由来であり、16進デバイス型がGX Works3 と同じ綴りで出力されることを検査する。型トークンと数値の位置対応で実在しないデバイスを報告する退行を防ぐ。 |
 | `test_gx3_operand_parse_is_shared.py` | ladder-print と gx3_arg_decode がヘッダトークンの歩進を自前で持たず gx3_operand_parse を共有していること、両者が同じオペランドを見ていることを検査する。同じ解読バグが二重に入る退行を防ぐ。 |
+| `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
