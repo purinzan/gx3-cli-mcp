@@ -22,6 +22,7 @@ from gx3cli.gx3_exec_config import program_file_names
 from gx3cli.gx3_program_map import PouInfo, load_program_map
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_xref import default_db_path, normalize_device
+from gx3cli.gx3_instruction_table import is_edge_triggered
 
 
 WRITE_ACCESS = {"write", "both"}
@@ -291,6 +292,20 @@ def is_bit_device(device: str) -> bool:
 
 
 def is_edge_write_op(op: str) -> bool:
+    """Does this instruction write once per transition rather than every scan?
+
+    The manuals draw the execution condition beside every instruction, so the
+    answer is looked up rather than guessed from the opcode ending in "P".
+    That guess was wrong both ways: EXP, NOP, JMP, MPP and PSTOP end in P
+    without being pulse forms, and every unsigned pulse instruction ends in
+    "_U" instead -- so "+P_U" and the 200-odd like it were read as running
+    every scan.
+
+    EDGE_WRITE_OPS stays as the fallback for opcodes the manuals do not carry.
+    """
+    known = is_edge_triggered(op)
+    if known is not None:
+        return known
     return op in EDGE_WRITE_OPS or (op.endswith("P") and len(op) > 1)
 
 
