@@ -119,6 +119,26 @@ def test_data_instruction_sink_does_not_feed_vertical_branch():
     assert logic_to_text(enable_logic_for_output(row, coil_output)) == "FALSE"
 
 
+def test_output_vertical_bus_fans_out_to_multiple_sinks():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    wire = "e{s=wire:pos=1,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,0}"
+    mov = (
+        "e{s=ce{op=in{op=#:ct=a:as=[as{vt=Abl}]}:args=["
+        "d{s=#:a=0:vt=nn}:d{s=#:a=10:vt=nn}]}:pos=2,1}"
+    )
+    row = manual_row(
+        f"{contact}:{wire}:{coil}:{mov}",
+        dim="4x2",
+        header="V1:8:1:1:1:1:1:1:a:M:c:M:MOV:D:D",
+        verticals="v{pos=2,1}",
+    )
+    coil_output = output_elements_for(row, "M200")[0]
+    data_output = output_elements_for(row, "D10")[0]
+    assert logic_to_text(enable_logic_for_output(row, coil_output)) == "[M100]"
+    assert logic_to_text(enable_logic_for_output(row, data_output)) == "[M100]"
+
+
 def test_enable_logic_return_does_not_mutate_row_cache():
     contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
     coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"

@@ -268,6 +268,7 @@ When you pass a `.gx3` file, the tool extracts it into
 | Read current PLC values | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | Overlay current values on ladder evidence | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | Print ladder evidence | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
+| Export ladder viewer layout | `gx3-cli ladder-layout <PROGRAM_OR_LDDB> --root project.gx3 --format svg -o ladder.svg` |
 | Check static interlock possibility | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | Run static review checks | `gx3-cli lint project.gx3` |
 | List lint checks and rule IDs | `gx3-cli lint --list-checks` |
