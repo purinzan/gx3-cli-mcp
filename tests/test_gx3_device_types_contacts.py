@@ -19,6 +19,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     ACCESS_TOKENS,
     DEVICE_TYPES,
 )
+from gx3cli.extract_hmi_build_info import DEVICE_CODE_BY_TYPE
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, DEVICE_TYPE_BASE
 from gx3cli.gx3_intermediate_tool import generate_rung
@@ -76,6 +77,13 @@ def test_generated_logic_rejects_word_only_device_types() -> None:
             assert "device type not supported" in str(exc), dev_type
         else:
             raise AssertionError(f"{dev_type} should not generate as a ladder contact")
+
+
+def test_observed_timer_counter_comment_codes_are_registered() -> None:
+    # Observed from local GX Works3 comment DBs with non-empty comments:
+    # C30 "AUTO DRAIN/WATER SUPPLY START COUNTER", ST170 "SELF CALIBRATION".
+    assert DEVICE_CODE_BY_TYPE["C"] == 70
+    assert DEVICE_CODE_BY_TYPE["ST"] == 74
 
 
 def main() -> int:

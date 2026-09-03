@@ -39,6 +39,8 @@ DEVICE_CODE_BY_TYPE = {
     "R": 48,
     "SW": 49,
     "T": 66,
+    "C": 70,
+    "ST": 74,
 }
 
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
