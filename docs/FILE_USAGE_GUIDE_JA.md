@@ -88,6 +88,7 @@
 | `gx3_data_flow.py` | `data-flow` | `gx3_data_flow`, `gx3_run_command` | 命令引数単位の source→destination value-flow。未知/部分解析は unresolved として保持する。 |
 | `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
+| `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。 |
 | `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
 | `gx3_tools.py` | `tools`, `inspect`, `sourceinfo`, `version`, `ip-map`, `scon-map`, `query-instruction`, `diff`, `block-context`, `same-row`, `signal-classify`, `impact-add-nc`, `state-chain` | `gx3_run_command` | 補助調査、近傍根拠、状態/命令検索。 |
 | `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。 |
@@ -138,6 +139,7 @@
 |---|---|
 | `gx3_intermediate_tool.py` | LadderBlocks.data を解析し、中間表現/operation model を作る中核 parser。 |
 | `gx3_ladder_logic.py` | 接点/coil/AND/OR/MC zone を論理式にする共通ロジック。 |
+| `gx3_ladder_layout.py` | 座標を視覚の正、既存 operand/comment 解読を意味の正として合流し、ビューアや画像生成向けの JSON/SVG を作る。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |
@@ -170,6 +172,7 @@
 | `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |
 | `test_gx3_lint.py` | lint rule 群。 |
 | `test_gx3_ladder_logic.py` | ラダー論理生成。 |
+| `test_gx3_ladder_layout.py` | LadderBlocks 座標から JSON/SVG レイアウトを作り、既存の論理解析と矛盾しないことを検査する。 |
 | `test_gx3_ladder_print_filter.py` | ladder-print の section/device filter。 |
 | `test_gx3_mc_interlock.py` | MC zone と interlock SAT。 |
 | `test_gx3_intermediate_tool_regression.py` | 中間表現 operation model の回帰。 |

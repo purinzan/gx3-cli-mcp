@@ -54,6 +54,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "dependency-flow": CommandSpec("gx3_dependency_flow.py", "render upstream coil dependencies as a Mermaid flow graph", "Analysis"),
     "graph": CommandSpec("gx3_graph.py", "generate GX3 structure and device-flow graphs", "Analysis"),
     "ladder-diagram": CommandSpec("gx3_ladder_diagram.py", "render target device driver rows as ASCII ladder diagrams", "Analysis"),
+    "ladder-layout": CommandSpec("gx3_ladder_layout.py", "export coordinate ladder layout as JSON or SVG for viewers", "Analysis"),
     "ladder-print": CommandSpec("gx3_ladder_print.py", "render a whole program in GX Works3 print-text layout (matches GX print output)", "Analysis"),
     "rung-text": CommandSpec("gx3_rung_text.py", "print a program as one line per rung: condition -> driven device (compact, for reading and for agents)", "Analysis"),
     "metrics": CommandSpec("gx3_metrics.py", "project size per program, and the rungs carrying the most logic", "Getting Started"),

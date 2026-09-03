@@ -62,6 +62,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | 現在値をラダー根拠へ重ねる | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | GX 印刷風のラダー根拠を見る | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
+| ビューア/画像生成向けのラダー座標を出す | `gx3-cli ladder-layout <PROGRAM_OR_LDDB> --root project.gx3 --format svg -o ladder.svg` |
 | 2 つのコイルが同時 ON 可能か静的確認する | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | 静的チェックを走らせる | `gx3-cli lint project.gx3` |
 | サポート用の診断 ZIP を作る | `gx3-cli support-bundle --root project.gx3 -o support.zip` |

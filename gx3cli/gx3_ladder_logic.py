@@ -255,7 +255,13 @@ def positioned_elements(
         op_index += 1
 
     for element in elements:
-        element.end_x = element.x if element.is_sink else element.x + 1
+        if element.is_sink:
+            element.end_x = element.x
+        elif element.kind == "instruction":
+            operand_cells = len(element.devices) + len(element.constants)
+            element.end_x = element.x + max(1, 1 + operand_cells)
+        else:
+            element.end_x = element.x + 1
     return elements
 
 
@@ -525,6 +531,15 @@ def analyze_row_logic(row: LadderRow, labels: LabelResolver | None = None) -> Ro
                 if (x, y) not in graph.sink_nodes
             ]
             sink_ys = [y for y in sorted(component) if (x, y) in graph.sink_nodes]
+            if not source_ys and len(sink_ys) > 1:
+                # GX uses a vertical branch at the output coordinate to fan one
+                # enable condition into several coils/instruction boxes. The
+                # branch is on the input side of those sinks, not driven by the
+                # first sink's output.
+                merged = formulas[(x, min(sink_ys))]
+                for y in sink_ys:
+                    formulas[(x, y)] = or_logic([formulas[(x, y)], merged])
+                continue
             if source_ys:
                 merged = or_logic([formulas[(x, y)] for y in source_ys])
                 for y in source_ys:
