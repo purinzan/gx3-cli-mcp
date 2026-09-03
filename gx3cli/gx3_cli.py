@@ -328,8 +328,49 @@ def normalize_positional_project_root(command: str, argv: list[str]) -> list[str
     return out
 
 
+# A failure that is about where a file is, not about what is inside it. These
+# used to be printed as "an unsupported GX Works3 format or a parser coverage
+# gap", pointing the user at the parser-gap issue form: audit's lint step died
+# on a directory that did not exist, and used-devices on a project root it had
+# not been given, and both asked to be reported as parser bugs.
+SETUP_FAILURE_PATTERNS = (
+    "FileNotFoundError",
+    "NotADirectoryError",
+    "PermissionError",
+    "IsADirectoryError",
+    "no such table",
+    "no such file",
+    "unable to open database file",
+    "db not found",
+    "not found:",
+    "ModuleNotFoundError",
+    "ImportError",
+)
+
+
+def is_setup_failure(reason: str) -> bool:
+    lowered = reason.lower()
+    return any(pattern.lower() in lowered for pattern in SETUP_FAILURE_PATTERNS)
+
+
 def format_subprocess_failure(stderr: str) -> str:
     last_line = next((line for line in reversed(stderr.splitlines()) if line.strip()), "unknown parser failure")
+    if is_setup_failure(last_line):
+        return "\n".join(
+            [
+                "ERROR: GX3 command could not read what it was pointed at.",
+                f"Reason: {last_line}",
+                "",
+                "This is a path or setup problem, not a parser gap. Check that:",
+                "",
+                "1. The project root is the one you meant:",
+                "     gx3-cli doctor --root <project>",
+                "2. The databases it needs exist and are current:",
+                "     gx3-cli index-lite build --root <project>",
+                "     gx3-cli xref build --root <project>",
+                "3. The output directory you passed exists and is writable.",
+            ]
+        )
     return "\n".join(
         [
             "ERROR: GX3 command failed while reading this project.",

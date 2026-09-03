@@ -68,6 +68,7 @@ def create_schema(con: sqlite3.Connection) -> None:
         drop table if exists comments;
         drop table if exists ladder_rows;
         drop table if exists device_usages;
+        drop table if exists covered_ranges;
         drop table if exists external_sources;
 
         create table meta (
@@ -82,6 +83,21 @@ def create_schema(con: sqlite3.Connection) -> None:
             japanese text,
             english text,
             all_text text
+        );
+
+        -- The runs a block instruction or a digit specification covers. One
+        -- row per run, not one per device it reaches: a project has tens of
+        -- thousands of covered devices and listing them would drown the
+        -- devices table, but a check that asks "is anything writing this?"
+        -- has to be able to see them.
+        create table covered_ranges (
+            device_type text not null,
+            start integer not null,
+            length integer not null,
+            access text not null,
+            opcode text,
+            lddb text,
+            pos integer
         );
 
         create table devices (
@@ -208,6 +224,7 @@ def build_index(args: argparse.Namespace) -> int:
     ladder_rows = []
     usage_rows = []
     device_stats: dict[str, dict[str, Any]] = {}
+    covered_ranges: list[tuple[str, int, int, str, str, str, int]] = []
     for row in rows:
         rid = row_id(row.lddb, row.pos, row.block_id)
         ladder_rows.append(
@@ -258,6 +275,10 @@ def build_index(args: argparse.Namespace) -> int:
                     "first_title": row.title,
                 },
             )
+            if occ.range_len > 1:
+                covered_ranges.append(
+                    (occ.device_type, occ.number, occ.range_len, occ.access, occ.role, row.lddb, row.pos)
+                )
             stat["occurrences"] += 1
             stat["roles"][occ.role] += 1
             if is_driver:
@@ -265,6 +286,13 @@ def build_index(args: argparse.Namespace) -> int:
             if is_condition:
                 stat["condition_uses"] += 1
 
+    con.executemany(
+        """
+        insert into covered_ranges(device_type, start, length, access, opcode, lddb, pos)
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        covered_ranges,
+    )
     con.executemany(
         """
         insert into ladder_rows(row_id, lddb, pos, block_id, title, rowsize, parse_status, devices)
@@ -364,7 +392,7 @@ def build_index(args: argparse.Namespace) -> int:
 # before X/Y/B/W were stored in hex holds "X520" where this build looks for
 # "X208", and a silent miss reads as "device not used" -- the worst possible
 # way to be wrong about a PLC project.
-DEVICE_NAMING = "hex-1"
+DEVICE_NAMING = "hex-1-ranges"
 
 
 def open_existing(path: Path) -> sqlite3.Connection:

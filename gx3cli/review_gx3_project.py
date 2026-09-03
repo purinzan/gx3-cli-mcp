@@ -102,6 +102,8 @@ class DeviceOcc:
     parse_status: str
     access: str = ""
     detail: str = ""
+    # How many devices the occurrence covers; see ArgOcc.range_len.
+    range_len: int = 1
     row_conditions: list[str] = field(default_factory=list)
     row_condition_comments: list[str] = field(default_factory=list)
     row_all_devices: list[str] = field(default_factory=list)
@@ -230,6 +232,7 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
                     parse_status=row.parse_status,
                     access=arg.access,
                     detail=arg.detail,
+                    range_len=arg.range_len,
                 )
             )
 
