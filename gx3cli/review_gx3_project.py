@@ -20,14 +20,12 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     header_tokens,
     is_op_like,
 )
-from gx3cli.gx3_arg_decode import parse_row_occurrences as decode_row_occurrences
+from gx3cli.gx3_arg_decode import parse_row_occurrences as decode_row_occurrences, parse_row_operations
 from gx3cli.gx3_intermediate_tool import decode_data, extract_dim, operation_model, parse_header_ops, read_ladder_rows
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root, find_comment_db
 
 
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
-DEVICE_RE = re.compile(r"d\(a=(-?\d+)\)")
-CONST_RE = re.compile(r"c\(v=([^,)]+)")
 SAFETY_RE = re.compile(
     r"非常|安全|扉|ドア|カバー|ロック|原点|停止|インターロック|異常|EMS|EMG|safe|safety|door|cover|lock|stop|interlock|alarm",
     re.IGNORECASE,
@@ -174,18 +172,6 @@ def load_comments_for_root(root: Path) -> dict[tuple[str, int], CommentInfo]:
 def extract_title(data: str) -> str:
     match = TITLE_RE.search(data)
     return match.group(1).strip() if match else ""
-
-
-def arg_number(arg_shapes: str, index: int = 0) -> int | None:
-    matches = DEVICE_RE.findall(arg_shapes)
-    if len(matches) <= index:
-        return None
-    return int(matches[index])
-
-
-def const_value(arg_shapes: str) -> str:
-    match = CONST_RE.search(arg_shapes)
-    return match.group(1) if match else ""
 
 
 def format_device(device_type: str, number: int) -> str:
@@ -649,22 +635,22 @@ def review_interlock_candidates(rows: list[LadderRow], comments: dict[tuple[str,
 def review_timer_settings(rows: list[LadderRow], comments: dict[tuple[str, int], CommentInfo]) -> list[dict[str, object]]:
     out = []
     for row in rows:
-        op_device_types = operation_device_types(row.data)
-        for index, op in enumerate(row.operations):
-            opcode = str(op.get("opcode", ""))
+        operations, _status = parse_row_operations(row.data)
+        for operation in operations:
+            opcode = operation.role
             if opcode not in {"OUT__16", "OUTH__16"}:
                 continue
-            dev_type = op_device_types[index] if index < len(op_device_types) else ""
-            timer_no = arg_number(str(op.get("arg_shapes", "")), 0)
-            setting = const_value(str(op.get("arg_shapes", "")))
-            if dev_type not in {"T", "C"} or timer_no is None:
+            timer = next((arg for arg in operation.args if arg.arg_index == 0 and arg.device_type in {"T", "C"}), None)
+            if timer is None:
                 continue
-            info = comments.get((dev_type, timer_no), CommentInfo())
+            setting = next(iter(operation.constant_values.values()), "")
+            source_op = row.operations[operation.op_index] if operation.op_index < len(row.operations) else {}
+            info = comments.get((timer.device_type, timer.number), CommentInfo())
             out.append(
                 {
-                    "device": format_device(dev_type, timer_no),
-                    "device_type": dev_type,
-                    "number": timer_no,
+                    "device": timer.device,
+                    "device_type": timer.device_type,
+                    "number": timer.number,
                     "comment": device_comment_text(info),
                     "opcode": opcode,
                     "setting_raw": setting,
@@ -672,7 +658,7 @@ def review_timer_settings(rows: list[LadderRow], comments: dict[tuple[str, int],
                     "pos": row.pos,
                     "title": row.title,
                     "conditions": "; ".join([occ.row_conditions[0] if occ.row_conditions else "" for occ in row.occurrences[:1]]),
-                    "arg_shapes": op.get("arg_shapes", ""),
+                    "arg_shapes": source_op.get("arg_shapes", ""),
                 }
             )
     return out

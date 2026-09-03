@@ -17,7 +17,7 @@ the cross-reference splits the device from the index register it reads.
 import ast
 import pathlib
 
-from gx3cli.gx3_arg_decode import decode_args
+from gx3cli.gx3_arg_decode import decode_args, parse_row_operations
 from gx3cli.gx3_ladder_print import display_operands
 
 
@@ -83,10 +83,26 @@ def test_the_index_register_is_never_lost_between_operands() -> None:
     assert printed[-1] == "D48200", printed
 
 
+def test_row_operation_view_keeps_arg_count_and_constants() -> None:
+    row = (
+        "V1:6:1:2:4:1:1:1:a:SM:FMOV:K_1:D:K_1:cb{fg=fg{dim=2x1:es=["
+        "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=400:vt=nn}]}:pos=0,0}:"
+        "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=A16}:as{vt=A16}:as{vt=A16}]}:args=["
+        "c{s=#:v=0}:d{s=#:a=200:vt=nn}:c{s=#:v=10}]}:pos=1,0}]}}"
+    )
+    operations, status = parse_row_operations(row)
+    assert status == "exact", status
+    assert [(op.role, op.opcode, op.argc, op.constant_values) for op in operations] == [
+        ("a", "", 1, {}),
+        ("FMOV", "FMOV", 3, {0: "0", 2: "10"}),
+    ]
+
+
 def main() -> int:
     test_neither_caller_keeps_its_own_walk()
     test_both_callers_see_the_same_operands()
     test_the_index_register_is_never_lost_between_operands()
+    test_row_operation_view_keeps_arg_count_and_constants()
     print("shared operand walk checks passed")
     return 0
 

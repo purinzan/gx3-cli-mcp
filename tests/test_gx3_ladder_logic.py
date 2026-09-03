@@ -1,6 +1,6 @@
 from gx3cli.gx3_intermediate_tool import generate_rung
 from gx3cli.gx3_ladder_diagram import render_row_diagram
-from gx3cli.gx3_ladder_logic import enable_logic_for_output, logic_to_text, output_elements_for
+from gx3cli.gx3_ladder_logic import enable_logic_for_output, logic_to_text, output_elements_for, positioned_elements
 from gx3cli.gx3_matiec_export import StBuildContext, logic_to_st
 from gx3cli.review_gx3_project import LadderRow
 
@@ -67,11 +67,50 @@ def test_driver_sink_does_not_feed_a_vertical_branch():
     assert logic_to_text(enable_logic_for_output(row, output_b)) == "FALSE"
 
 
+def test_vertical_branch_can_feed_a_driver_sink():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    wire = "e{s=wire:pos=1,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,1}"
+    row = manual_row(
+        f"{contact}:{wire}:{coil}",
+        dim="3x2",
+        verticals="v{pos=2,1}",
+    )
+    output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
+
+
+def test_enable_logic_return_does_not_mutate_row_cache():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
+    row = manual_row(f"{contact}:{coil}")
+    output = output_elements_for(row, "M200")[0]
+    first = enable_logic_for_output(row, output)
+    first["device"] = "BROKEN"
+    assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
+
+
+def test_digit_specified_bit_group_survives_shared_decode():
+    contact = (
+        "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=["
+        "M{b=d{s=#:a=49000:vt=nn}:m=c{s=#:v=4}}]}:pos=0,0}"
+    )
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
+    row = manual_row(f"{contact}:{coil}", header="V1:4:1:2:1:1:a:M:Ks:c:M")
+    element = positioned_elements(row)[0]
+    assert element.devices[0].display == "K4M49000"
+    assert element.devices[0].group_size == 16
+    assert element.devices[0].group_members[:2] == ("M49000", "M49001")
+
+
 def main():
     test_blank_horizontal_gap_is_not_inferred_as_a_wire()
     test_explicit_wire_carries_a_horizontal_gap()
     test_left_rail_is_not_assumed_on_every_y_row()
     test_driver_sink_does_not_feed_a_vertical_branch()
+    test_vertical_branch_can_feed_a_driver_sink()
+    test_enable_logic_return_does_not_mutate_row_cache()
+    test_digit_specified_bit_group_survives_shared_decode()
     cases = [
         ("single", {"device": "M100"}, "[M100]"),
         (

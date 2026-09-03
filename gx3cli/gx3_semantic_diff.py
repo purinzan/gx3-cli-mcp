@@ -14,7 +14,6 @@ Inputs may be extracted folders or ``.gx3`` files (extracted to a temp dir).
 
 import argparse
 import csv
-import re
 import sqlite3
 import sys
 import tempfile
@@ -22,13 +21,11 @@ import zipfile
 from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device
-from gx3cli.extract_gx3_extended_instruction_knowledge import extract_elements, header_tokens
+from gx3cli.gx3_arg_decode import parse_row_operations
+from gx3cli.gx3_operand_parse import CONST_VALUE_RE
 from gx3cli.gx3_intermediate_tool import decode_data
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
-
-
-ARG_VALUE_RE = re.compile(r"(?:a|v)=(-?[0-9.]+)")
 
 
 def ensure_root(path_text: str, tmp: list[tempfile.TemporaryDirectory]) -> Path:
@@ -45,20 +42,24 @@ def ensure_root(path_text: str, tmp: list[tempfile.TemporaryDirectory]) -> Path:
 
 
 def logic_signature(data: str) -> str:
-    """Op sequence + ordered argument values; ignores drawing/layout data."""
-    tokens = header_tokens(data)
-    start = 0
-    for i, tok in enumerate(tokens):
-        if i >= 1 and not re.fullmatch(r"V1|\d+", tok):
-            start = i
-            break
-    ops = ":".join(tokens[start:])
-    args = []
-    for element in extract_elements(data):
-        if "s=ce{" not in element:
-            continue
-        args.extend(ARG_VALUE_RE.findall(element))
-    return ops + "|" + ",".join(args)
+    """Operation sequence + decoded arguments; ignores drawing/layout data."""
+    operations, status = parse_row_operations(data)
+    parts = [f"status={status}"]
+    for operation in operations:
+        arg_parts: list[str] = []
+        by_index: dict[int, list[str]] = {}
+        for occ in operation.args:
+            by_index.setdefault(occ.arg_index, []).append(occ.device)
+        for index, raw in enumerate(operation.raw_args):
+            if raw.startswith("c{"):
+                match = CONST_VALUE_RE.search(raw)
+                arg_parts.append(f"{index}:K{match.group(1) if match else '?'}")
+            elif index in by_index:
+                arg_parts.append(f"{index}:{'/'.join(sorted(by_index[index]))}")
+            else:
+                arg_parts.append(f"{index}:?")
+        parts.append(f"{operation.role}({','.join(arg_parts)})")
+    return "|".join(parts)
 
 
 def load_side(root: Path) -> tuple[dict[str, dict[str, tuple[int, str, str]]], dict[str, str]]:
@@ -91,17 +92,28 @@ def load_side(root: Path) -> tuple[dict[str, dict[str, tuple[int, str, str]]], d
 
 
 def summarize_change(old_data: str, new_data: str) -> str:
-    def devset(data: str) -> list[str]:
-        return ARG_VALUE_RE.findall("".join(e for e in extract_elements(data) if "s=ce{" in e))
+    def decoded_ops(data: str) -> list[str]:
+        operations, _status = parse_row_operations(data)
+        return [operation.role for operation in operations]
 
-    def opseq(data: str) -> list[str]:
-        return [t for t in header_tokens(data) if re.fullmatch(r"[A-Za-z$][A-Za-z0-9_.$]*|[<>=+\-*/]+", t)]
+    def decoded_args(data: str) -> list[str]:
+        operations, _status = parse_row_operations(data)
+        args: list[str] = []
+        for operation in operations:
+            for index, raw in enumerate(operation.raw_args):
+                if raw.startswith("c{"):
+                    match = CONST_VALUE_RE.search(raw)
+                    args.append(f"K{match.group(1) if match else '?'}")
+                    continue
+                devices = sorted(occ.device for occ in operation.args if occ.arg_index == index)
+                args.extend(devices or ["?"])
+        return args
 
     parts = []
-    o_ops, n_ops = opseq(old_data), opseq(new_data)
+    o_ops, n_ops = decoded_ops(old_data), decoded_ops(new_data)
     if o_ops != n_ops:
         parts.append(f"ops {' '.join(o_ops[:12])} -> {' '.join(n_ops[:12])}")
-    o_args, n_args = devset(old_data), devset(new_data)
+    o_args, n_args = decoded_args(old_data), decoded_args(new_data)
     if o_args != n_args:
         removed = [x for x in o_args if x not in n_args]
         added = [x for x in n_args if x not in o_args]

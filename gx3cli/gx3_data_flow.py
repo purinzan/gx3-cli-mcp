@@ -20,11 +20,6 @@ import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from gx3cli.extract_gx3_extended_instruction_knowledge import (
-    extract_args_text,
-    extract_elements,
-    top_level_items,
-)
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_arg_decode import (
     ARITH_OPS,
@@ -32,7 +27,7 @@ from gx3cli.gx3_arg_decode import (
     ArgOcc,
     WRITE_ARG_TABLE,
     base_opcode,
-    parse_row_occurrences,
+    parse_row_operations,
 )
 from gx3cli.gx3_device_name import format_device, split_device
 from gx3cli.gx3_instruction_table import (
@@ -41,7 +36,7 @@ from gx3cli.gx3_instruction_table import (
     manual_write_indices,
     operand_words,
 )
-from gx3cli.gx3_intermediate_tool import parse_header_ops, read_ladder_rows
+from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_label_resolve import load_label_resolver
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
@@ -56,7 +51,6 @@ BLOCK_TRANSFER_BASES = {
     "FMOVL",
     "DFMOVL",
 }
-CONST_VALUE_RE = re.compile(r"v=([^:}]+)")
 INT_RE = re.compile(r"-?\d+")
 
 
@@ -96,41 +90,6 @@ class FlowRecord:
 
 
 CSV_FIELDS = list(FlowRecord.__dataclass_fields__)
-
-
-def operation_arg_counts(data: str) -> list[int]:
-    """Return raw argument counts aligned with ``parse_header_ops``."""
-
-    header_ops = parse_header_ops(data)
-    ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
-    counts: list[int] = []
-    for index in range(len(header_ops)):
-        element = ce_elements[index] if index < len(ce_elements) else ""
-        args_text = extract_args_text(element)
-        counts.append(len(top_level_items(args_text)) if args_text else 0)
-    return counts
-
-
-def operation_constant_values(data: str) -> list[dict[int, str]]:
-    """Return constant operands by argument index, aligned with operations."""
-
-    header_ops = parse_header_ops(data)
-    ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
-    values: list[dict[int, str]] = []
-    for index in range(len(header_ops)):
-        element = ce_elements[index] if index < len(ce_elements) else ""
-        args_text = extract_args_text(element)
-        raw_args = top_level_items(args_text) if args_text else []
-        values.append(
-            {
-                arg_index: match.group(1)
-                for arg_index, raw in enumerate(raw_args)
-                if raw.startswith("c{")
-                for match in [CONST_VALUE_RE.search(raw)]
-                if match is not None
-            }
-        )
-    return values
 
 
 def semantic_confidence(opcode: str, argc: int) -> str:
@@ -383,35 +342,34 @@ def build_report(root: Path, device: str | None = None, opcode: str | None = Non
                 continue
             row_count += 1
             pos = int(float(raw["pos"]))
-            ops, status = parse_row_occurrences(data, labels)
+            ops, status = parse_row_operations(data, labels)
             if status != "exact":
                 partial_rows += 1
-            arg_counts = operation_arg_counts(data)
-            constant_values = operation_constant_values(data)
             step = program_map.step_of(lddb, pos)
-            for op_index, (role, operation_opcode, occs, consts) in enumerate(ops):
+            for op in ops:
                 operation_count += 1
+                operation_opcode = op.opcode
                 if not operation_opcode:
                     continue
                 if wanted_opcode and operation_opcode.upper() != wanted_opcode:
                     continue
                 op_records = records_for_operation(
                     operation_opcode,
-                    arg_counts[op_index] if op_index < len(arg_counts) else len({o.arg_index for o in occs}),
-                    occs,
+                    op.argc,
+                    op.args,
                     parse_status=status,
-                    const_args=consts,
-                    operation_index=op_index,
+                    const_args=op.const_summary,
+                    operation_index=op.op_index,
                     lddb=lddb,
                     pos=pos,
                     pou=pou,
                     step=step,
                     title=current_title,
-                    constant_values=constant_values[op_index] if op_index < len(constant_values) else None,
+                    constant_values=op.constant_values,
                 )
                 for record in op_records:
-                    source = next((o for o in occs if o.device == record.source_device), None)
-                    destination = next((o for o in occs if o.device == record.destination_device), None)
+                    source = next((o for o in op.args if o.device == record.source_device), None)
+                    destination = next((o for o in op.args if o.device == record.destination_device), None)
                     record = replace(
                         record,
                         source_comment=_comment_for(source, comments) if source else "",

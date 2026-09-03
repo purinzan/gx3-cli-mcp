@@ -24,7 +24,7 @@ from gx3cli.gx3_ladder_logic import (
     logic_stats,
     logic_to_text,
     output_elements_for,
-    positioned_elements,
+    row_logic_analysis,
 )
 from gx3cli.gx3_project_paths import default_project_root
 
@@ -55,7 +55,7 @@ def row_key(row: LadderRow) -> str:
 def condition_elements_by_position(row: LadderRow) -> dict[str, FlowElement]:
     return {
         f"{element.x},{element.y}": element
-        for element in positioned_elements(row)
+        for element in row_logic_analysis(row).elements
         if element.is_condition and not element.is_wire and not element.is_driver
     }
 

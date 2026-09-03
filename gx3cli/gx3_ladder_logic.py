@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,15 +10,13 @@ from typing import Any
 
 from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
-    LABEL_DEVICE_TYPE,
     element_meta,
-    header_tokens,
     extract_dim,
     extract_elements,
-    parse_header_ops,
 )
-from gx3cli.review_gx3_project import LadderRow, operation_device_types
-from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
+from gx3cli.gx3_arg_decode import parse_row_operations
+from gx3cli.review_gx3_project import LadderRow
+from gx3cli.gx3_label_resolve import LabelResolver
 
 
 CONTACT_ROLES = {"a", "b"}
@@ -27,9 +26,7 @@ DRIVER_ROLES = ON_DRIVER_ROLES | OFF_DRIVER_ROLES
 
 DEVICE_RE = re.compile(r"^([A-Z]+)(-?\d+)$", re.IGNORECASE)
 DEVICE_ARG_RE = re.compile(r"d\{s=#:a=(-?\d+):vt=nn\}|d\(a=(-?\d+)\)")
-GROUP_ARG_RE = re.compile(
-    r"([A-Z]+)\{b=d\{s=#:a=(-?\d+):vt=nn\}:m=c\{s=#:v=(\d+)\}\}"
-)
+DIGIT_DETAIL_RE = re.compile(r"\bdigit=K(\d+)\b")
 VERTICAL_RE = re.compile(r"v\{pos=(\d+),(\d+)\}")
 
 # Mitsubishi special relays used as hard constants in this project.
@@ -116,6 +113,16 @@ class TopologyGraph:
     sink_nodes: frozenset[tuple[int, int]]
 
 
+@dataclass(frozen=True)
+class RowLogicAnalysis:
+    """Cached logic analysis for one ladder row."""
+
+    elements: tuple[FlowElement, ...]
+    graph: TopologyGraph
+    node_logic: dict[tuple[int, int], dict[str, Any]]
+    output_logic: dict[tuple[int, int], dict[str, Any]]
+
+
 def parse_device(text: str) -> tuple[str, int]:
     return _parse_device_name(text)
 
@@ -156,37 +163,26 @@ def bit_group_members(device_type: str, number: int, k_count: int) -> tuple[str,
     return tuple(_format_device(device_type, number + offset) for offset in range(k_count * 4))
 
 
-def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
+def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
     refs: list[DeviceRef] = []
-    group_spans: list[tuple[int, int]] = []
-    for match in GROUP_ARG_RE.finditer(raw):
-        device_type = match.group(1)
-        number = int(match.group(2))
-        k_count = int(match.group(3))
-        members = bit_group_members(device_type, number, k_count)
-        group_spans.append(match.span())
-        refs.append(
-            DeviceRef(
-                device=_format_device(device_type, number),
-                device_type=device_type,
-                number=number,
-                label=f"K{k_count}{device_type}{number}",
-                group_size=k_count * 4,
-                group_members=members,
+    for arg in args:
+        if arg.device_type in {"?", ""}:
+            continue
+        digit_match = DIGIT_DETAIL_RE.search(arg.detail)
+        if digit_match and arg.device_type in {"X", "Y", "M", "L", "B"}:
+            k_count = int(digit_match.group(1))
+            refs.append(
+                DeviceRef(
+                    device=arg.device,
+                    device_type=arg.device_type,
+                    number=arg.number,
+                    label=f"K{k_count}{arg.device_type}{arg.number}",
+                    group_size=k_count * 4,
+                    group_members=bit_group_members(arg.device_type, arg.number, k_count),
+                )
             )
-        )
-
-    def inside_group(index: int) -> bool:
-        return any(start <= index < end for start, end in group_spans)
-
-    for match in DEVICE_ARG_RE.finditer(raw):
-        if inside_group(match.start()):
             continue
-        number_text = match.group(1) or match.group(2)
-        if not number_text or not default_device_type:
-            continue
-        number = int(number_text)
-        refs.append(DeviceRef(_format_device(default_device_type, number), default_device_type, number))
+        refs.append(DeviceRef(arg.device, arg.device_type, arg.number))
 
     seen: set[str] = set()
     unique: list[DeviceRef] = []
@@ -199,20 +195,10 @@ def device_refs_from_raw(raw: str, default_device_type: str) -> list[DeviceRef]:
     return unique
 
 
-def constants_from_raw(raw: str) -> list[str]:
-    raw = GROUP_ARG_RE.sub("", raw)
-    out: list[str] = []
-    for value in re.findall(r"c\{s=#:v=([^:}]+)", raw):
-        out.append(f"K{value}")
-    return out[:3]
-
-
 def positioned_elements(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> list[FlowElement]:
-    header_ops = parse_header_ops(row.data)
-    tokens = header_tokens(row.data)
-    op_device_types = operation_device_types(row.data)
+    operations, _status = parse_row_operations(row.data, labels)
     raw_elements = extract_elements(row.data)
     elements: list[FlowElement] = []
     op_index = 0
@@ -226,28 +212,20 @@ def positioned_elements(
         if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             elements.append(FlowElement("wire", "", "", "", "wire", x, y))
             continue
-        if op_index >= len(header_ops):
+        if op_index >= len(operations):
             continue
-        header = header_ops[op_index]
-        default_device_type = header.device_type
-        role = header.op
+        operation = operations[op_index]
+        role = operation.role
         kind = "instruction"
         category = ""
         opcode = ""
-        if header.op in {"a", "b", "c"}:
-            kind = "contact" if header.op in {"a", "b"} else "coil"
+        if operation.role in {"a", "b", "c"}:
+            kind = "contact" if operation.role in {"a", "b"} else "coil"
         else:
-            opcode = header.op
-            role = header.op
-            default_device_type = op_device_types[op_index] if op_index < len(op_device_types) else ""
+            opcode = operation.role
             category = str(row.operations[op_index].get("category", "")) if op_index < len(row.operations) else ""
 
-        devices = device_refs_from_raw(raw, default_device_type)
-        if not devices and default_device_type == LABEL_DEVICE_TYPE:
-            # A label contact carries no device in the element; its identity is
-            # the "_lid/<LabelID>/<row>" token that follows the role in the
-            # header. Without this the whole rung reads as UNKNOWN.
-            devices = label_refs(tokens, header.token_index, labels)
+        devices = device_refs_from_args(operation.args)
         elements.append(
             FlowElement(
                 kind=kind,
@@ -259,7 +237,7 @@ def positioned_elements(
                 y=y,
                 ct_code=str(meta.get("ct_code", "")),
                 devices=devices,
-                constants=constants_from_raw(raw),
+                constants=[f"K{value}" for _, value in sorted(operation.constant_values.items())][:3],
             )
         )
         op_index += 1
@@ -269,31 +247,11 @@ def positioned_elements(
     return elements
 
 
-def label_refs(
-    tokens: list[str], token_index: int, labels: LabelResolver | None
-) -> list[DeviceRef]:
-    """The label a role token points at, as a device reference."""
-    token = tokens[token_index + 1] if token_index + 1 < len(tokens) else ""
-    parsed = split_label_token(token)
-    if parsed is None:
-        return []
-    ref = labels.resolve_token(token) if labels is not None else None
-    name = ref.name if ref is not None else token
-    return [
-        DeviceRef(
-            device=name,
-            device_type=LABEL_DEVICE_TYPE,
-            number=parsed[1],
-            label=name,
-        )
-    ]
-
-
 def output_elements_for(row: LadderRow, device: str) -> list[FlowElement]:
     target = normalize_device(device)
     return [
         element
-        for element in positioned_elements(row)
+        for element in row_logic_analysis(row).elements
         if element.is_driver and any(ref.device == target for ref in element.devices)
     ]
 
@@ -503,6 +461,8 @@ def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | 
     for edge in edges:
         x_values.add(edge.x1)
         x_values.add(edge.x2)
+    for element in elements:
+        x_values.add(element.x)
     for x_text, _ in VERTICAL_RE.findall(row.data):
         x_values.add(int(x_text))
     if width:
@@ -527,15 +487,19 @@ def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | 
     )
 
 
-def enable_logic_for_output(
-    row: LadderRow, output: FlowElement, labels: LabelResolver | None = None
-) -> dict[str, Any]:
+def analyze_row_logic(row: LadderRow, labels: LabelResolver | None = None) -> RowLogicAnalysis:
+    """Compute logic for every coordinate and driver output in one row.
+
+    Driver elements are sink nodes: they can receive power from the left or
+    from a vertical branch at the same coordinate, but they never source power
+    to the right or back into the vertical component.
+    """
+
     elements = positioned_elements(row, labels)
     width, height = parse_dim(row.dim or extract_dim(row.data))
-    max_y = max([height - 1, output.y, *[element.y for element in elements], 0])
+    max_y = max([height - 1, *[element.y for element in elements], 0])
     formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)
-    graph = topology_graph(row, elements, output.x)
-    target_node = (output.x, output.y)
+    graph = topology_graph(row, elements)
 
     for y in graph.left_rail_rows:
         if 0 <= y <= max_y:
@@ -546,13 +510,15 @@ def enable_logic_for_output(
             source_ys = [
                 y
                 for y in sorted(component)
-                if (x, y) not in graph.sink_nodes or (x, y) == target_node
+                if (x, y) not in graph.sink_nodes
             ]
-            if not source_ys:
-                continue
-            merged = or_logic([formulas[(x, y)] for y in source_ys])
-            for y in source_ys:
-                formulas[(x, y)] = merged
+            sink_ys = [y for y in sorted(component) if (x, y) in graph.sink_nodes]
+            if source_ys:
+                merged = or_logic([formulas[(x, y)] for y in source_ys])
+                for y in source_ys:
+                    formulas[(x, y)] = merged
+                for y in sink_ys:
+                    formulas[(x, y)] = or_logic([formulas[(x, y)], merged])
 
         for edge in graph.horizontal_by_x.get(x, ()):
             if (edge.x1, edge.y) in graph.sink_nodes:
@@ -570,14 +536,50 @@ def enable_logic_for_output(
             key = (edge.x2, edge.y)
             formulas[key] = or_logic([formulas[key], candidate])
 
-    return formulas[(output.x, output.y)]
+    output_logic = {
+        (element.x, element.y): formulas[(element.x, element.y)]
+        for element in elements
+        if element.is_driver
+    }
+    return RowLogicAnalysis(
+        elements=tuple(elements),
+        graph=graph,
+        node_logic=dict(formulas),
+        output_logic=output_logic,
+    )
+
+
+def row_logic_analysis(row: LadderRow, labels: LabelResolver | None = None) -> RowLogicAnalysis:
+    cache_key = (row.data, row.dim, len(row.operations), id(labels))
+    cached = getattr(row, "_gx3_logic_analysis_cache", None)
+    if cached is not None and cached[0] == cache_key:
+        return cached[1]
+    analysis = analyze_row_logic(row, labels)
+    setattr(row, "_gx3_logic_analysis_cache", (cache_key, analysis))
+    return analysis
+
+
+def enable_logic_for_output(
+    row: LadderRow, output: FlowElement, labels: LabelResolver | None = None
+) -> dict[str, Any]:
+    analysis = row_logic_analysis(row, labels)
+    coordinate = (output.x, output.y)
+    return deepcopy(
+        analysis.output_logic.get(
+            coordinate,
+            analysis.node_logic.get(coordinate, logic_false()),
+        )
+    )
 
 
 def enable_logic_for_device(row: LadderRow, device: str) -> dict[str, Any]:
     outputs = output_elements_for(row, device)
     if not outputs:
         return logic_false()
-    return or_logic([enable_logic_for_output(row, output) for output in outputs])
+    analysis = row_logic_analysis(row)
+    return deepcopy(
+        or_logic([analysis.output_logic.get((output.x, output.y), logic_false()) for output in outputs])
+    )
 
 
 def logic_to_text(node: dict[str, Any]) -> str:

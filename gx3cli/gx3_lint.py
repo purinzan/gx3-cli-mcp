@@ -35,14 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from gx3cli.extract_gx3_extended_instruction_knowledge import (
-    extract_args_text,
-    extract_elements,
-    header_tokens,
-    parse_header_ops,
-    top_level_items,
-)
-from gx3cli.gx3_arg_decode import ArgOcc, base_opcode, decode_args
+from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations
 from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
 from gx3cli.gx3_index_lite import default_db_path as lite_db_path
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
@@ -170,26 +163,18 @@ class LintContext:
 def decode_row_ops(data: str) -> list[RowOp]:
     """Positional per-operation argument view including constants.
 
-    Mirrors gx3_arg_decode.parse_row_occurrences but keeps constant operands
-    at their argument index so math checks can inspect divisors etc.
+    Uses gx3_arg_decode's canonical row walk, then adapts it into the lint
+    view that keeps constants at their argument index for math checks.
     """
-    tokens = header_tokens(data)
-    hops = parse_header_ops(data)
-    ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
+    operations, _status = parse_row_operations(data)
     out: list[RowOp] = []
-    for i, hop in enumerate(hops):
-        element = ce_elements[i] if i < len(ce_elements) else ""
-        args_text = extract_args_text(element)
-        raw_args = top_level_items(args_text) if args_text else []
-        next_tok = hops[i + 1].token_index if i + 1 < len(hops) else len(tokens)
-        arg_tokens = tokens[hop.token_index + 1 : next_tok]
-        occs: list[ArgOcc] = decode_args(raw_args, arg_tokens or [hop.device_type], hop.op)
-        by_index: dict[int, ArgOcc] = {}
-        for occ in occs:
+    for operation in operations:
+        by_index = {}
+        for occ in operation.args:
             by_index.setdefault(occ.arg_index, occ)
 
         args: list[OpArg] = []
-        for idx, raw in enumerate(raw_args):
+        for idx, raw in enumerate(operation.raw_args):
             if raw.startswith("c{"):
                 m = CONST_VALUE_RE.search(raw)
                 s = CONST_SIGN_RE.search(raw)
@@ -210,7 +195,7 @@ def decode_row_ops(data: str) -> list[RowOp]:
                     )
                 else:
                     args.append(OpArg(index=idx, kind="other"))
-        out.append(RowOp(role=hop.op, opcode=hop.op, base=base_opcode(hop.op), args=args))
+        out.append(RowOp(role=operation.role, opcode=operation.role, base=base_opcode(operation.role), args=args))
     return out
 
 

@@ -8,9 +8,8 @@ the cross-reference and the lite index use. This module used to pair the header
 type tokens with the d{} numbers by position instead, which quietly went wrong
 whenever an operand carried a modifier: on one real project it reported an M80
 the rung does not contain and dropped the K4M49000 it does, on a row it called
-"exact". The count comparison is kept as a diagnostic -- rows where it
-disagrees are still written to the mismatch CSV for review -- but it no longer
-decides what the report says.
+"exact". The shared decoder is now the single source for both the report and
+the partial-row diagnostic.
 """
 
 from __future__ import annotations
@@ -52,16 +51,6 @@ DEVICE_CODE_BY_TYPE = {
     "T": 66,
 }
 
-# Tokens in the V1 header that consume a d{s=#:a=...} operand but are not
-# ordinary commentable devices in this report.
-NON_REPORT_D_OPERANDS = {"Zs", "Ats", "Ks", "N", "Z", "G"}
-D_OPERAND_TYPES = set(DEVICE_CODE_BY_TYPE) | NON_REPORT_D_OPERANDS
-
-B_OPERAND_RE = re.compile(
-    r"B\{b=d\{s=#:a=(-?\d+):vt=nn\}:e=d\{s=#:a=(-?\d+):vt=nn\}:vt=([A-Za-z]+)\}"
-)
-D_OPERAND_RE = re.compile(r"d\{s=#:a=(-?\d+):vt=nn\}")
-INT_TOKEN_RE = re.compile(r"-?\d+")
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
 
 
@@ -109,38 +98,6 @@ def extract_title(data: str) -> str:
     if not m:
         return ""
     return m.group(1).strip()
-
-
-def parse_operand_numbers(data: str) -> list[int]:
-    """Return d-operand numbers in data order.
-
-    B{b=d...:e=d...} contains two d{} tokens for one bit-address operand.
-    For alignment with the header operand type list, keep only the base number.
-    """
-    out: list[int] = []
-    i = 0
-    n = len(data)
-    while i < n:
-        mb = B_OPERAND_RE.match(data, i)
-        if mb:
-            out.append(int(mb.group(1)))
-            i = mb.end()
-            continue
-        md = D_OPERAND_RE.match(data, i)
-        if md:
-            out.append(int(md.group(1)))
-            i = md.end()
-            continue
-        i += 1
-    return out
-
-
-def parse_header_operand_types(data: str) -> list[str]:
-    if ":cb{" not in data:
-        return []
-    prefix = data.split(":cb{", 1)[0]
-    tokens = prefix.split(":")[1:]  # drop V1
-    return [t for t in tokens if not INT_TOKEN_RE.fullmatch(t) and t in D_OPERAND_TYPES]
 
 
 def load_comments() -> tuple[dict[tuple[str, int], bool], dict[tuple[str, int], str]]:
@@ -214,18 +171,10 @@ def collect_usage() -> tuple[dict[tuple[str, int], Usage], list[dict[str, object
                 continue
 
             stats["ladder_rows"] += 1
-            types = parse_header_operand_types(data)
-            numbers = parse_operand_numbers(data)
             try:
-                operations, decode_status = parse_row_occurrences(data)
+                operations, parse_status = parse_row_occurrences(data)
             except Exception:
-                operations, decode_status = [], "partial"
-            # The counts are a diagnostic, not the answer: they disagree on
-            # rows the decoder reads correctly (a constant and a digit
-            # designation each spend tokens without spending a number).
-            parse_status = "exact" if len(types) == len(numbers) else "partial"
-            if decode_status != "exact":
-                parse_status = "partial"
+                operations, parse_status = [], "partial"
             if parse_status == "exact":
                 stats["exact_rows"] += 1
             else:
@@ -235,17 +184,14 @@ def collect_usage() -> tuple[dict[tuple[str, int], Usage], list[dict[str, object
                         "lddb": db_path.name,
                         "pos": pos_i,
                         "block_id": block_id,
-                        "type_count": len(types),
-                        "number_count": len(numbers),
+                        "type_count": "",
+                        "number_count": "",
                         "title": last_title,
-                        "header_operand_types": " ".join(types),
+                        "header_operand_types": "",
                         "data_head": data[:500],
                     }
                 )
 
-            # In partial rows, zipping is a best-effort sample. Mismatch rows are
-            # separately reported so they can be manually checked before using
-            # those rows as authoritative.
             for dev_type, number in row_devices(operations):
                 if dev_type not in DEVICE_CODE_BY_TYPE:
                     continue
@@ -410,8 +356,8 @@ def write_outputs() -> None:
             "Notes:",
             "  comment_blank means DEVICE_DATA has a row, but no non-empty COMMENT_DATA was found.",
             "  device_row_missing means the used device was not found in DEVICE_DATA for the mapped device type.",
-            "  partial confidence means at least one occurrence came from a LadderBlocks row whose header operand count",
-            "  did not exactly match parsed operand numbers; check the mismatch CSV before using those rows as final.",
+            "  partial confidence means at least one occurrence came from a row where the shared decoder could not",
+            "  exactly align operations to ladder elements; check the mismatch CSV before using those rows as final.",
         ]
     )
 

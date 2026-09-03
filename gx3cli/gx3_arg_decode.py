@@ -131,6 +131,33 @@ class ArgOcc:
     range_len: int = 1
 
 
+@dataclass
+class DecodedOperation:
+    """One ladder operation decoded from a row.
+
+    This is the shared operation-level view for callers that need more than
+    just device occurrences: raw argument count, constant operands by position,
+    and the original raw argument strings are kept with the classified
+    occurrences.
+    """
+
+    role: str
+    opcode: str
+    args: list[ArgOcc]
+    const_summary: str
+    raw_args: list[str]
+    arg_tokens: list[str]
+    op_index: int
+
+    @property
+    def argc(self) -> int:
+        return len(self.raw_args)
+
+    @property
+    def constant_values(self) -> dict[int, str]:
+        return constant_values_by_index(self.raw_args)
+
+
 def base_opcode(opcode: str) -> str:
     if opcode in WRITE_ARG_TABLE or opcode in ARITH_OPS:
         return opcode
@@ -204,16 +231,28 @@ def parse_row_occurrences(
     contact still parses, but arrives with no identity -- which is what left
     the cross-reference empty on label-based projects.
     """
+    operations, status = parse_row_operations(data, labels)
+    return [(op.role, op.opcode, op.args, op.const_summary) for op in operations], status
+
+
+def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tuple[list[DecodedOperation], str]:
+    """Return decoded operations with raw argument metadata.
+
+    This is the canonical row walk. Tools that need argument counts, constants,
+    or device occurrences should use this instead of re-pairing header tokens
+    and ``ce`` elements themselves.
+    """
+
     tokens = header_tokens(data)
     header_ops = parse_header_ops(data)
     ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
     status = "exact" if len(ce_elements) == len(header_ops) else "partial"
-    results: list[tuple[str, str, list[ArgOcc], str]] = []
+    results: list[DecodedOperation] = []
 
     for op_index, hop in enumerate(header_ops):
         element = ce_elements[op_index] if op_index < len(ce_elements) else ""
         args_text = extract_args_text(element)
-        raw_args = top_level_items(args_text) if args_text else []
+        raw_args = top_level_arg_items(args_text) if args_text else []
         next_op_token = header_ops[op_index + 1].token_index if op_index + 1 < len(header_ops) else len(tokens)
         arg_tokens = tokens[hop.token_index + 1 : next_op_token]
 
@@ -224,7 +263,17 @@ def parse_row_occurrences(
             for a in occ:
                 a.access = "read" if a.is_index_register else access
                 a.access_basis = "index register" if a.is_index_register else "ladder contact/coil"
-            results.append((role, "", occ, const_summary(raw_args)))
+            results.append(
+                DecodedOperation(
+                    role=role,
+                    opcode="",
+                    args=occ,
+                    const_summary=const_summary(raw_args),
+                    raw_args=raw_args,
+                    arg_tokens=arg_tokens or [hop.device_type],
+                    op_index=op_index,
+                )
+            )
             continue
 
         occ = decode_args(raw_args, arg_tokens, hop.op, labels)
@@ -256,8 +305,40 @@ def parse_row_occurrences(
             else:
                 a.access = "read"
             a.access_basis = basis
-        results.append((hop.op, hop.op, occ, const_summary(raw_args)))
+        results.append(
+            DecodedOperation(
+                role=hop.op,
+                opcode=hop.op,
+                args=occ,
+                const_summary=const_summary(raw_args),
+                raw_args=raw_args,
+                arg_tokens=arg_tokens,
+                op_index=op_index,
+            )
+        )
     return results, status
+
+
+def top_level_arg_items(text: str) -> list[str]:
+    """Split a GX3 argument list on either top-level ':' or ',' separators."""
+
+    items = []
+    start = 0
+    brace = bracket = 0
+    for index, char in enumerate(text):
+        if char == "{":
+            brace += 1
+        elif char == "}":
+            brace -= 1
+        elif char == "[":
+            bracket += 1
+        elif char == "]":
+            bracket -= 1
+        elif char in {":", ","} and brace == 0 and bracket == 0:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return [item for item in items if item]
 
 
 def block_span(opcode: str, raw_args: list[str]) -> tuple[int, str]:
@@ -305,6 +386,16 @@ def const_summary(raw_args: list[str]) -> str:
             if m:
                 values.append(m.group(1))
     return ",".join(values[:6])
+
+
+def constant_values_by_index(raw_args: list[str]) -> dict[int, str]:
+    return {
+        arg_index: match.group(1)
+        for arg_index, raw in enumerate(raw_args)
+        if raw.startswith("c{")
+        for match in [CONST_VALUE_RE.search(raw)]
+        if match is not None
+    }
 
 
 def decode_args(

@@ -17,6 +17,7 @@ from gx3cli.gx3_external_inputs import (
 )
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
 from gx3cli.gx3_device_name import device_radix, format_device
+from gx3cli.gx3_arg_decode import DecodedOperation, parse_row_operations
 from gx3cli.review_gx3_project import (
     CommentInfo,
     LadderRow,
@@ -27,8 +28,7 @@ from gx3cli.review_gx3_project import (
 
 
 AJ65_RE = re.compile(r"^AJ65")
-CONST_RE = re.compile(r"c\(v=([0-9]+),si=([a-z]+)\)")
-DEVICE_ARG_RE = re.compile(r"d\(a=([0-9]+)\)")
+CONST_SIGN_RE = re.compile(r"si=([^:}]+)")
 
 
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
@@ -45,18 +45,6 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return []
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
-
-
-def parse_const_to_device(arg_shapes: str) -> tuple[int, str, int] | None:
-    const = CONST_RE.search(arg_shapes)
-    devices = DEVICE_ARG_RE.findall(arg_shapes)
-    if not const or not devices:
-        return None
-    return int(const.group(1)), const.group(2), int(devices[-1])
-
-
-def parse_devices(arg_shapes: str) -> list[int]:
-    return [int(value) for value in DEVICE_ARG_RE.findall(arg_shapes)]
 
 
 def device_role_from_comment(comment: str) -> str:
@@ -98,6 +86,23 @@ def infer_equipment_name(settings: dict[str, dict[str, object]]) -> str:
     return ""
 
 
+def first_const(operation: DecodedOperation) -> tuple[int, str] | None:
+    for index, value in operation.constant_values.items():
+        signedness = ""
+        if index < len(operation.raw_args):
+            match = CONST_SIGN_RE.search(operation.raw_args[index])
+            signedness = match.group(1) if match else ""
+        try:
+            return int(value), signedness
+        except ValueError:
+            return None
+    return None
+
+
+def device_at(operation: DecodedOperation, arg_index: int) -> str:
+    return next((arg.device for arg in operation.args if arg.arg_index == arg_index), "")
+
+
 def extract_aj65bt_r2n_settings(
     rows: list[LadderRow],
     comments: dict[tuple[str, int], CommentInfo],
@@ -106,44 +111,39 @@ def extract_aj65bt_r2n_settings(
     for row in rows:
         if "AJ65BT-R2N" not in row.title:
             continue
-        if not any(str(op.get("opcode", "")) in {"GP.RIWT", "GP.RIRD"} for op in row.operations):
+        operations, _status = parse_row_operations(row.data)
+        if not any(operation.role in {"GP.RIWT", "GP.RIRD"} for operation in operations):
             continue
 
         settings: dict[str, dict[str, object]] = {}
-        gp_ops: list[dict[str, object]] = []
-        for op in row.operations:
-            opcode = str(op.get("opcode", ""))
-            arg_shapes = str(op.get("arg_shapes", ""))
-            if opcode == "MOVP":
-                parsed = parse_const_to_device(arg_shapes)
-                if not parsed:
+        gp_ops: list[DecodedOperation] = []
+        for operation in operations:
+            if operation.role == "MOVP":
+                const = first_const(operation)
+                device = next((arg for arg in reversed(operation.args) if arg.device_type == "D"), None)
+                if const is None or device is None:
                     continue
-                value, si, d_no = parsed
-                comment = comment_for_device("D", d_no, comments)
+                value, si = const
+                comment = comment_for_device(device.device_type, device.number, comments)
                 role = device_role_from_comment(comment)
                 settings[role] = {
-                    "device": f"D{d_no}",
+                    "device": device.device,
                     "value": value,
                     "signedness": si,
                     "comment": comment,
                 }
-            elif opcode in {"GP.RIWT", "GP.RIRD"}:
-                gp_ops.append(op)
+            elif operation.role in {"GP.RIWT", "GP.RIRD"}:
+                gp_ops.append(operation)
 
         equipment_name = infer_equipment_name(settings)
         for op in gp_ops:
-            args = parse_devices(str(op.get("arg_shapes", "")))
-            module_unit = args[0] if len(args) > 0 else ""
-            control_base = args[1] if len(args) > 1 else ""
-            frame_base = args[2] if len(args) > 2 else ""
-            complete_device = args[3] if len(args) > 3 else ""
             row_out: dict[str, object] = {
                 "equipment_name": equipment_name,
-                "opcode": op.get("opcode", ""),
-                "module_unit": f"U{module_unit}" if module_unit != "" else "",
-                "control_base": f"D{control_base}" if control_base != "" else "",
-                "frame_base": f"D{frame_base}" if frame_base != "" else "",
-                "complete_device": f"M{complete_device}" if complete_device != "" else "",
+                "opcode": op.role,
+                "module_unit": device_at(op, 0),
+                "control_base": device_at(op, 1),
+                "frame_base": device_at(op, 2),
+                "complete_device": device_at(op, 3),
                 "lddb": row.lddb,
                 "pos": row.pos,
                 "title": row.title,
