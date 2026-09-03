@@ -56,3 +56,19 @@ def test_layout_does_not_change_logic_analysis() -> None:
 
     assert layout["verticals"] == [{"x": 2, "y1": 0, "y2": 1}]
     assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
+
+
+def main() -> int:
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for _name, test in tests:
+        test()
+    print(f"{len(tests)} ladder-layout checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
