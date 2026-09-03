@@ -92,9 +92,12 @@ def written_devices(element: FlowElement) -> list[str]:
     a value. The manuals name the destination operand of every instruction, so
     the write positions decide it here.
     """
+    written = [ref.device for ref in element.devices if ref.is_written]
     devices = [ref.device for ref in element.devices]
     if element.is_driver:
-        return devices or ["?"]
+        return written or devices or ["?"]
+    if written:
+        return written
     opcode = (element.opcode or "").strip()
     if not opcode or not devices:
         return []

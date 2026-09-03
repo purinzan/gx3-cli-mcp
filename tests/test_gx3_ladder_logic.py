@@ -80,6 +80,45 @@ def test_vertical_branch_can_feed_a_driver_sink():
     assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
 
 
+def test_data_instruction_sink_does_not_feed_right_side():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    mov = (
+        "e{s=ce{op=in{op=#:ct=a:as=[as{vt=Abl}]}:args=["
+        "d{s=#:a=0:vt=nn}:d{s=#:a=10:vt=nn}]}:pos=1,0}"
+    )
+    wire = "e{s=wire:pos=2,0}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=3,0}"
+    row = manual_row(
+        f"{contact}:{mov}:{wire}:{coil}",
+        dim="4x1",
+        header="V1:8:1:1:1:1:1:1:a:M:MOV:D:D:c:M",
+    )
+    data_output = output_elements_for(row, "D10")[0]
+    coil_output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, data_output)) == "[M100]"
+    assert logic_to_text(enable_logic_for_output(row, coil_output)) == "FALSE"
+
+
+def test_data_instruction_sink_does_not_feed_vertical_branch():
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
+    mov = (
+        "e{s=ce{op=in{op=#:ct=a:as=[as{vt=Abl}]}:args=["
+        "d{s=#:a=0:vt=nn}:d{s=#:a=10:vt=nn}]}:pos=1,0}"
+    )
+    wire = "e{s=wire:pos=1,1}"
+    coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=2,1}"
+    row = manual_row(
+        f"{contact}:{mov}:{wire}:{coil}",
+        dim="3x2",
+        header="V1:8:1:1:1:1:1:1:a:M:MOV:D:D:c:M",
+        verticals="v{pos=1,1}",
+    )
+    data_output = output_elements_for(row, "D10")[0]
+    coil_output = output_elements_for(row, "M200")[0]
+    assert logic_to_text(enable_logic_for_output(row, data_output)) == "[M100]"
+    assert logic_to_text(enable_logic_for_output(row, coil_output)) == "FALSE"
+
+
 def test_enable_logic_return_does_not_mutate_row_cache():
     contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
     coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
@@ -109,6 +148,8 @@ def main():
     test_left_rail_is_not_assumed_on_every_y_row()
     test_driver_sink_does_not_feed_a_vertical_branch()
     test_vertical_branch_can_feed_a_driver_sink()
+    test_data_instruction_sink_does_not_feed_right_side()
+    test_data_instruction_sink_does_not_feed_vertical_branch()
     test_enable_logic_return_does_not_mutate_row_cache()
     test_digit_specified_bit_group_survives_shared_decode()
     cases = [

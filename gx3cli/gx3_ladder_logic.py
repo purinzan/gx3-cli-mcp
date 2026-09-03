@@ -45,6 +45,8 @@ class DeviceRef:
     label: str = ""
     group_size: int = 0
     group_members: tuple[str, ...] = ()
+    access: str = ""
+    arg_index: int = -1
 
     @property
     def display(self) -> str:
@@ -53,6 +55,10 @@ class DeviceRef:
     @property
     def is_group(self) -> bool:
         return bool(self.group_size)
+
+    @property
+    def is_written(self) -> bool:
+        return self.access in {"write", "both"}
 
 
 @dataclass
@@ -80,6 +86,10 @@ class FlowElement:
     @property
     def is_driver(self) -> bool:
         return self.role in DRIVER_ROLES
+
+    @property
+    def is_sink(self) -> bool:
+        return self.is_driver or any(ref.is_written for ref in self.devices)
 
     def needs_state_text(self) -> str:
         if self.role == "a":
@@ -179,10 +189,12 @@ def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
                     label=f"K{k_count}{arg.device_type}{arg.number}",
                     group_size=k_count * 4,
                     group_members=bit_group_members(arg.device_type, arg.number, k_count),
+                    access=arg.access,
+                    arg_index=arg.arg_index,
                 )
             )
             continue
-        refs.append(DeviceRef(arg.device, arg.device_type, arg.number))
+        refs.append(DeviceRef(arg.device, arg.device_type, arg.number, access=arg.access, arg_index=arg.arg_index))
 
     seen: set[str] = set()
     unique: list[DeviceRef] = []
@@ -243,7 +255,7 @@ def positioned_elements(
         op_index += 1
 
     for element in elements:
-        element.end_x = element.x if element.is_driver else element.x + 1
+        element.end_x = element.x if element.is_sink else element.x + 1
     return elements
 
 
@@ -252,7 +264,7 @@ def output_elements_for(row: LadderRow, device: str) -> list[FlowElement]:
     return [
         element
         for element in row_logic_analysis(row).elements
-        if element.is_driver and any(ref.device == target for ref in element.devices)
+        if element.is_sink and any(ref.device == target and ref.is_written for ref in element.devices)
     ]
 
 
@@ -405,7 +417,7 @@ def horizontal_edges(elements: list[FlowElement]) -> list[HorizontalEdge]:
 
     edges: list[HorizontalEdge] = []
     for element in elements:
-        if element.is_driver:
+        if element.is_sink:
             continue
         end_x = max(element.end_x, element.x + 1)
         edges.append(HorizontalEdge(element.x, element.y, end_x, element))
@@ -473,7 +485,7 @@ def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | 
         edges_by_x[edge.x1].append(edge)
 
     left_rail_rows = frozenset(edge.y for edge in edges if edge.x1 == 0)
-    sink_nodes = frozenset((element.x, element.y) for element in elements if element.is_driver)
+    sink_nodes = frozenset((element.x, element.y) for element in elements if element.is_sink)
     components_by_x = {
         x: tuple(frozenset(component) for component in components)
         for x, components in vertical_components(row, elements).items()
@@ -539,7 +551,7 @@ def analyze_row_logic(row: LadderRow, labels: LabelResolver | None = None) -> Ro
     output_logic = {
         (element.x, element.y): formulas[(element.x, element.y)]
         for element in elements
-        if element.is_driver
+        if element.is_sink
     }
     return RowLogicAnalysis(
         elements=tuple(elements),
