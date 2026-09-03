@@ -68,7 +68,9 @@ def test_both_callers_see_the_same_operands() -> None:
     assert devices == [
         ("D100", "Z2 indexed"),
         ("Z2", "index register"),
-        ("M35001", "digit=K4"),
+        # A digit specification covers four bits per digit, so it carries
+        # a span the same way a block instruction does.
+        ("M35001", "digit=K4; covers 16 devices"),
         ("D200", "bit=K5"),
         ("U96\\G196608Z0", "unit=0x96 Z0 indexed"),
         ("Z0", "index register"),

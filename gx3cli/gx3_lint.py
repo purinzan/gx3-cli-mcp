@@ -407,6 +407,24 @@ def check_alarm_quality(ctx: LintContext) -> list[dict[str, object]]:
     return out
 
 
+def covered_device_ranges(lite: sqlite3.Connection) -> dict[str, list[tuple[int, int]]]:
+    """The runs the ladder writes without naming every device in them."""
+    try:
+        rows = lite.execute("select device_type, start, length from covered_ranges").fetchall()
+    except sqlite3.Error:
+        # An index built before the runs were recorded. The check then reports
+        # what it always did rather than failing.
+        return {}
+    out: dict[str, list[tuple[int, int]]] = {}
+    for dev_type, start, length in rows:
+        out.setdefault(str(dev_type), []).append((int(start), int(length)))
+    return out
+
+
+def is_covered(covered: dict[str, list[tuple[int, int]]], dev_type: str, number: int) -> bool:
+    return any(start <= number < start + length for start, length in covered.get(dev_type, ()))
+
+
 @register("unused-device", "devices written but never read, or comments on unused devices")
 def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
     if ctx.lite is None:
@@ -423,9 +441,16 @@ def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
         limit 1000
         """
     ).fetchall()
+    covered = covered_device_ranges(ctx.lite)
     for r in rows:
         comment = str(r["comment"] or "")
         if r["device_type"] in {"T", "C"}:
+            continue
+        if is_covered(covered, str(r["device_type"]), int(r["number"])):
+            # A block instruction or a digit specification writes this device
+            # without naming it, so it is neither unused nor unwritten. Before
+            # the index recorded those runs, 149 of this check's 1000 findings
+            # on one project were devices in that state.
             continue
         if re.search(r"spare|unused|not used", comment, re.IGNORECASE):
             continue

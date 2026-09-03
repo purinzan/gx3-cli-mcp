@@ -36,7 +36,12 @@ class GX3FormatInventory:
 
     @property
     def has_non_ladder_programs(self) -> bool:
-        return any((self.fbddb_count, self.stdb_count, self.mildb_count))
+        # A MilDB accompanies a ladder program -- every project here has one
+        # per LDDB -- so counting it made every project report a non-ladder
+        # program it does not have, and "unsupported formats detected" was
+        # printed for projects that are ladder from end to end. FBD and ST are
+        # the languages this cannot read.
+        return any((self.fbddb_count, self.stdb_count))
 
     @property
     def has_known_program_db(self) -> bool:
@@ -75,7 +80,6 @@ class GX3FormatInventory:
         parts = [
             f"FBDDB={self.fbddb_count}" if self.fbddb_count else "",
             f"STDB={self.stdb_count}" if self.stdb_count else "",
-            f"MilDB={self.mildb_count}" if self.mildb_count else "",
         ]
         detail = ", ".join(part for part in parts if part)
         return f"unsupported/non-ladder formats detected: {detail}" if detail else "no known program DB files"

@@ -278,6 +278,38 @@ def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sq
     ).fetchall()
 
 
+def indexed_note(con: sqlite3.Connection, device: str) -> str:
+    """Warn that index-modified access may reach this device unseen.
+
+    D100Z2 names D100 and reaches whatever D100 plus Z2 is at the time. The
+    occurrence is recorded under D100 because that is all the ladder says, so a
+    device reached only through an index register appears in no search at all.
+    Nothing static can resolve it; saying so is the difference between an
+    incomplete answer and a wrong one.
+    """
+    parsed = _split_device(device)
+    if parsed is None:
+        return ""
+    dev_type, _number = parsed
+    row = con.execute(
+        """
+        select count(*) as n, sum(access in ('write', 'both')) as writes
+        from xref
+        where device_type = ? and detail like '%indexed%'
+        """,
+        (dev_type,),
+    ).fetchone()
+    total = int(row["n"] or 0)
+    if not total:
+        return ""
+    writes = int(row["writes"] or 0)
+    return (
+        f"\nNote: {total} {dev_type} occurrences are index-modified"
+        f" ({writes} of them writes). Which address those reach is only known"
+        f" while the program runs, so this list can be incomplete."
+    )
+
+
 def span_note(row: sqlite3.Row, device: str) -> str:
     """Say so when a row was found by its run rather than by its name."""
     if "range_len" not in row.keys() or row["device"] == device:
@@ -333,6 +365,9 @@ def where_used(args: argparse.Namespace) -> int:
         print(f"\nUnclassified refs ({len(refs)}):")
         for r in refs:
             print(fmt_row(r) + span_note(r, device))
+    note = indexed_note(con, device)
+    if note:
+        print(note)
     con.close()
     if args.cross:
         print_cross_where_used(args, device)

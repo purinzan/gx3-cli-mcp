@@ -478,7 +478,23 @@ def decode_args(
             continue
 
         if operand.digit:
-            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"digit=K{operand.digit}"))
+            # A digit specification names one device and covers four bits per
+            # digit: K2M3410 is M3410 through M3417. Only the first was
+            # recorded, so a search for one of the others answered "no
+            # occurrences" -- the same wrong answer a block instruction used to
+            # give. Unlike a block length, this span is a property of the
+            # operand itself, so it holds whether the operand is read or
+            # written.
+            try:
+                span = 4 * int(operand.digit)
+            except ValueError:
+                span = 1
+            detail = f"digit=K{operand.digit}"
+            if span > 1:
+                detail += f"; covers {span} devices"
+            occ = make_occ(operand.device_type, number, arg_index, detail=detail)
+            occ.range_len = max(span, 1)
+            occs.append(occ)
             continue
         if operand.bit:
             occs.append(make_occ(operand.device_type, number, arg_index, detail=f"bit=K{operand.bit}"))
