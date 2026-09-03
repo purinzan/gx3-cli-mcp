@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
 [![CI](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
+[![Glama](https://img.shields.io/badge/Glama-MCP%20server-black)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
 **Work out why a coil never turns on, without opening GX Works3.**
 
@@ -158,5 +159,13 @@ licence key, activation or paid plan.
 日本語: 社内での評価・業務利用は許諾されています。禁止しているのは再配布、
 SaaS 提供、有償製品への組み込みです。実行にライセンスキーや課金は不要です。
 商用利用の相談は Issue からどうぞ。
+
+## Listed on Glama
+
+Indexed as an MCP server, with per-tool scores for how well each tool
+describes what it does. Useful as outside feedback on the tool surface —
+the low scores there are the ones whose descriptions need work.
+
+[![gx3-mcp-server on Glama](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badge)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · [AGENTS.md](AGENTS.md)
