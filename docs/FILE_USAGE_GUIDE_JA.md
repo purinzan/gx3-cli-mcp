@@ -26,6 +26,7 @@
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
 | `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
 | `server.json` | 公式 MCP レジストリ（registry.modelcontextprotocol.io）への登録定義。`version` は pyproject.toml と揃える。README 冒頭の `mcp-name:` コメントが PyPI 側の所有証明になる。 |
+| `glama.json` | Glama（MCP サーバーディレクトリ）向けのメタデータ。掲載時の保守者情報を示す。 |
 | `llms.txt` | AI 向けの短い要約。何をする/しないツールかと、主要ドキュメントへのリンクを機械可読な形で置く。 |
 | `.gitignore` | キャッシュ、解析結果、GX3/GTX/DB/文書データ、desktop shell 生成物を除外する。 |
 | `.gitattributes` | 公開 repo の改行コードを LF に揃え、binary artifact を明示する。 |
