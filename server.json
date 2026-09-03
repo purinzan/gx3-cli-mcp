@@ -3,7 +3,7 @@
   "name": "io.github.purinzan/gx3-cli-mcp",
   "title": "GX Works3 Project Analysis",
   "description": "Read-only analysis of Mitsubishi Electric MELSEC PLC projects saved by GX Works3 (.gx3): trace why a coil never turns on, find where a device is written and read, search by device comment, and separate conditions arriving from physical inputs, HMI or network communication. Runs locally and never modifies the project.",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "repository": {
     "url": "https://github.com/purinzan/gx3-cli-mcp",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "gx3-cli-mcp",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       }
