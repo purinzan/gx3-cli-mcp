@@ -245,7 +245,14 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_lint",
         command="lint",
-        description="Static lint: duplicate coils, multi-writers, alarm quality, unused/comment issues, math/type checks. Writes one CSV per check to the working directory.",
+        description=(
+            "Run static review checks over the whole project and return a per-check summary with finding "
+            "counts by severity. Checks: duplicate coils, multi-writers, alarm quality, unused devices, "
+            "contradictory comments, linked-device writes, and signed/width/division type problems. "
+            "Reads the project; WRITES one CSV per check plus a JSON summary into the working directory. "
+            "Findings are advisory: a duplicate coil may be a deliberate SET/RST pair, so report the "
+            "severity and let the engineer judge. Needs the index and xref DBs for the full check set."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -260,7 +267,13 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_dead_logic",
         command="dead-logic",
-        description="Constant-OFF contacts, always-on NC contacts, unread coils/words, and SET-without-RST latches. Requires the xref DB.",
+        description=(
+            "Find logic that can never do anything: contacts that can never close, NC contacts on "
+            "always-ON relays, coils and words written but never read, and SET latches with no matching "
+            "RST. Returns findings grouped by kind with the device, its comment and where it appears. "
+            "Reads the project; WRITES a CSV under the output directory. Devices refreshed from a "
+            "network are excluded, since a remote station may be the real reader. Requires the xref DB."
+        ),
         input_schema={
             "type": "object",
             "properties": {"root": {"type": "string", "description": "Extracted project folder."}},
@@ -272,7 +285,12 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_device_map",
         command="device-map",
-        description="Device-type usage ranges, density, and free gaps from the SQLite index (build index-lite first).",
+        description=(
+            "Report, per device type, which numbers are in use, how densely, and where the free gaps are. "
+            "Use it to pick an unused range before adding devices, or to see how a project is laid out. "
+            "Read-only; returns a table and writes nothing. Requires the index-lite DB: run "
+            "`gx3-cli index-lite build --root <root>` once per project first."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -288,7 +306,12 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_alarm_map",
         command="alarm-map",
-        description="Alarm/fault inventory with trigger, hold type, timer setpoint, and reset condition. Requires the xref DB.",
+        description=(
+            "Inventory every alarm and fault device with what triggers it, whether it latches, any timer "
+            "setpoint, and what resets it. Answers \"what raises this alarm and how is it cleared\" without "
+            "reading the ladder by hand. Reads the project; WRITES a CSV. An alarm with no reset condition "
+            "is worth flagging to the user: it cannot be cleared without a power cycle. Requires the xref DB."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -308,7 +331,12 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_semantic_diff",
         command="semantic-diff",
-        description="Rung-level diff between two projects (folders or .gx3) by stable block GUID.",
+        description=(
+            "Compare two versions of a project rung by rung and return what was added, removed or changed. "
+            "Rungs are matched by their stable block GUID rather than by position, so inserting a rung "
+            "does not report everything after it as changed. Use it to review what a revision actually "
+            "did. Reads both projects; WRITES a detail CSV. Neither project is modified."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -323,7 +351,13 @@ TYPED_TOOLS: list[TypedTool] = [
     TypedTool(
         name="gx3_network_map",
         command="network-map",
-        description="Aggregated IP, CC-Link, SCON, and safety relationship map.",
+        description=(
+            "Map how this PLC is wired to everything outside it: IP addresses, CC-Link and SCON stations, "
+            "and safety relationships, aggregated into one view. Use it to find which unit or remote "
+            "station owns a device before assuming the program drives it. Reads the project and the comm "
+            "detail CSVs; WRITES its own CSVs under the output directory. It does not communicate with "
+            "any device -- everything is read from the project files."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -439,7 +473,11 @@ GENERIC_TOOL = {
 
 LIST_TOOL = {
     "name": "gx3_list_commands",
-    "description": "List the project-read-only GX3 CLI commands available through this server.",
+    "description": (
+        "List every project-read-only GX3 CLI command this server will run, with a one-line summary "
+        "of each. Read-only; touches no project. Call this before gx3_run_command when no typed tool "
+        "fits, to see what is actually available rather than guessing a command name."
+    ),
     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 

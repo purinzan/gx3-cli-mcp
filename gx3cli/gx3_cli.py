@@ -105,6 +105,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "ip-map": CommandSpec("gx3_tools.py", "extract registered IP address map", "Reports"),
     "scon-map": CommandSpec("gx3_tools.py", "extract IAI/SCON axis maps and POS values", "Reports"),
     "network-map": CommandSpec("gx3_network_map.py", "aggregate IP, CC-Link, SCON, and safety relationship map", "Reports"),
+    "roundtrip": CommandSpec("gx3_roundtrip.py", "verify reading by rebuilding each rung and comparing it to the original", "Diagnostics"),
     "coverage": CommandSpec("gx3_coverage.py", "report instruction/device knowledge covered by the CLI", "Diagnostics"),
     "instruction-coverage": CommandSpec("gx3_coverage.py", "alias: coverage instructions", "Diagnostics"),
     "device-coverage": CommandSpec("gx3_coverage.py", "alias: coverage devices", "Diagnostics"),

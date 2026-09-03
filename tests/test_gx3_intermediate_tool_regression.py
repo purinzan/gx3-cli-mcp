@@ -130,3 +130,47 @@ print("all intermediate regression checks passed")
 
 if __name__ == "__main__":
     main()
+
+
+def test_label_contacts_and_coils_round_trip() -> None:
+    """A label-based rung has to survive AST -> intermediate -> AST.
+
+    generate_rung() went through parse_device() for every operand, so a label
+    reference came back as "invalid device: Start_Latch" and a label-based
+    project could not be regenerated at all -- which meant the round-trip check
+    that verifies reading could only ever run on device-based projects.
+
+    A label keeps its "_lid/<LabelID>/<row>" reference as its identity rather
+    than a device: a local label lives in label memory, and one row of a
+    structure label covers several devices.
+    """
+    from gx3cli.gx3_arg_decode import parse_row_occurrences
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli.gx3_label_resolve import EMPTY
+
+    logic = {"and": [{"device": "_lid/999/1"}, {"not": {"device": "_lid/999/2"}}]}
+    data, _rowsize, _ops = generate_rung(logic, {"type": "coil", "device": "_lid/999/3"})
+
+    decoded, status = parse_row_occurrences(data, EMPTY)
+    found = [(role, occ.device, occ.access) for role, _op, occs, _c in decoded for occ in occs]
+
+    assert status == "exact"
+    assert found == [
+        ("a", "_lid/999/1", "read"),
+        ("b", "_lid/999/2", "read"),
+        ("c", "_lid/999/3", "write"),
+    ]
+
+
+def test_labels_and_devices_can_share_a_rung() -> None:
+    from gx3cli.gx3_arg_decode import parse_row_occurrences
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli.gx3_label_resolve import EMPTY
+
+    logic = {"and": [{"device": "X10"}, {"device": "_lid/999/1"}]}
+    data, _rowsize, _ops = generate_rung(logic, {"type": "set", "device": "M55"})
+    decoded, status = parse_row_occurrences(data, EMPTY)
+    devices = [occ.device for _r, _o, occs, _c in decoded for occ in occs]
+
+    assert status == "exact"
+    assert devices == ["X10", "_lid/999/1", "M55"]
