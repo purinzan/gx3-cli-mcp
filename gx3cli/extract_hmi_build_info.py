@@ -38,6 +38,8 @@ DEVICE_CODE_BY_TYPE = {
     "R": 48,
     "SW": 49,
     "T": 66,
+    "C": 70,
+    "ST": 74,
 }
 
 NON_REPORT_D_OPERANDS = {"Zs", "Ats", "Ks", "N", "Z", "G"}

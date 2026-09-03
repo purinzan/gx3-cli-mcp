@@ -50,6 +50,8 @@ DEVICE_CODE_BY_TYPE = {
     "R": 48,
     "SW": 49,
     "T": 66,
+    "C": 70,
+    "ST": 74,
 }
 
 # Tokens in the V1 header that consume a d{s=#:a=...} operand but are not
