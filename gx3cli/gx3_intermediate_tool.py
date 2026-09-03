@@ -19,6 +19,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     support_status,
 )
 from gx3cli.gx3_project_paths import convertdata_path, default_output_path
+from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_TOKEN_PREFIX
 
 
 SCHEMA_VERSION = "0.3"
@@ -262,6 +263,18 @@ def op_sequence(data: str) -> list[str]:
     return [op.op if op.op not in {"a", "b", "c"} else f"{op.op}:{op.device_type}" for op in parse_header_ops(data)]
 
 
+# A label reference stands where a device would, spelled the way the ladder
+# writes it. Generation keeps the reference rather than a device, because a
+# local label has no device of its own -- the compiler places it in label
+# memory -- and one row of a structure label covers several devices.
+LABEL_TYPE_CODES = ["1", "26"]
+
+
+def label_reference(device: str) -> str | None:
+    """The "_lid/<LabelID>/<row>" this operand is, or None if it is a device."""
+    return device if str(device).startswith(LABEL_TOKEN_PREFIX) else None
+
+
 def parse_device(device: str) -> tuple[str, int]:
     index = 0
     while index < len(device) and not device[index].isdigit() and device[index] != "-":
@@ -291,6 +304,12 @@ def literal_from_expr(expr: dict[str, object], negate: bool = False) -> dict[str
         raise ValueError(f"contact must be a or b: {expr}")
     if negate:
         role = toggle_contact(role)
+    reference = label_reference(device)
+    if reference is not None:
+        # A label keeps its reference as its identity. There is no device to
+        # format: a local label lives in label memory, and one row of a
+        # structure label covers several devices.
+        return {"role": role, "device": reference, "device_type": "", "number": 0}
     dev_type, number = parse_device(device)
     return {"role": role, "device": _format_device(dev_type, number), "device_type": dev_type, "number": number}
 
@@ -359,6 +378,22 @@ def contact_element(role: str, dev_type: str, number: int, x: int, y: int) -> st
     )
 
 
+def label_contact_element(x: int, y: int) -> str:
+    """A label contact. The identity is the header token, not the argument."""
+    return (
+        "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}"
+        f":args=[l{{id=#}}]}}:pos={x},{y}}}"
+    )
+
+
+def label_output_element(output_type: str, x: int, y: int) -> str:
+    ct = "p" if output_type == "pls" else "a"
+    return (
+        f"e{{s=ce{{op=cl{{op=#:ct={ct}:as=[as{{vt=Abl}}]}}"
+        f":args=[l{{id=#}}]}}:pos={x},{y}}}"
+    )
+
+
 def output_element(output_type: str, number: int, x: int, y: int) -> str:
     ct = "p" if output_type == "pls" else "a"
     return (
@@ -371,6 +406,11 @@ def wire_element(x: int, y: int) -> str:
     return f"e{{s=-:pos={x},{y}}}"
 
 
+def output_role(output_type: str) -> str:
+    """The header role for an output: c for a coil, the opcode otherwise."""
+    return "c" if output_type == "coil" else output_type.upper()
+
+
 def output_header(output_type: str, dev_type: str) -> str:
     if output_type == "coil":
         return f"c:{dev_type}"
@@ -379,7 +419,11 @@ def output_header(output_type: str, dev_type: str) -> str:
 
 def generate_rung(logic: dict[str, object], output: dict[str, object], max_terms: int = 64, max_contacts: int = 256) -> tuple[str, int, int]:
     output_type = str(output.get("type", "coil")).lower()
-    out_dev_type, out_number = parse_device(str(output["device"]))
+    out_reference = label_reference(str(output["device"]))
+    if out_reference is None:
+        out_dev_type, out_number = parse_device(str(output["device"]))
+    else:
+        out_dev_type, out_number = "", 0
     nnf = to_nnf(logic)
     terms = dnf(nnf)
     if not terms:
@@ -400,18 +444,29 @@ def generate_rung(logic: dict[str, object], output: dict[str, object], max_terms
     elements: list[str] = []
     for y, term in enumerate(terms):
         for x, literal in enumerate(term):
+            role = str(literal["role"])
+            reference = label_reference(literal.get("device", ""))
+            if reference is not None:
+                type_codes.extend(LABEL_TYPE_CODES)
+                op_tokens.append(f"{role}:{reference}")
+                elements.append(label_contact_element(x, y))
+                continue
             dev_type = str(literal["device_type"])
             number = int(literal["number"])
-            role = str(literal["role"])
             type_codes.extend(code_for_contact(dev_type))
             op_tokens.append(f"{role}:{dev_type}")
             elements.append(contact_element(role, dev_type, number, x, y))
         for x in range(len(term), coil_x):
             elements.append(wire_element(x, y))
 
-    type_codes.extend(code_for_output(output_type, out_dev_type))
-    op_tokens.append(output_header(output_type, out_dev_type))
-    elements.append(output_element(output_type, out_number, coil_x, 0))
+    if out_reference is not None:
+        type_codes.extend(LABEL_TYPE_CODES)
+        op_tokens.append(f"{output_role(output_type)}:{out_reference}")
+        elements.append(label_output_element(output_type, coil_x, 0))
+    else:
+        type_codes.extend(code_for_output(output_type, out_dev_type))
+        op_tokens.append(output_header(output_type, out_dev_type))
+        elements.append(output_element(output_type, out_number, coil_x, 0))
 
     verticals = [f"v{{pos={coil_x},{y}}}" for y in range(1, rowsize)]
     data = f"V1:{len(type_codes)}:{':'.join(type_codes)}:{':'.join(op_tokens)}:cb{{fg=fg{{dim={width}x{rowsize}:es=[{':'.join(elements)}]"
