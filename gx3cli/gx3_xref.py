@@ -28,8 +28,10 @@ from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_program_map import load_program_map
+from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
 from gx3cli.extract_hmi_build_info import CommentInfo
@@ -55,12 +57,28 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 XREF_DECODER = "arg-decode-3"
 
 
-def stamp_decoder(con: sqlite3.Connection) -> None:
-    """Record which decoder wrote this database's occurrences."""
+def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
+    """Record which decoder wrote this database, and from which input.
+
+    The path a database was built from is not an identity: the folder behind it
+    can be rebuilt, edited or replaced, and every answer afterwards is about a
+    file nobody opened. The fingerprint is of the ladder, comments, labels and
+    parameters together, so "did the logic and the comments come from the same
+    input" is a question this can answer.
+    """
     con.execute("create table if not exists meta(key text primary key, value text not null)")
     con.execute(
         "insert or replace into meta(key, value) values ('decoder', ?)", (XREF_DECODER,)
     )
+    if root is not None:
+        con.execute(
+            "insert or replace into meta(key, value) values ('input_sha256', ?)",
+            (fingerprint(Path(root)),),
+        )
+        con.execute(
+            "insert or replace into meta(key, value) values ('analyzer_version', ?)",
+            (package_version(),),
+        )
 
 
 def rebuild_hint(path: Path) -> str:
@@ -82,12 +100,34 @@ def check_decoder(path: Path, con: sqlite3.Connection) -> None:
     )
 
 
-def open_xref_db(path: Path, read_only: bool = False) -> sqlite3.Connection:
-    """Open a cross-reference database, checked against the decoder version."""
+def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
+    """Refuse a database built from a different project than the one asked for."""
+    if root is None:
+        return
+    row = con.execute("select value from meta where key='input_sha256'").fetchone()
+    stored = (row["value"] if isinstance(row, sqlite3.Row) else row[0]) if row else ""
+    if not stored:
+        # Built before inputs were stamped. The decoder check already refuses
+        # those, so there is nothing to add here.
+        return
+    actual = fingerprint(Path(root))
+    if not actual or actual == stored:
+        return
+    con.close()
+    raise SystemExit(
+        mismatch_message("xref db", path, stored, actual, rebuild_hint(path).replace("rebuild it: ", ""))
+    )
+
+
+def open_xref_db(
+    path: Path, read_only: bool = False, root: Path | None = None
+) -> sqlite3.Connection:
+    """Open a cross-reference database, checked against the decoder and input."""
     uri = f"file:{path}?mode=ro" if read_only else str(path)
     con = sqlite3.connect(uri, uri=read_only)
     con.row_factory = sqlite3.Row
     check_decoder(path, con)
+    check_input(path, con, root)
     return con
 
 
@@ -204,7 +244,7 @@ def build(args: argparse.Namespace) -> int:
     con.execute("insert into meta(key, value) values ('root', ?)", (str(root),))
     con.execute("insert into meta(key, value) values ('rows', ?)", (str(row_count),))
     con.execute("insert into meta(key, value) values ('records', ?)", (str(len(records)),))
-    stamp_decoder(con)
+    stamp_decoder(con, root)
     con.commit()
     con.close()
     print(f"xref written: {out}")
@@ -222,7 +262,7 @@ def open_db(args: argparse.Namespace) -> sqlite3.Connection:
             f"xref db not found: {path} "
             f"(run: python -m gx3cli.gx3_cli xref build --root {root})"
         )
-    return open_xref_db(path)
+    return open_xref_db(path, root=root)
 
 
 def normalize_device(text: str) -> str:
