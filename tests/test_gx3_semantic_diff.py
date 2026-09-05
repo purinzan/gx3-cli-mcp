@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_intermediate_tool import generate_rung
@@ -68,12 +69,13 @@ def test_cli_reports_changes_in_default_output() -> None:
         for name, data_rows in (("old", [old] * 3), ("new", variants)):
             folder = root / name
             folder.mkdir()
-            with sqlite3.connect(folder / "001_LDDB.db") as con:
+            with closing(sqlite3.connect(folder / "001_LDDB.db")) as con:
                 con.execute("create table LadderBlocks(id text, pos real, blocktype integer, data text)")
                 con.executemany(
                     "insert into LadderBlocks values (?, ?, 0, ?)",
                     [(f"_guid/synthetic-{i}", i, data) for i, data in enumerate(data_rows)],
                 )
+                con.commit()
         output = root / "diff.csv"
         env = dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8")
         result = subprocess.run(
