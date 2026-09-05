@@ -867,7 +867,7 @@ def check_signed_compare(ctx: LintContext) -> list[dict[str, object]]:
 # --------------------------------------------------------------------------
 
 
-def open_checked_xref(path: Path) -> sqlite3.Connection | None:
+def open_checked_xref(path: Path, root: Path | None = None) -> sqlite3.Connection | None:
     """The xref db, refused when another decoder version wrote it.
 
     open_optional() serves the lite index and the link map too, and the lite
@@ -875,7 +875,7 @@ def open_checked_xref(path: Path) -> sqlite3.Connection | None:
     """
     if not path.exists():
         return None
-    return open_xref_db(path, read_only=True)
+    return open_xref_db(path, read_only=True, root=root)
 
 
 def open_optional(path: Path) -> sqlite3.Connection | None:
@@ -976,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
             root=root,
             rows=rows,
             comments=comments,
-            xref=open_checked_xref(xref_path),
+            xref=open_checked_xref(xref_path, root),
             lite=open_optional(lite_path),
             link=open_optional(link_path) if link_path else None,
             project_label=project_label_from_root(root),

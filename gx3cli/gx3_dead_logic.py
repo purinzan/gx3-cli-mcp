@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             return False
         return refresh_area_for(device_type, int(m.group(1)), refresh_areas) is not None
 
-    con = open_xref_db(xref_path)
+    con = open_xref_db(xref_path, root=root)
 
     stats: dict[str, dict[str, int]] = {}
     for r in con.execute(
