@@ -39,7 +39,13 @@ from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations
 from gx3cli.gx3_analysis_state import AnalysisState, checked, not_evaluated, summarise
 from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
 from gx3cli.gx3_index_lite import default_db_path as lite_db_path
-from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
+from gx3cli.gx3_project_paths import (
+    default_comm_prefix,
+    default_output_prefix,
+    default_project_root,
+)
+from gx3cli.gx3_device_name import split_device
+from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE, collect_alarms
 from gx3cli.review_gx3_project import (
@@ -109,6 +115,10 @@ CHECK_IDS = {
 }
 
 
+# A sentinel for "not looked for yet", distinct from "looked for, not there".
+_UNLOADED = object()
+
+
 def register(name: str, description: str) -> Callable[[CheckFunc], CheckFunc]:
     def deco(func: CheckFunc) -> CheckFunc:
         CHECKS[name] = (func, description)
@@ -151,11 +161,30 @@ class LintContext:
     # Why a check could not run, by check name. A check that records one here
     # is reported as not evaluated rather than as zero findings.
     states: dict[str, AnalysisState] = field(default_factory=dict)
+    # Where the communication refresh areas were written, if they were.
+    refresh_csv: str = ""
+    _refresh_areas: object = _UNLOADED
 
     def cannot_evaluate(self, check: str, reason: str, next_step: str = "") -> list:
         self.states[check] = not_evaluated(reason, next_step)
         print(f"  {check}: {self.states[check].line()}")
         return []
+
+    def refresh_areas(self) -> list | None:
+        """The communication refresh areas, or None when they were not found.
+
+        None is not an empty list. With no refresh information, a device a
+        network writes every scan looks exactly like a device nothing writes,
+        and a check that cannot tell them apart reports the difference as a
+        finding. The callers treat None as "cannot evaluate".
+        """
+        if self._refresh_areas is _UNLOADED:
+            path = Path(self.refresh_csv) if self.refresh_csv else None
+            if path is None or not path.exists():
+                self._refresh_areas = None
+            else:
+                self._refresh_areas = load_refresh_areas(path)
+        return self._refresh_areas
 
     def comment(self, device_type: str, number: int) -> str:
         return device_comment_text(self.comments.get((device_type, number), CommentInfo()))
@@ -265,6 +294,12 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
             continue
         by_device[str(row["device"])].append(row)
 
+    # Where each of those writes got its value. Two rungs writing one word is
+    # a different thing to judge when one of them is "MOV from the recipe
+    # table" and the other is "MOV from the HMI": the finding said only that
+    # both wrote it.
+    sources = value_sources_by_write(ctx.xref)
+
     out: list[dict[str, object]] = []
     for device, writers in by_device.items():
         locs = {(w["lddb"], w["pos"]) for w in writers}
@@ -280,6 +315,7 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
         }
         loc_text = " | ".join(
             f"{w['pou'] or w['lddb']}:st{w['step'] if w['step'] is not None else '?'}:{w['opcode'] or w['role']}"
+            + source_note(sources, device, w)
             for w in writers[:12]
         )
         out.append(
@@ -298,6 +334,118 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
             }
         )
     out.sort(key=lambda item: (0 if item["severity"] == "high" else 1, -int(item["count"])))
+    return out
+
+
+def value_sources_by_write(xref: sqlite3.Connection) -> dict[tuple[str, str, int], list[str]]:
+    """The source device of every stored transfer, keyed by where it landed.
+
+    Empty when the cross-reference predates value-flow edges. A finding then
+    reads exactly as it did before rather than claiming a write had no source.
+    """
+    try:
+        rows = xref.execute(
+            "select destination_device, lddb, pos, source_device from data_flow"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    found: dict[tuple[str, str, int], list[str]] = {}
+    for row in rows:
+        key = (str(row["destination_device"]), str(row["lddb"]), int(row["pos"]))
+        found.setdefault(key, []).append(str(row["source_device"]))
+    return found
+
+
+def source_note(
+    sources: dict[tuple[str, str, int], list[str]], device: str, writer: sqlite3.Row
+) -> str:
+    names = sources.get((device, str(writer["lddb"]), int(writer["pos"] or 0)), [])
+    return f"<-{'+'.join(sorted(set(names)))}" if names else ""
+
+
+@register(
+    "external-value-source",
+    "a value is transferred from a word the ladder never writes",
+)
+def check_external_value_source(ctx: LintContext) -> list[dict[str, object]]:
+    """Where a value enters the program from outside the ladder.
+
+    Not a defect. A transfer whose source no rung ever writes is reading
+    something put there by an HMI, a module, a network partner, a file register
+    or a retained value -- and which of those it is decides where to look when
+    the value is wrong. That boundary is the thing an engineer needs and the
+    one the ladder alone does not show.
+
+    Devices a communication refresh writes are excluded, because there the
+    writer is known and is not a question. So is module buffer memory: a
+    ladder that does not write module buffer memory is normal, not suspicious.
+    What is left
+    is the set worth naming.
+
+    Without the communication CSVs this cannot tell a refreshed device from an
+    unexplained one, so it does not run rather than reporting a longer list
+    than the truth.
+    """
+    if ctx.xref is None:
+        return ctx.cannot_evaluate(
+            "external-value-source", "no cross-reference database",
+            "gx3-cli xref build --root <project>")
+    try:
+        edges = ctx.xref.execute(
+            "select source_device, destination_device, opcode, pou, step, lddb, pos, "
+            "source_comment from data_flow order by source_device"
+        ).fetchall()
+    except sqlite3.Error:
+        return ctx.cannot_evaluate(
+            "external-value-source", "this cross-reference holds no value-flow edges",
+            "gx3-cli xref build --root <project>")
+
+    refresh_areas = ctx.refresh_areas()
+    if refresh_areas is None:
+        return ctx.cannot_evaluate(
+            "external-value-source",
+            "no communication refresh areas; a refreshed device would be reported as unexplained",
+            "gx3-cli comm-refresh --root <project>")
+
+    written = {
+        str(row["device"])
+        for row in ctx.xref.execute(
+            "select distinct device from xref where access in ('write', 'both')"
+        )
+    }
+
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for edge in edges:
+        source = str(edge["source_device"])
+        if source in written or source in seen:
+            continue
+        parsed = split_device(source)
+        if parsed is None:
+            continue  # a label or a buffer reference, not a plain device
+        dev_type, number = parsed
+        if dev_type == "U" or source.startswith("U"):
+            continue  # module buffer memory: the module writes it
+        if refresh_area_for(dev_type, number, refresh_areas) is not None:
+            continue
+        seen.add(source)
+        out.append(
+            {
+                "check": "external-value-source",
+                "severity": "info",
+                "device": source,
+                "comment": str(edge["source_comment"] or ""),
+                "count": 1,
+                "locations": f"{edge['pou'] or edge['lddb']}:st{edge['step']}:{edge['opcode']}"
+                f" -> {edge['destination_device']}",
+                "detail": "no rung writes this word; its value comes from outside the ladder",
+                "review_note": (
+                    "confirm the writer: HMI, module, network partner, file register or a "
+                    "retained value. This is a boundary, not a fault."
+                ),
+            }
+        )
+    out.sort(key=lambda item: str(item["device"]))
     return out
 
 
@@ -936,6 +1084,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xref-db", default=None, help="xref sqlite path (default: .gx3_index/<project>_xref.sqlite)")
     parser.add_argument("--index-db", default=None, help="lite index sqlite path (default: .gx3_index/<project>.sqlite)")
     parser.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="link-map sqlite path for link-range check")
+    parser.add_argument(
+        "--refresh-csv", default="",
+        help="communication refresh areas CSV; without it the external-value-source "
+             "check cannot tell a refreshed device from an unexplained one and does not run",
+    )
     parser.add_argument("--out-prefix", default=default_output_prefix("lint"), help="output CSV/JSON prefix")
     parser.add_argument("--list-checks", action="store_true", help="list available checks and exit")
     parser.add_argument("--format", choices=["text", "json"], default="text", help="stdout format")
@@ -972,6 +1125,11 @@ def main(argv: list[str] | None = None) -> int:
         xref_path = Path(args.xref_db) if args.xref_db else xref_db_path(root)
         lite_path = Path(args.index_db) if args.index_db else Path(lite_db_path(root))
         link_path = Path(args.link_db) if args.link_db else Path()
+        refresh_path = (
+            Path(args.refresh_csv)
+            if args.refresh_csv
+            else Path("outputs") / f"{default_comm_prefix()}_refresh_areas.csv"
+        )
         ctx = LintContext(
             root=root,
             rows=rows,
@@ -980,6 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
             lite=open_optional(lite_path),
             link=open_optional(link_path) if link_path else None,
             project_label=project_label_from_root(root),
+            refresh_csv=str(refresh_path),
         )
 
         print(f"rows={len(rows)} xref={'ok' if ctx.xref else 'missing'} index={'ok' if ctx.lite else 'missing'} link={'ok' if ctx.link else 'missing'}")
