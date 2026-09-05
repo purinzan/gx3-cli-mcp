@@ -23,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from gx3cli.gx3_device_name import split_device
+from gx3cli.gx3_device_name import format_device, split_device
 
 
 SAME_RUNG = "same-rung"
@@ -118,7 +118,8 @@ def successors(
     rows = con.execute(
         f"""
         select distinct w.device as device, w.comment as comment, w.pou as pou,
-               w.step as step, w.role as role
+               w.step as step, w.role as role, w.device_type as device_type,
+               w.number as number, w.range_len as range_len
         from xref r join xref w on r.lddb = w.lddb and r.pos = w.pos
         where {match} and r.access in ({','.join('?' * len(read_access))})
           and w.access in (?, ?) and w.device <> r.device
@@ -131,7 +132,8 @@ def successors(
         for row in con.execute(
             """
             select f.destination_device as device, f.destination_comment as comment,
-                   f.pou as pou, f.step as step, f.opcode as role
+                   f.pou as pou, f.step as step, f.opcode as role,
+                   '' as device_type, 0 as number, f.range_count as range_len
             from data_flow f where f.source_device = ?
             """,
             (device,),
@@ -153,6 +155,37 @@ def successors(
     for name, row in flow.items():
         out.append((row, f"via {row['role']}"))
     return out
+
+
+def run_members(row: Any) -> list[str]:
+    """The devices a write covers beyond the one it names.
+
+    A block instruction records the first device of the run and its length.
+    The rest of the run is written just as truly, and is not in the answer
+    unless it is spelled out.
+    """
+    try:
+        length = int(row["range_len"] or 1)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return []
+    if length <= 1:
+        return []
+
+    dev_type = ""
+    number = 0
+    try:
+        dev_type = str(row["device_type"] or "")
+        number = int(row["number"] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        dev_type = ""
+    if not dev_type:
+        # A value-flow edge stores the destination by name only. The name is
+        # enough: the run starts at that device.
+        parsed = split_device(str(row["device"] or ""))
+        if parsed is None:
+            return []
+        dev_type, number = parsed
+    return [format_device(dev_type, number + offset) for offset in range(1, length)]
 
 
 def reach(
@@ -206,6 +239,17 @@ def reach(
                 )
             )
             frontier.append((name, depth + 1))
+
+            # A write that covers a run reaches every device in it, and the
+            # walk continues from all of them: `BMOV .. D400 K4` writes D400
+            # through D403, and whatever reads D401 is downstream of the rung
+            # that changed. Following only the named device stops one hop
+            # short of the thing the reader is looking for.
+            for member in run_members(row):
+                if member in seen:
+                    continue
+                seen.add(member)
+                frontier.append((member, depth + 1))
         if "max-nodes" in result.stopped:
             break
     return result

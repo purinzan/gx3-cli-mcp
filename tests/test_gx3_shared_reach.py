@@ -257,6 +257,78 @@ def test_a_constant_run_stays_settled() -> None:
         assert state.stage != SEMANTICS, state
 
 
+def test_the_specimen_from_the_issue_passes_unaltered() -> None:
+    """`BMOV D300 D400 K4` then `MOV D401 D900`, asked about D301.
+
+    No hand-written rows: the instruction is decoded, the cross-reference is
+    built from it, and the walk starts at a device that appears nowhere in the
+    program text. Every hop of this was missing at some point -- the source run
+    was not recorded, the walk matched names only, and a write covering a run
+    was followed one device wide.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "p", [("_guid/b", BMOV), ("_guid/m", MOV_FROM_MIDDLE)])
+        db = build_xref(work / "p", work / "x.sqlite")
+
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            for start in ("D300", "D301", "D302", "D303"):
+                reached = {step.device for step in reach(con, start, 4, 50).steps}
+                assert "D900" in reached, (start, reached)
+            # One past the end of the run is not in it.
+            assert "D900" not in {step.device for step in reach(con, "D304", 4, 50).steps}
+        finally:
+            con.close()
+
+
+def test_a_fill_does_not_get_its_source_expanded() -> None:
+    """FMOV repeats one word; BMOV copies a run. Same operand spelling.
+
+    The rule is per instruction for exactly this reason, and the test is here
+    so that a later "simplification" that keys on the operand shape fails
+    rather than quietly inventing reads for every fill in a project.
+    """
+    from gx3cli.gx3_arg_decode import parse_row_occurrences
+
+    fill = rung("FMOV:D:D:K_1", "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:c{s=#:v=4}")
+    copy = rung("BMOV:D:D:K_1", "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:c{s=#:v=4}")
+
+    def spans(data: str) -> dict[str, tuple[str, int]]:
+        operations, _ = parse_row_occurrences(data)
+        return {
+            occ.device: (occ.access, occ.range_len)
+            for operation in operations
+            for occ in operation[2]
+            if occ.device.startswith("D")
+        }
+
+    assert spans(copy)["D300"] == ("read", 4), spans(copy)
+    assert spans(fill)["D300"] == ("read", 1), spans(fill)
+    # Both write a run of four; only the copy reads one.
+    assert spans(copy)["D400"] == ("write", 4), spans(copy)
+    assert spans(fill)["D400"] == ("write", 4), spans(fill)
+
+
+def test_a_write_covering_a_run_is_followed_across_the_whole_run() -> None:
+    # The walk added the device the instruction names and stopped there, so a
+    # reader of the second word of a block write was one hop out of view.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "p", [("_guid/b", BMOV), ("_guid/m", MOV_FROM_MIDDLE)])
+        db = build_xref(work / "p", work / "x.sqlite")
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            steps = reach(con, "D300", 4, 50).steps
+        finally:
+            con.close()
+        by_device = {step.device: step for step in steps}
+        assert "D900" in by_device, by_device
+        assert by_device["D900"].source == "D401", by_device["D900"].source
+
+
 def test_the_walk_matches_a_device_inside_a_recorded_run() -> None:
     """Asking about the middle of a run finds the rung that covers it.
 
@@ -264,12 +336,10 @@ def test_the_walk_matches_a_device_inside_a_recorded_run() -> None:
     matching on the name alone answers "nothing uses D301" about a device a
     rung reads every scan.
 
-    The row here is written by hand because the builder does not currently
-    record a run on the reading side: `BMOV (s) (d) (n)` copies a run from (s),
-    and `FMOV (s) (d) (n)` fills from a single (s), and the manual data in this
-    repository spells both as ("(s)", "(d)", "(n)"). Which of the two an
-    instruction is cannot be told from what we have, so it is not guessed. The
-    walk is ready for those rows; nothing produces them yet.
+    The row here is written by hand on purpose: it pins the walk's own contract
+    -- match a run wherever one is recorded -- independently of which
+    instructions record one. Real BMOV rows now exercise the same path, in the
+    test above.
     """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -315,6 +385,9 @@ def main() -> int:
     test_a_transfer_outranks_sharing_a_rung_as_the_basis()
     test_a_run_whose_length_lives_in_a_device_is_not_treated_as_settled()
     test_a_constant_run_stays_settled()
+    test_the_specimen_from_the_issue_passes_unaltered()
+    test_a_fill_does_not_get_its_source_expanded()
+    test_a_write_covering_a_run_is_followed_across_the_whole_run()
     test_the_walk_matches_a_device_inside_a_recorded_run()
     print("shared reach checks passed")
     return 0
