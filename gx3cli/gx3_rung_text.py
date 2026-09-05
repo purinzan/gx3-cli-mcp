@@ -101,8 +101,21 @@ def written_devices(element: FlowElement) -> list[str]:
     opcode = (element.opcode or "").strip()
     if not opcode or not devices:
         return []
-    indices, _rmw = write_indices(opcode, len(devices))
+    # The write positions are operand positions. Passing len(devices) asked
+    # the manuals about an instruction with fewer operands than this one has,
+    # and the index then landed on a source: a "D+ D32706 D37426 D32706" was
+    # reported as driving D37426, which it reads.
+    argc = element.argc or len(devices)
+    indices, _rmw = write_indices(opcode, argc)
     if not indices:
+        return []
+    refs = element.devices
+    named = [ref.device for ref in refs if ref.arg_index in indices]
+    if named:
+        return named
+    if argc != len(devices):
+        # The operand at that position is a constant, or the device list has
+        # been collapsed; naming one by position here would be a guess.
         return []
     return [devices[i] for i in sorted(indices) if i < len(devices)]
 

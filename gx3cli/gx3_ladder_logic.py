@@ -4,7 +4,7 @@ import json
 import re
 from copy import deepcopy
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +74,11 @@ class FlowElement:
     ct_code: str = ""
     devices: list[DeviceRef] = field(default_factory=list)
     constants: list[str] = field(default_factory=list)
+    # How many operands the instruction takes. The device list is not the
+    # operand list -- a constant contributes no device and one device can be
+    # two operands -- so anything indexing the manuals' write positions needs
+    # this rather than len(devices).
+    argc: int = 0
 
     @property
     def is_wire(self) -> bool:
@@ -196,14 +201,24 @@ def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
             continue
         refs.append(DeviceRef(arg.device, arg.device_type, arg.number, access=arg.access, arg_index=arg.arg_index))
 
-    seen: set[str] = set()
+    # One device can be several operands of one instruction: D+ D32706 D37426
+    # D32706 reads D32706 and writes it. Keeping the first reference and
+    # dropping the rest lost the write, so the element looked like it wrote
+    # nothing and rung-text fell back to naming an operand by position -- and
+    # named a source as the driven device.
     unique: list[DeviceRef] = []
+    position: dict[str, int] = {}
     for ref in refs:
         key = ref.display
-        if key in seen:
+        at = position.get(key)
+        if at is None:
+            position[key] = len(unique)
+            unique.append(ref)
             continue
-        unique.append(ref)
-        seen.add(key)
+        first = unique[at]
+        if ref.access and ref.access != first.access:
+            merged = "both" if {first.access, ref.access} <= {"read", "write", "both"} else ref.access
+            unique[at] = replace(first, access=merged)
     return unique
 
 
@@ -250,6 +265,7 @@ def positioned_elements(
                 ct_code=str(meta.get("ct_code", "")),
                 devices=devices,
                 constants=[f"K{value}" for _, value in sorted(operation.constant_values.items())][:3],
+                argc=operation.argc,
             )
         )
         op_index += 1
