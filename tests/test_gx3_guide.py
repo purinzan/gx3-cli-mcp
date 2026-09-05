@@ -32,7 +32,7 @@ def test_a_ladder_project_is_told_to_build_the_cross_reference_first() -> None:
         commands = _commands(root)
         assert commands[0] == "doctor"
         # Most commands read the cross-reference, so it comes before them.
-        assert commands.index("xref build") < commands.index("lint")
+        assert commands.index("workspace --prepare") < commands.index("lint")
         assert "metrics" in commands
         assert "rung-text" in commands
 
