@@ -29,6 +29,7 @@ from pathlib import Path
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
+from gx3cli.gx3_device_name import split_device
 from gx3cli.gx3_xref import default_db_path, open_xref_db
 
 
@@ -60,6 +61,35 @@ def load_external_devices(path: Path) -> dict[str, str]:
     return out
 
 
+def runs_read_by_the_program(con) -> dict[str, list[tuple[int, int]]]:
+    """The runs the program reads, by device type.
+
+    A block instruction or a digit specification reaches devices the ladder
+    never names: K8L12800 compares L12800 through L12831, and L12821 is one of
+    them. Counting reads per device name reported L12821 as written but never
+    read, when a comparison reads it every scan.
+    """
+    runs: dict[str, list[tuple[int, int]]] = {}
+    try:
+        rows = con.execute(
+            "select device_type, number, range_len from xref"
+            " where range_len > 1 and access in ('read', 'both')"
+        ).fetchall()
+    except Exception:
+        return {}
+    for row in rows:
+        runs.setdefault(str(row["device_type"]), []).append((int(row["number"]), int(row["range_len"])))
+    return runs
+
+
+def read_by_a_run(runs: dict[str, list[tuple[int, int]]], device_type: str, device: str) -> bool:
+    parsed = split_device(device)
+    if parsed is None:
+        return False
+    number = parsed[1]
+    return any(start <= number < start + length for start, length in runs.get(device_type, ()))
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     refresh_areas = load_refresh_areas(refresh_csv)
     print(f"network refresh areas loaded: {len(refresh_areas)} ({refresh_csv})")
     refreshed_skipped = 0
+    covered_by_run = 0
 
     def in_refresh(device_type: str, device: str) -> bool:
         m = re.match(r"^[A-Z]+(\d+)$", device)
@@ -110,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         """
     ):
         stats[r["device"]] = dict(r)
+
+    # A block instruction or a digit specification reaches devices the ladder
+    # never names: K8L12800 compares L12800 through L12831, and L12821 is one
+    # of them. Counting reads per device name reported it as written but never
+    # read, when a comparison reads it every scan.
+    read_runs = runs_read_by_the_program(con)
 
     findings: list[dict[str, object]] = []
 
@@ -190,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
     for device, s in sorted(stats.items()):
         if s["reads"] or s["refs"]:
             continue
+        if read_by_a_run(read_runs, str(s["device_type"]), device):
+            covered_by_run += 1
+            continue
         if device in externals:
             continue
         if s["writes"] and in_refresh(s["device_type"], device):
@@ -255,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             w.writerow(row)
     print(f"\ntotal findings: {len(findings)}")
     print(f"devices skipped as network-refreshed (visible to remote stations): {refreshed_skipped}")
+    print(f"devices read only as part of a block or digit-specified run: {covered_by_run}")
     print(f"csv: {out}")
     con.close()
     return 0
