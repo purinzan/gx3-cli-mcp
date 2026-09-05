@@ -25,6 +25,7 @@ from typing import Any
 
 from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_workspace import locate
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class Evidence:
     hmi: bool = False
     index_built: bool = False
     xref_built: bool = False
+    index_note: str = ""
 
 
 def gather(root: Path) -> Evidence:
@@ -77,11 +79,14 @@ def gather(root: Path) -> Evidence:
     evidence.motion = any_suffix(".iut")
     evidence.hmi = any_suffix(".gtx")
 
-    index_dir = root.parent / ".gx3_index"
-    if index_dir.is_dir():
-        stems = [p.name.lower() for p in index_dir.iterdir()]
-        evidence.index_built = any("index" in n for n in stems)
-        evidence.xref_built = any("xref" in n for n in stems)
+    # An index next to the project, one in the current directory and one built
+    # by an older version are three different answers to "is it built". The
+    # workspace knows which file a command would actually read, and whether it
+    # was built from this input -- a stale one is not "built" for this purpose.
+    workspace = locate(root)
+    evidence.index_built = workspace.index.usable
+    evidence.xref_built = workspace.xref.usable
+    evidence.index_note = workspace.xref.detail if not workspace.xref.usable else ""
     return evidence
 
 
@@ -96,7 +101,8 @@ def suggest(evidence: Evidence) -> list[Suggestion]:
     if evidence.ladder_dbs:
         rungs = f"{evidence.ladder_dbs} ladder program(s)"
         if not evidence.xref_built:
-            add("xref build", f"{rungs} and no cross-reference yet; most commands need it", 1)
+            why = evidence.index_note or "no cross-reference yet"
+            add("workspace --prepare", f"{rungs}, {why}; most commands need one", 1)
         add("metrics", f"{rungs}: size per program, and where the logic is concentrated", 2)
         add("rung-text", "read the whole program as one line per rung", 3)
         add("lint", "static checks over the rungs: coils, writers, widths, operand types", 4)
@@ -149,7 +155,7 @@ def render(evidence: Evidence, suggestions: list[Suggestion]) -> list[str]:
         ("parameters", evidence.parameters or ""),
         ("motion", "yes" if evidence.motion else ""),
         ("HMI", "yes" if evidence.hmi else ""),
-        ("cross-reference", "built" if evidence.xref_built else "not built"),
+        ("cross-reference", "built" if evidence.xref_built else (evidence.index_note or "not built")),
     ]
     found = [(name, value) for name, value in seen if value != ""]
     if found:
@@ -184,6 +190,7 @@ def to_json(evidence: Evidence, suggestions: list[Suggestion]) -> dict[str, Any]
             "hmi": evidence.hmi,
             "index_built": evidence.index_built,
             "xref_built": evidence.xref_built,
+            "index_note": evidence.index_note,
         },
         "suggestions": [
             {"command": s.command, "reason": s.reason, "order": s.order} for s in suggestions
