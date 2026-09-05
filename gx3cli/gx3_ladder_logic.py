@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -315,6 +316,101 @@ def logic_key(node: dict[str, Any]) -> str:
     return json.dumps(node, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+# A node's identity, for telling two branches apart. `logic_key` serialises the
+# whole subtree, and and_logic/or_logic ask for it at every level while the
+# tree is built from the bottom up, so the same leaves get serialised once per
+# ancestor: on one real rung that came to 185MB of JSON and 12.7 seconds, and
+# `logic_key` was 73% of the time taken to read a program.
+#
+# A digest built from the children's digests costs each node only its own
+# fields, so the whole tree is one pass. Nodes are never changed after they are
+# constructed, which is what makes an identity cache sound here; the node is
+# kept in the cache beside its digest so its id cannot be reused while the
+# entry stands.
+_DIGEST_CACHE: dict[int, tuple[dict[str, Any], str]] = {}
+_DIGEST_CACHE_LIMIT = 200_000
+
+
+def reset_logic_ids() -> None:
+    _DIGEST_CACHE.clear()
+    _SIZE_CACHE.clear()
+
+
+def logic_id(node: dict[str, Any]) -> str:
+    """A short, stable identity for a logic node, equal for equal structures."""
+    cached = _DIGEST_CACHE.get(id(node))
+    if cached is not None and cached[0] is node:
+        return cached[1]
+
+    args = node.get("args")
+    if isinstance(args, list):
+        rest = json.dumps(
+            {key: value for key, value in node.items() if key != "args"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        material = rest + "|" + "|".join(logic_id(child) for child in args)
+    else:
+        material = logic_key(node)
+    digest = hashlib.blake2b(material.encode("utf-8"), digest_size=16).hexdigest()
+
+    if len(_DIGEST_CACHE) >= _DIGEST_CACHE_LIMIT:
+        # Bounded rather than unbounded: a wrong answer is impossible either
+        # way, and a run over a whole project should not hold every node it
+        # has ever seen.
+        _DIGEST_CACHE.clear()
+    _DIGEST_CACHE[id(node)] = (node, digest)
+    return digest
+
+
+# How many nodes one rung's condition may grow to before this stops building
+# it. A rung in a real project produced 33,554,427 nodes -- 2^25, the shape of
+# a combinatorial expansion, not of a condition anyone wrote -- and took 146
+# seconds, while the other 6,000 rungs of that project took 23 seconds
+# together. Past this point the expression is not something a person is going
+# to read anyway; what they need is to be told that, and where to look.
+MAX_LOGIC_NODES = 20_000
+
+_SIZE_CACHE: dict[int, tuple[dict[str, Any], int]] = {}
+
+
+def logic_size(node: dict[str, Any]) -> int:
+    """How many nodes this subtree holds, counted once per node."""
+    cached = _SIZE_CACHE.get(id(node))
+    if cached is not None and cached[0] is node:
+        return cached[1]
+    args = node.get("args")
+    size = 1 + sum(logic_size(child) for child in args) if isinstance(args, list) else 1
+    if len(_SIZE_CACHE) >= _DIGEST_CACHE_LIMIT:
+        _SIZE_CACHE.clear()
+    _SIZE_CACHE[id(node)] = (node, size)
+    return size
+
+
+def logic_too_large(size: int) -> dict[str, Any]:
+    """A condition this refused to keep expanding, and said so in its place."""
+    return {
+        "op": "too_large",
+        "reason": f"the expanded condition passed {MAX_LOGIC_NODES} terms ({size})",
+        "next_step": "read the rung itself: gx3-cli ladder-print / ladder-report",
+    }
+
+
+def is_too_large(node: dict[str, Any]) -> bool:
+    return node.get("op") == "too_large"
+
+
+def _within_budget(unique: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The marker node, if joining these would pass the budget."""
+    total = 1
+    for node in unique:
+        if is_too_large(node):
+            return node
+        total += logic_size(node)
+        if total > MAX_LOGIC_NODES:
+            return logic_too_large(total)
+    return None
+
+
 def and_logic(nodes: list[dict[str, Any]]) -> dict[str, Any]:
     flattened: list[dict[str, Any]] = []
     for node in nodes:
@@ -330,7 +426,7 @@ def and_logic(nodes: list[dict[str, Any]]) -> dict[str, Any]:
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for node in flattened:
-        key = logic_key(node)
+        key = logic_id(node)
         if key in seen:
             continue
         unique.append(node)
@@ -339,6 +435,9 @@ def and_logic(nodes: list[dict[str, Any]]) -> dict[str, Any]:
         return logic_true()
     if len(unique) == 1:
         return unique[0]
+    oversized = _within_budget(unique)
+    if oversized is not None:
+        return oversized
     return {"op": "and", "args": unique}
 
 
@@ -357,7 +456,7 @@ def or_logic(nodes: list[dict[str, Any]]) -> dict[str, Any]:
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for node in flattened:
-        key = logic_key(node)
+        key = logic_id(node)
         if key in seen:
             continue
         unique.append(node)
@@ -366,6 +465,9 @@ def or_logic(nodes: list[dict[str, Any]]) -> dict[str, Any]:
         return logic_false()
     if len(unique) == 1:
         return unique[0]
+    oversized = _within_budget(unique)
+    if oversized is not None:
+        return oversized
     return {"op": "or", "args": unique}
 
 
@@ -643,6 +745,8 @@ def logic_to_text(node: dict[str, Any]) -> str:
         operands.extend(str(value) for value in node.get("constants", []))
         operands.extend(str(ref.get("device", ref.get("raw_device", ""))) for ref in node.get("devices", []))
         return f"[{opcode} {' '.join(operands)}]".strip()
+    if op == "too_large":
+        return "[TOO LARGE]"
     if op == "unknown":
         label = str(node.get("opcode") or node.get("role") or node.get("kind") or "unknown")
         return f"[UNKNOWN {label}]"
@@ -707,7 +811,14 @@ def condition_refs_from_logic(node: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def logic_stats(node: dict[str, Any]) -> dict[str, int]:
-    stats = {"contacts": 0, "predicates": 0, "and_nodes": 0, "or_nodes": 0, "unknowns": 0}
+    stats = {
+        "contacts": 0, "predicates": 0, "and_nodes": 0, "or_nodes": 0,
+        "unknowns": 0,
+        # A condition this stopped expanding. Counted, because a caller that
+        # reads the refs below it would otherwise see a shorter condition and
+        # have no way to know it was cut.
+        "too_large": 0,
+    }
 
     def visit(current: dict[str, Any]) -> None:
         op = current.get("op")
@@ -717,6 +828,8 @@ def logic_stats(node: dict[str, Any]) -> dict[str, int]:
             stats["predicates"] += 1
         elif op == "unknown":
             stats["unknowns"] += 1
+        elif op == "too_large":
+            stats["too_large"] += 1
         elif op == "and":
             stats["and_nodes"] += 1
             for child in current.get("args", []):
