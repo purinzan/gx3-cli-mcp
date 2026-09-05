@@ -269,6 +269,50 @@ def test_a_reach_that_stopped_at_a_limit_is_not_called_checked() -> None:
         assert deep_state.state == CHECKED, deep_state
 
 
+def test_a_limit_that_hid_nothing_is_not_reported() -> None:
+    """Exactly at the limit, with everything found, is a complete answer.
+
+    The first fix for the opposite bug over-corrected: any walk that touched
+    the depth number was called truncated, so M100 -> M200 -> M300 at depth 2 --
+    which finds every device there is -- claimed to be missing something. A
+    reader who sees "truncated" on complete answers stops reading the word,
+    which costs exactly what the original silence cost.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        old, new = two_versions(
+            work,
+            [
+                ("_guid/one", coil("b", 1, 100)),
+                ("_guid/two", coil("a", 100, 200)),
+                ("_guid/three", coil("a", 200, 300)),
+            ],
+        )
+        db = xref_for(new, work / "x.sqlite")
+
+        # Two devices are reachable, and the walk is two deep.
+        for depth in (2, 3, 4):
+            changes = collect_changes(old, new, include_comments=False)
+            state = attach_reach(changes, db, max_depth=depth, max_nodes=50)
+            reached = {
+                item["device"]
+                for change in changes
+                for item in change.reaches
+            }
+            assert reached == {"M200", "M300"}, (depth, reached)
+            assert state.state == CHECKED, (depth, state)
+
+        # And the node limit, exactly on the number that fits.
+        for nodes in (2, 3):
+            changes = collect_changes(old, new, include_comments=False)
+            state = attach_reach(changes, db, max_depth=9, max_nodes=nodes)
+            assert state.state == CHECKED, (nodes, state)
+
+        changes = collect_changes(old, new, include_comments=False)
+        state = attach_reach(changes, db, max_depth=9, max_nodes=1)
+        assert state.state == TRUNCATED, state
+
+
 def test_a_node_limit_is_reported_the_same_way() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -313,6 +357,7 @@ def main() -> int:
     test_the_output_calls_the_reach_candidates()
     test_written_devices_follows_the_decoder_on_what_was_read()
     test_a_reach_that_stopped_at_a_limit_is_not_called_checked()
+    test_a_limit_that_hid_nothing_is_not_reported()
     test_a_node_limit_is_reported_the_same_way()
     test_the_page_says_which_change_was_cut_short()
     print("change impact checks passed")

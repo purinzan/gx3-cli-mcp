@@ -106,19 +106,46 @@ def written_devices(data: str) -> tuple[list[str], bool]:
     return devices, status != "exact"
 
 
+def successors(con: sqlite3.Connection, device: str, has_flow: bool) -> list[tuple[Any, str]]:
+    """Everything one device leads to: same-rung writes, and value transfers."""
+    rows = con.execute(
+        """
+        select distinct w.device as device, w.comment as comment, w.pou as pou,
+               w.step as step, w.role as role
+        from xref r join xref w on r.lddb = w.lddb and r.pos = w.pos
+        where r.device = ? and r.access in ('read', 'ref', 'both')
+          and w.access in ('write', 'both') and w.device <> r.device
+        """,
+        (device,),
+    ).fetchall()
+    out: list[tuple[Any, str]] = [(row, "same-rung") for row in rows]
+    if has_flow:
+        for row in con.execute(
+            """
+            select f.destination_device as device, f.destination_comment as comment,
+                   f.pou as pou, f.step as step, f.opcode as role
+            from data_flow f where f.source_device = ?
+            """,
+            (device,),
+        ):
+            out.append((row, f"via {row['role']}"))
+    return out
+
+
 def reach_of(
     con: sqlite3.Connection, device: str, max_depth: int, max_nodes: int
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    """Devices the given one can reach, and the limits that stopped the walk.
+    """Devices the given one can reach, and the limits that cost it something.
 
     Static candidates. A device is here because something that reads the one
     before it writes this, which is what the saved file supports and no more.
 
-    The limits are returned rather than swallowed. A walk that stopped at
-    max-depth has not shown what the change reaches; it has shown what it
-    reaches within that depth, and the two read identically unless the
-    difference is stated. M100 -> M200 -> M300 at depth 1 loses M300, and
-    reporting that as a complete answer is the failure this returns for.
+    A limit is reported only when it actually hid something. Reaching the last
+    depth and finding nothing beyond it is a complete answer, not a truncated
+    one, and saying "truncated" there trains a reader to ignore the word --
+    which costs exactly as much as the silence it replaced. So a node at the
+    depth limit is asked whether it leads anywhere unseen, and the answer, not
+    the arithmetic, decides.
     """
     seen = {device}
     out: list[dict[str, Any]] = []
@@ -129,38 +156,25 @@ def reach_of(
             "select count(*) from sqlite_master where type='table' and name='data_flow'"
         ).fetchone()[0]
     )
-    while frontier and len(out) < max_nodes:
+    while frontier:
         current, depth = frontier.pop(0)
-        if depth >= max_depth:
-            # There was somewhere further to go and the depth stopped it.
-            stopped.add("max-depth")
-            continue
-        rows = con.execute(
-            """
-            select distinct w.device as device, w.comment as comment, w.pou as pou,
-                   w.step as step, w.role as role
-            from xref r join xref w on r.lddb = w.lddb and r.pos = w.pos
-            where r.device = ? and r.access in ('read', 'ref', 'both')
-              and w.access in ('write', 'both') and w.device <> r.device
-            """,
-            (current,),
-        ).fetchall()
-        candidates = [(row, "same-rung") for row in rows]
-        if has_flow:
-            for row in con.execute(
-                """
-                select f.destination_device as device, f.destination_comment as comment,
-                       f.pou as pou, f.step as step, f.opcode as role
-                from data_flow f where f.source_device = ?
-                """,
-                (current,),
-            ):
-                candidates.append((row, f"via {row['role']}"))
+        candidates = successors(con, current, has_flow)
+        unseen = [(row, basis) for row, basis in candidates if str(row["device"]) not in seen]
 
-        for row, basis in candidates:
+        if depth >= max_depth:
+            # The walk ends here. Whether that lost anything is a question
+            # about this node, not about the depth number.
+            if unseen:
+                stopped.add("max-depth")
+            continue
+
+        for row, basis in unseen:
             name = str(row["device"])
             if name in seen:
-                continue
+                continue  # an earlier sibling in this same batch reached it
+            if len(out) >= max_nodes:
+                stopped.add("max-nodes")
+                break
             seen.add(name)
             out.append(
                 {
@@ -174,11 +188,8 @@ def reach_of(
                 }
             )
             frontier.append((name, depth + 1))
-            if len(out) >= max_nodes:
-                stopped.add("max-nodes")
-                break
-    if frontier and len(out) >= max_nodes:
-        stopped.add("max-nodes")
+        if "max-nodes" in stopped:
+            break
     return out, stopped
 
 
