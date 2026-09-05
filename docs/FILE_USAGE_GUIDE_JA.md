@@ -49,6 +49,7 @@
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
 | `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
+| `test_gx3_explore.py` | 4つの入口が揃っていること、実行できなかった項目・時間切れの項目が黙って抜けず終了コードにも出ること、相対パスの `--root` が届くことを検査する。 |
 | `test_gx3_workspace.py` | 索引が「どこにあるか」ではなく「どの入力から作られたか」で判定されること、別ディレクトリで作った索引を見つけて重複作成しないこと、編集後・旧版の索引を再利用しないことを検査する。 |
 | `test_gx3_same_input_across_artefacts.py` | xref・調査パッケージ・通信CSV の3成果物が同じ入力指紋を持ち、途中で編集された場合は一致しなくなることを検査する。「論理とコメントと通信設定が同じ入力からか」を確認できる状態を保つ。 |
 | `test_gx3_identity_reach.py` | index-lite と project-survey も入力指紋を記録し、別プロジェクトの索引を拒否すること、root 未指定の呼び出しは従来通り動くことを検査する。 |
@@ -101,6 +102,7 @@
 | `gx3_mcp_server.py` | `gx3-mcp-server` | MCP 本体 | AI クライアントから GX3 解析 tool を呼ぶ。 |
 | `gx3_cli.py` | `gx3-cli` | `gx3_run_command` | CLI dispatcher、help/list、query 系ラッパー。 |
 | `gx3_doctor.py` | `doctor` | `gx3_run_command` | 解析対象、index、xref DB、link-map の状態確認。 |
+| `gx3_explore.py` | `explore` | `gx3_run_command` | 目的別の4つの入口（overview / why / concerns / changed）。新しい解析はせず、索引を自動準備して既存コマンドを問いに沿った順で実行し、共通のヘッダ（対象・入力指紋）の下にまとめる。時間切れの項目は「取得できなかった」ではなく「終わらなかった」と区別して報告する。 |
 | `gx3_workspace.py` | `workspace` | `gx3_run_command` | 索引と xref の置き場所と再利用可否を一箇所で判断する。入力指紋・格納版・解析器版が一致するものだけを「使える」とし、作業ディレクトリが変わっても既存の索引を見つける。 |
 | `gx3_index_lite.py` | `index-lite`, `query-device`, `query-comment`, `query-external`, `query-cycle`, `device-map` | `gx3_run_command`, `gx3_device_map` | SQLite-first 検索の中核。 |
 | `gx3_xref.py` | `xref` | `gx3_xref_where_used`, `gx3_run_command` | writer/reader、下流影響、CSV export。 |

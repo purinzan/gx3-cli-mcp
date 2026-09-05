@@ -799,7 +799,8 @@ def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
         return []
     head = "結果" if ja else "Result"
     nxt = "次の手順" if ja else "next"
-    out = ["", f"{head}: {analysis.get('label', '')} -- {analysis.get('reason', '')}".rstrip(" -")]
+    label = analysis.get("label_ja" if ja else "label", "") or analysis.get("label", "")
+    out = ["", f"{head}: {label} -- {analysis.get('reason', '')}".rstrip(" -")]
     if analysis.get("next_step"):
         out.append(f"  {nxt}: {analysis['next_step']}")
     out.append("")

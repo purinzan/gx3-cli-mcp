@@ -49,6 +49,23 @@ LABELS = {
     NO_MEASUREMENT: "no measured value; file only",
 }
 
+# The same six states, for readers who work in Japanese. A translation kept
+# beside the original rather than in whichever command happens to print it:
+# two commands wording "not evaluated" differently is how a reader learns to
+# skip the line.
+LABELS_JA = {
+    CHECKED: "対応範囲内で確認",
+    PARTIAL: "一部未解釈",
+    UNSUPPORTED: "未対応",
+    TRUNCATED: "探索打切り",
+    NOT_EVALUATED: "未評価",
+    NO_MEASUREMENT: "実測値なし（ファイルのみ）",
+}
+
+
+def label_for(state: str, ja: bool = False) -> str:
+    return (LABELS_JA if ja else LABELS)[state]
+
 
 @dataclass
 class AnalysisState:
@@ -69,7 +86,11 @@ class AnalysisState:
         return self.state == CHECKED
 
     def as_dict(self) -> dict[str, object]:
-        out: dict[str, object] = {"state": self.state, "label": LABELS[self.state]}
+        out: dict[str, object] = {
+            "state": self.state,
+            "label": LABELS[self.state],
+            "label_ja": LABELS_JA[self.state],
+        }
         if self.reason:
             out["reason"] = self.reason
         if self.next_step:
@@ -78,9 +99,9 @@ class AnalysisState:
             out["detail"] = dict(self.detail)
         return out
 
-    def line(self, subject: str = "") -> str:
+    def line(self, subject: str = "", ja: bool = False) -> str:
         head = f"{subject}: " if subject else ""
-        text = f"{head}{LABELS[self.state]}"
+        text = f"{head}{label_for(self.state, ja)}"
         if self.reason:
             text += f" -- {self.reason}"
         if self.next_step:
