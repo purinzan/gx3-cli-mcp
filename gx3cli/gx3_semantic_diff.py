@@ -4,8 +4,12 @@ from __future__ import annotations
 
 Rows are matched by their stable ``_guid/...`` block id, so moving a circuit
 does not show as a change. A changed row is classified as:
-- logic          op sequence or device/constant arguments differ
-- layout-only    identical logic, only drawing data differs (hidden by default)
+- logic          operands, wiring, execution metadata, or other row data differ
+- layout-only    only the outer canvas size differs (hidden by default)
+
+Comparison is conservative: moving elements or rerouting wires is reported
+even when it might preserve the Boolean function. Coordinates encode wiring,
+so they cannot be discarded as cosmetic without proving equivalence.
 
 Also reports POUs (LDDB files) added/removed and device-comment changes.
 
@@ -14,6 +18,7 @@ Inputs may be extracted folders or ``.gx3`` files (extracted to a temp dir).
 
 import argparse
 import csv
+import re
 import sqlite3
 import sys
 import tempfile
@@ -42,24 +47,14 @@ def ensure_root(path_text: str, tmp: list[tempfile.TemporaryDirectory]) -> Path:
 
 
 def logic_signature(data: str) -> str:
-    """Operation sequence + decoded arguments; ignores drawing/layout data."""
-    operations, status = parse_row_operations(data)
-    parts = [f"status={status}"]
-    for operation in operations:
-        arg_parts: list[str] = []
-        by_index: dict[int, list[str]] = {}
-        for occ in operation.args:
-            by_index.setdefault(occ.arg_index, []).append(occ.device)
-        for index, raw in enumerate(operation.raw_args):
-            if raw.startswith("c{"):
-                match = CONST_VALUE_RE.search(raw)
-                arg_parts.append(f"{index}:K{match.group(1) if match else '?'}")
-            elif index in by_index:
-                arg_parts.append(f"{index}:{'/'.join(sorted(by_index[index]))}")
-            else:
-                arg_parts.append(f"{index}:?")
-        parts.append(f"{operation.role}({','.join(arg_parts)})")
-    return "|".join(parts)
+    """Preserve everything except the known outer drawing extent.
+
+    Decoded operations alone lose vertical/horizontal wires, element positions,
+    ct execution flags, and unresolved operands. Equal decoded lists therefore
+    do not prove equivalent circuits. Keep raw data, including unknown fields,
+    and normalize only the canvas dimensions (not nested operand metadata).
+    """
+    return re.sub(r"(:cb\{fg=fg\{dim=)\d+x\d+(?=:)", r"\1<canvas>", data, count=1)
 
 
 def load_side(root: Path) -> tuple[dict[str, dict[str, tuple[int, str, str]]], dict[str, str]]:
@@ -119,7 +114,7 @@ def summarize_change(old_data: str, new_data: str) -> str:
         added = [x for x in n_args if x not in o_args]
         if removed or added:
             parts.append(f"args -{removed[:8]} +{added[:8]}")
-    return "; ".join(parts) or "argument order changed"
+    return "; ".join(parts) or "wiring, execution metadata, or raw operand data changed; review rung"
 
 
 def comment_map(root: Path) -> dict[str, str]:
