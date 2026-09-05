@@ -458,7 +458,15 @@ def build_trace(
                 queue.append((cond["device"], depth + 1, device))
 
     edge_counter = Counter(edge["condition_device"] for edge in edges)
-    partial_driver_rows = [row for row in driver_rows if row.get("parse_status") != "exact"]
+    # A row whose condition stopped expanding is as incomplete as one the
+    # decoder could not read: the conditions listed under it are fewer than the
+    # rung has, and nothing else in the answer would say so.
+    partial_driver_rows = [
+        row
+        for row in driver_rows
+        if row.get("parse_status") != "exact"
+        or int((row.get("logic_stats") or {}).get("too_large", 0)) > 0
+    ]
     return {
         "target": {
             "device": target,
