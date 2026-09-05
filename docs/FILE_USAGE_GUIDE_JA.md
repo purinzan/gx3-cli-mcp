@@ -58,6 +58,10 @@
 | `USER_MANUAL_JA.md` | 人間向けの基本操作、MCP 設定、主要コマンド。 |
 | `USER_MANUAL_EN.md` | 英語圏利用者向けのインストール、最初の3コマンド、主要ワークフロー。 |
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
+| `CONFIG_CPU_UNITS_JA.md` | CPU・ユニット構成・デバイスメモリ・ラベルの読み方。先頭I/O とバッファメモリ U 番号の対応、生パラメータファイルの場所を含む。 |
+| `CONFIG_NETWORK_JA.md` | IP・接続方法・CC-Link・リフレッシュエリアの読み方。confidence 列の意味と、リフレッシュを踏まえた dead-logic の使い方。 |
+| `CONFIG_MODULES_JA.md` | MES・レコーディング・データロギング・EtherNet/IP・シリアルの読み方。パラメータDB から変更済み設定を取り出す手順と、現状読めない範囲。 |
+| `CONFIG_MOTION_JA.md` | シンプルモーション RD77MS の読み方。公式 G ラベル付きバッファアクセスと、未解読の .iut 軸パラメータ。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
