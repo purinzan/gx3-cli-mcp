@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from gx3cli.gx3_device_name import format_device as _format_device
+from gx3cli.gx3_analysis_state import PARTIAL, AnalysisState, checked
 from gx3cli.extract_hmi_build_info import CommentInfo, DEVICE_CODE_BY_TYPE, comment_status
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPE_ALIASES,
@@ -883,9 +884,24 @@ def main() -> None:
         ],
     )
 
+    # Counts below are over the rows that were read. A row the decoder could
+    # not fully interpret contributes whatever it managed, and a report that
+    # only prints counts reads as though every row was understood.
+    partial_rows = [row for row in rows if row.parse_status != "exact"]
+    if partial_rows:
+        analysis = AnalysisState(
+            PARTIAL,
+            reason=f"{len(partial_rows)} of {len(rows)} rungs were not fully interpreted",
+            next_step="gx3-cli parse-gaps --root <project>",
+        )
+    else:
+        analysis = checked()
+
     summary = {
         "root": str(root),
+        "analysis": analysis.as_dict(),
         "rung_count": len(rows),
+        "partial_rung_count": len(partial_rows),
         "missing_device_comments": len(missing_comments),
         "duplicate_coils": len(duplicate_coils),
         "interlock_candidates": len(interlock_candidates),
@@ -909,6 +925,7 @@ def main() -> None:
                 "Static review summary",
                 "=====================",
                 f"root: {root}",
+                f"result: {analysis.line()}",
                 f"rung_count: {len(rows)}",
                 f"missing_device_comments: {len(missing_comments)}",
                 f"duplicate_coils: {len(duplicate_coils)}",

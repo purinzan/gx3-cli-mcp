@@ -36,6 +36,7 @@ from gx3cli.gx3_external_inputs import (
     RefreshArea,
     UnitIoArea,
 )
+from gx3cli.gx3_analysis_state import PARTIAL, TRUNCATED, AnalysisState, checked
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 
 
@@ -89,6 +90,34 @@ def project_label_from_root(root: Path) -> str:
 
 def device_key(device: str) -> tuple[str, int]:
     return parse_device(device)
+
+
+def trace_state(
+    truncated: bool, reasons: list[str], partial_rows: list
+) -> AnalysisState:
+    """What this trace is worth, in the words every command uses.
+
+    A trace that stopped at a depth limit has not shown where the condition
+    comes from; it has shown where looking stopped. A trace over a row the
+    decoder could not fully read is missing part of the condition. Either way
+    the list below it is not the whole answer, and saying so next to the answer
+    is the point -- "truncated=True" inside a stats line is not where a reader
+    looks.
+    """
+    if partial_rows:
+        return AnalysisState(
+            PARTIAL,
+            reason=f"{len(partial_rows)} driver rows were not fully interpreted",
+            next_step="gx3-cli parse-gaps --root <project>",
+        )
+    if truncated:
+        limit = ", ".join(reasons) or "a limit"
+        return AnalysisState(
+            TRUNCATED,
+            reason=f"the search stopped at {limit}",
+            next_step="raise --max-depth or --max-devices and run it again",
+        )
+    return checked()
 
 
 def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) -> str:
@@ -442,6 +471,7 @@ def build_trace(
         "strict_logic": strict_logic,
         "truncated": truncated,
         "truncated_reasons": sorted(truncated_reasons),
+        "analysis": trace_state(truncated, sorted(truncated_reasons), partial_driver_rows).as_dict(),
         "stats": {
             "devices_traced": len(devices),
             "driver_rows": len(driver_rows),
@@ -585,6 +615,15 @@ def format_text(trace: dict[str, Any]) -> str:
         f"truncated_reasons={','.join(trace.get('truncated_reasons', [])) or 'none'}, "
         f"strict_logic={trace.get('strict_logic', False)}"
     )
+    analysis = trace["analysis"]
+    if analysis["state"] != "checked":
+        # Above the answer, not inside a stats line: what follows is not the
+        # whole condition, and the reader has to know that before reading it.
+        lines.append("")
+        lines.append(f"Result: {analysis['label']} -- {analysis.get('reason', '')}")
+        if analysis.get("next_step"):
+            lines.append(f"  next: {analysis['next_step']}")
+        lines.append("")
     lines.append("Legend: a=ON required, b=OFF required, self=self-hold/self-reference, has-driver=upstream driver exists")
     if trace.get("strict_logic"):
         lines.append("Note: enable_logic is the topology-derived condition from the left rail to the target output.")
@@ -748,6 +787,25 @@ def format_row_summary(row: dict[str, Any]) -> str:
     return f"{row['lddb']}:{row['pos']} roles={effects}{parse} {title}".rstrip()
 
 
+def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
+    """Say what the trace is worth, before the conditions are read.
+
+    A trace that stopped at a limit has not shown where a condition comes from;
+    it has shown where looking stopped. "truncated=True" inside a stats line is
+    not where a reader looks for that.
+    """
+    analysis = trace.get("analysis") or {}
+    if not analysis or analysis.get("state") == "checked":
+        return []
+    head = "結果" if ja else "Result"
+    nxt = "次の手順" if ja else "next"
+    out = ["", f"{head}: {analysis.get('label', '')} -- {analysis.get('reason', '')}".rstrip(" -")]
+    if analysis.get("next_step"):
+        out.append(f"  {nxt}: {analysis['next_step']}")
+    out.append("")
+    return out
+
+
 def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: int = 30, ja: bool = False) -> str:
     label = compact_labels(ja)
     lines: list[str] = []
@@ -770,6 +828,7 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
     )
     if trace.get("truncated_reasons"):
         lines.append(f"{label['truncated']}: {', '.join(trace['truncated_reasons'])}")
+    lines.extend(state_lines(trace, ja))
     if trace["stats"].get("partial_driver_rows", 0):
         if ja:
             lines.append("Parse warning: partial解析の駆動行があります。条件/命令参照が不足する可能性があります。")
