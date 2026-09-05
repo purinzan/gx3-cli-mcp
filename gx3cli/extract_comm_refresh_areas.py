@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import csv
 import argparse
 import re
@@ -8,6 +9,8 @@ import struct
 from collections import Counter
 from pathlib import Path
 
+from gx3cli.gx3_input_identity import fingerprint
+from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root, find_comment_db
 from gx3cli.gx3_device_name import device_radix
 
@@ -73,9 +76,24 @@ def decode_utf16_view_array(value: bytes | None) -> str:
 
 
 def read_unit_config() -> dict[int, dict[str, object]]:
-    con = sqlite3.connect(UNIT_CONFIG)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
+    """The units, or none of them when the file is not one this can read.
+
+    A project without a readable UnitConfig.dat has no communication units to
+    report, which is a different thing from the command failing. It used to
+    raise sqlite3.DatabaseError, which the CLI then presented as an unsupported
+    GX Works3 format with a link to the parser-gap form.
+    """
+    if not Path(UNIT_CONFIG).exists():
+        print(f"  unit config not found: {UNIT_CONFIG}; no communication units reported")
+        return {}
+    try:
+        con = sqlite3.connect(UNIT_CONFIG)
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute("select count(*) from Object")
+    except sqlite3.DatabaseError as exc:
+        print(f"  unit config is not readable ({exc}); no communication units reported")
+        return {}
 
     units: dict[int, dict[str, object]] = {}
     for row in cur.execute("select * from Object order by ObjectID").fetchall():
@@ -460,6 +478,17 @@ def extract_ethernet_slmp_candidates() -> list[dict[str, object]]:
     return rows
 
 
+def write_manifest(path: Path, body: dict) -> None:
+    """Say which input the CSVs beside this file were made from.
+
+    A CSV has no room for provenance without changing its columns, and these
+    are read next to a cross-reference and a survey built from the same
+    project. The manifest is where the three can be checked against each other.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -622,6 +651,22 @@ def main(argv: list[str] | None = None) -> None:
         ],
     )
 
+    write_manifest(
+        OUT_SUMMARY.with_name(OUT_SUMMARY.stem.replace("_refresh_area_summary", "") + "_manifest.json"),
+        {
+            "root": str(ROOT),
+            "input_sha256": fingerprint(ROOT),
+            "analyzer_version": package_version(),
+            "outputs": [str(OUT_UNITS), str(OUT_AREAS), str(OUT_HINTS), str(OUT_SLMP), str(OUT_SUMMARY)],
+            "counts": {
+                "units": len(unit_rows),
+                "refresh_areas": len(area_rows),
+                "comment_hints": len(hint_rows),
+                "slmp_candidates": len(slmp_rows),
+            },
+        },
+    )
+
     incoming = [
         r
         for r in area_rows
@@ -632,6 +677,11 @@ def main(argv: list[str] | None = None) -> None:
         "===============================================================",
         "",
         f"Source folder: {ROOT}",
+        # Which input these CSVs are of. They are read alongside a
+        # cross-reference and a survey made from the same project, and nothing
+        # in a CSV said which project it came from.
+        f"Input: {fingerprint(ROOT)}",
+        f"Analyzer: {package_version()}",
         f"Unit config: {UNIT_CONFIG}",
         f"Generated CSV: {OUT_UNITS}, {OUT_AREAS}, {OUT_HINTS}, {OUT_SLMP}",
         "",
