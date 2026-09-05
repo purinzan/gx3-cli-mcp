@@ -149,10 +149,24 @@ def _concerns_steps() -> tuple[Step, ...]:
 
 
 def _changed_steps() -> tuple[Step, ...]:
+    def impact(c: Context) -> list[str]:
+        args = [
+            "change-impact", str(c.against), str(c.root),
+            "--xref-db", str(c.workspace.xref.path),
+        ]
+        return [*args, "--ja"] if c.ja else args
+
     return (
         Step(
             "semantic-diff", "what is different, rung by rung", "ラング単位の差分",
             lambda c: ["semantic-diff", str(c.against), str(c.root)],
+        ),
+        # The question is "what changed", and the half that matters is what the
+        # change reaches. Leaving it to a command the reader has to know about
+        # is what an entry point is supposed to remove.
+        Step(
+            "change-impact", "what those changes reach", "その変更が届く先",
+            impact,
         ),
     )
 
