@@ -11,6 +11,7 @@ from pathlib import Path
 from gx3cli.gx3_dependency_flow import build_flow, format_markdown as flow_markdown, format_mermaid as flow_mermaid
 from gx3cli.gx3_format import build_format_inventory
 from gx3cli.gx3_program_map import load_program_map
+from gx3cli.gx3_flow_db import flow_xref_db
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 
 
@@ -127,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-devices", type=int, default=2000, help="maximum traced devices for device-flow")
     parser.add_argument("--exclude-reset", action="store_true", help="ignore RST rows as drivers for device-flow")
     parser.add_argument("--expand-bit-groups", action="store_true", help="expand K<n>M/K<n>L bit groups for device-flow")
+    parser.add_argument("--xref-db", help="cross-reference DB, for value-flow edges; found automatically when not given")
     parser.add_argument("--label-width", type=int, default=48)
     parser.add_argument("-o", "--output", help="write output to file")
     return parser
@@ -147,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             max_devices=args.max_devices,
             include_reset=not args.exclude_reset,
             expand_bit_groups=args.expand_bit_groups,
+            xref_db=flow_xref_db(args, root),
         )
         if args.format == "json":
             text = json.dumps(flow, ensure_ascii=False, indent=2)

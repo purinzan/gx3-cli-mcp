@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import sys
+import sqlite3
 from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
@@ -136,18 +137,62 @@ def dependency_refs_for_output(row: LadderRow, output: FlowElement) -> list[tupl
     return refs
 
 
+def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
+    """Which device a value came from, keyed by where it arrived.
+
+    The walk below follows contacts and coils: what turns this bit on. A word
+    device is not turned on by anything -- a value is put into it -- so tracing
+    D200 back to the D100 that was moved into it was not something this could
+    do at all. The cross-reference stores those edges; without it the trace
+    simply stops at the transfer, which is the honest thing to do and also the
+    reason this argument exists.
+    """
+    if xref_db is None or not Path(xref_db).exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{xref_db}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return {}
+    try:
+        rows = con.execute(
+            "select source_device, destination_device, opcode, pou, step, range_count, "
+            "read_modify_write from data_flow"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+
+    found: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        found.setdefault(row["destination_device"], []).append(
+            {
+                "device": row["source_device"],
+                "opcode": row["opcode"],
+                "pou": row["pou"],
+                "step": row["step"],
+                "range_count": int(row["range_count"] or 1),
+                "read_modify_write": bool(row["read_modify_write"]),
+            }
+        )
+    return found
+
+
 def build_flow(
     root: Path,
     target_device: str,
     max_devices: int,
     include_reset: bool,
     expand_bit_groups: bool,
+    xref_db: Path | None = None,
 ) -> dict[str, Any]:
     comments = load_comments_for_root(root)
     rows = load_rows(root, comments)
     drivers = driver_index(rows, include_reset=include_reset)
     target = normalize_device(target_device)
 
+    sources = value_sources(xref_db)
     queue: deque[tuple[str, int]] = deque([(target, 0)])
     visited: set[str] = set()
     truncated = False
@@ -167,6 +212,32 @@ def build_flow(
         visited.add(device)
 
         rows_for_device = drivers.get(device, [])
+        # Where the value in this device came from, if it was put there by an
+        # instruction rather than driven by a coil.
+        for source in sources.get(device, []):
+            if source["device"] == device:
+                continue  # a read-modify-write is not its own upstream
+            if source["device"] not in devices:
+                devices[source["device"]] = {
+                    "device": source["device"],
+                    "comment": device_comment(source["device"], comments),
+                    "depth": depth + 1,
+                    "driver_row_count": len(drivers.get(source["device"], [])),
+                    "terminal": not drivers.get(source["device"]),
+                }
+            edges.append(
+                {
+                    "from": source["device"],
+                    "to": device,
+                    "kind": "value",
+                    "label": source["opcode"],
+                    "opcode": source["opcode"],
+                    "position": f"{source['pou']}:{source['step']}",
+                }
+            )
+            if source["device"] not in visited:
+                queue.append((source["device"], depth + 1))
+
         devices[device] = {
             "device": device,
             "comment": device_comment(device, comments),
@@ -268,6 +339,7 @@ def build_flow(
             "traced_devices": len(visited),
             "rows": len(row_records),
             "edges": len(edges),
+            "value_edges": sum(1 for edge in edges if edge["kind"] == "value"),
             "terminal_devices": sum(1 for item in devices.values() if item.get("terminal")),
         },
         "devices": list(devices.values()),
@@ -423,6 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="enqueue members of K<n>M/K<n>L bit groups as upstream devices",
     )
+    parser.add_argument("--xref-db", help="cross-reference DB, for value-flow edges; found automatically when not given")
     parser.add_argument("--label-width", type=int, default=48, help="maximum comment chars in graph labels")
     parser.add_argument("--format", choices=["markdown", "mermaid", "json"], default="markdown")
     parser.add_argument("-o", "--output", help="write output to file")
@@ -438,6 +511,7 @@ def main() -> int:
         max_devices=args.max_devices,
         include_reset=not args.exclude_reset,
         expand_bit_groups=args.expand_bit_groups,
+        xref_db=flow_xref_db(args, Path(args.root)),
     )
     if args.format == "json":
         output = json.dumps(flow, ensure_ascii=False, indent=2)
