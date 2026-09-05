@@ -38,6 +38,7 @@
 | `test_gx3_cli_root_passthrough.py` | --root で指定したプロジェクトが、--root オプションを持たず環境変数から root を読むコマンド（used-devices / hmi-build-info / extended-instructions）まで届くことを検査する。別プロジェクトを黙って解析して成功報告する退行を防ぐ。 |
 | `test_gx3_indexed_buffer_memory.py` | インデックス修飾付きバッファメモリ（U96\G196608Z0）の Zs トークンが消費され、次オペランドの型を奪わないことを検査する。BMOV の D48200Z2 が存在しないインデックスレジスタ Z48200 として記録される退行を防ぐ。 |
 | `test_gx3_xref_decoder_version.py` | xref DB にデコーダ版が刻まれ、別バージョンが書いた DB は読み込み時に拒否されることを検査する。デコーダ修正後も古い DB が lint/trace/dead-logic に黙って読まれる退行を防ぐ。 |
+| `test_gx3_xref_results.py` | 検索上限による省略・総件数・インデックス修飾の警告が、テキストとJSONに残ることを検査する。 |
 | `test_gx3_used_devices_source.py` | used-devices のデバイスが共有デコーダ由来であり、16進デバイス型がGX Works3 と同じ綴りで出力されることを検査する。型トークンと数値の位置対応で実在しないデバイスを報告する退行を防ぐ。 |
 | `test_gx3_operand_parse_is_shared.py` | ladder-print と gx3_arg_decode がヘッダトークンの歩進を自前で持たず gx3_operand_parse を共有していること、両者が同じオペランドを見ていることを検査する。同じ解読バグが二重に入る退行を防ぐ。 |
 | `test_gx3_coverage_gaps.py` | 桁指定の範囲展開、lint が範囲を参照できること、パス起因の失敗をパーサ不具合として報告しないこと、ラダーのみのプロジェクトを非対応形式と呼ばないことを検査する。 |
