@@ -44,7 +44,7 @@ from gx3cli.gx3_project_paths import (
     default_output_prefix,
     default_project_root,
 )
-from gx3cli.gx3_device_name import split_device
+from gx3cli.gx3_device_name import format_device, split_device
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE, collect_alarms
@@ -282,7 +282,8 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
             "gx3-cli xref build --root <project>")
     rows = ctx.xref.execute(
         """
-        select device, device_type, pou, step, opcode, role, const_args, detail, lddb, pos, title, comment
+        select device, device_type, number, range_len, pou, step, opcode, role,
+               const_args, detail, lddb, pos, title, comment
         from xref
         where access in ('write', 'both')
         order by device_type, number, pou, pos
@@ -292,7 +293,24 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
     for row in rows:
         if str(row["device_type"]) not in WORD_TYPES:
             continue
+        # A block instruction names the first device of the run it writes, so
+        # grouping by the name alone missed the conflict this check exists to
+        # find: `BMOV .. D400 K4` and a `MOV .. D401` both write D401, and the
+        # answer was no finding at all.
         by_device[str(row["device"])].append(row)
+        for member in run_members(row):
+            by_device[member].append(row)
+
+    # Where each device sits, so a run of them can be collapsed back into one
+    # finding below.
+    place: dict[str, tuple[str, int]] = {}
+    for row in rows:
+        if str(row["device_type"]) not in WORD_TYPES:
+            continue
+        dev_type, number = str(row["device_type"]), int(row["number"] or 0)
+        place[str(row["device"])] = (dev_type, number)
+        for offset, member in enumerate(run_members(row), start=1):
+            place.setdefault(member, (dev_type, number + offset))
 
     # Where each of those writes got its value. Two rungs writing one word is
     # a different thing to judge when one of them is "MOV from the recipe
@@ -331,10 +349,73 @@ def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
                     f"nonreset_POUs={len(nonreset_pous)}; categories={','.join(categories) or 'none'}"
                 ),
                 "review_note": review_note,
+                # The fact this finding is about: which rungs write here. The
+                # printed locations carry a value-source note that only the
+                # named device of a run gets, so grouping on the text split one
+                # overlap into two findings.
+                "_writers": frozenset(locs),
             }
         )
+    out = collapse_runs(out, place)
     out.sort(key=lambda item: (0 if item["severity"] == "high" else 1, -int(item["count"])))
     return out
+
+
+def collapse_runs(
+    findings: list[dict[str, object]], place: dict[str, tuple[str, int]]
+) -> list[dict[str, object]]:
+    """One finding per fact, not one per device.
+
+    Two block instructions overwriting the same run is a single thing to look
+    at. Reported per device it came to 7,679 identical findings for one pair of
+    BMOVs, and 38,408 findings on a real project that were 1,020 facts. A list
+    that long is not read, which costs more than the findings were worth.
+    """
+    keyed: dict[tuple, list[dict[str, object]]] = defaultdict(list)
+    for finding in findings:
+        keyed[(finding.get("_writers"), str(finding["severity"]))].append(finding)
+
+    out: list[dict[str, object]] = []
+    for (locations, _), group in keyed.items():
+        located = sorted(
+            (place.get(str(item["device"]), ("", 0)), item) for item in group
+        )
+        run: list[dict[str, object]] = []
+        previous: tuple[str, int] | None = None
+        for (dev_type, number), item in located:
+            if previous is not None and (dev_type, number) != (previous[0], previous[1] + 1):
+                out.append(_merged(run))
+                run = []
+            run.append(item)
+            previous = (dev_type, number)
+        if run:
+            out.append(_merged(run))
+    return out
+
+
+def _merged(run: list[dict[str, object]]) -> dict[str, object]:
+    first = dict(run[0])
+    first.pop("_writers", None)
+    if len(run) == 1:
+        return first
+    first["device"] = f"{run[0]['device']}..{run[-1]['device']}"
+    first["detail"] = (
+        f"{str(first['detail'])}; one finding for {len(run)} devices written by the same rungs"
+    )
+    return first
+
+
+def run_members(row: sqlite3.Row) -> list[str]:
+    """The rest of the run a write covers, beyond the device it names."""
+    try:
+        length = int(row["range_len"] or 1)
+        number = int(row["number"] or 0)
+        dev_type = str(row["device_type"] or "")
+    except (KeyError, IndexError, TypeError, ValueError):
+        return []
+    if length <= 1 or not dev_type:
+        return []
+    return [format_device(dev_type, number + offset) for offset in range(1, length)]
 
 
 def value_sources_by_write(xref: sqlite3.Connection) -> dict[tuple[str, str, int], list[str]]:

@@ -66,7 +66,8 @@ def xref_ctx(records: list[dict[str, object]]) -> LintContext:
     con.execute(
         """
         create table xref (
-            device text, device_type text, number integer, access text,
+            device text, device_type text, number integer, range_len integer,
+            access text,
             role text, opcode text, arg_index integer, const_args text,
             detail text, lddb text, pos integer, pou text, step integer,
             title text, comment text, parse_status text
@@ -78,6 +79,10 @@ def xref_ctx(records: list[dict[str, object]]) -> LintContext:
             "device": rec.get("device", "D100"),
             "device_type": rec.get("device_type", "D"),
             "number": rec.get("number", 100),
+            # Real cross-references carry the run length beside every
+            # occurrence; a fixture without it is a different table than the
+            # code reads.
+            "range_len": rec.get("range_len", 1),
             "access": rec.get("access", "write"),
             "role": rec.get("role", rec.get("opcode", "MOV")),
             "opcode": rec.get("opcode", rec.get("role", "MOV")),
@@ -95,7 +100,7 @@ def xref_ctx(records: list[dict[str, object]]) -> LintContext:
         con.execute(
             """
             insert into xref values (
-                :device, :device_type, :number, :access, :role, :opcode,
+                :device, :device_type, :number, :range_len, :access, :role, :opcode,
                 :arg_index, :const_args, :detail, :lddb, :pos, :pou,
                 :step, :title, :comment, :parse_status
             )
