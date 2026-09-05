@@ -51,6 +51,7 @@
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
 | `test_gx3_input_identity.py` | 入力指紋が内容の変化に追随すること、別プロジェクトで作られた xref が拒否されること、指紋を持たない古い DB は二重に失敗しないことを検査する。 |
 | `test_gx3_step_not_pos.py` | rung-text の位置表示が内部 pos ではなく GX Works3 のステップ番号であること、ステップ不明時は pos と明示すること、印字ラダーの表示と一致することを検査する。 |
+| `test_gx3_trace_state.py` | trace-device の打切り・未解釈が共通語彙で結論の直前に出ること、完了した追跡では何も出ないこと、未解釈が打切りより優先されることを検査する。 |
 | `test_gx3_analysis_state.py` | 実行できなかった検査が「検出0件」として正常扱いされないこと、理由と次の手順が summary に残ること、--require-evaluated で落とせることを検査する。 |
 | `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
