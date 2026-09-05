@@ -46,6 +46,8 @@
 | `test_gx3_project_config.py` | project-config が「読めない」と「そもそも無い」を区別して報告することを検査する。デバイスメモリ不在・MESジョブがプロジェクト外・暗号化本体・DataDefault が空である旨を、それぞれ理由付きで出す。 |
 | `test_gx3_module_params.py` | 記述子テーブル（Prm3=257 の署名）と設定値テーブルの判別、既定値のままの行を設定として報告しないこと、チャンネル/軸ごとの行が取れることを検査する。 |
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
+| `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
+| `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
 | `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
@@ -72,6 +74,7 @@
 
 | ファイル | 役割 |
 |---|---|
+| `cross_check_corpus.py` | 実プロジェクト群を独立した2経路で読み、食い違う箇所を報告する。印字 vs xref、駆動デバイス vs 書き込み集合、SVG の要素網羅、parse status を突き合わせる。GX Works3 が無い環境で取れる最良の検証。 |
 | `release_gate.py` | 開発者/メンテナ向けの混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
 
 ## skills
