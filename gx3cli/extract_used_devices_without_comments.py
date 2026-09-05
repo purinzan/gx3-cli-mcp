@@ -35,23 +35,11 @@ OUT_MISMATCH = default_output_path("device_parse_mismatch_rows", "csv")
 
 
 # Confirmed GX Works3 device code values used by the project comment DB.
-DEVICE_CODE_BY_TYPE = {
-    "M": 1,
-    "SM": 2,
-    "L": 3,
-    "X": 16,
-    "Y": 17,
-    "B": 20,
-    "D": 32,
-    "SD": 33,
-    "ZR": 35,
-    "W": 40,
-    "R": 48,
-    "SW": 49,
-    "T": 66,
-    "C": 70,
-    "ST": 74,
-}
+# One table, in extract_hmi_build_info. A second copy here would drift the
+# moment a code is confirmed for one command and not the other, and a device
+# whose code is missing comes back with a blank comment -- indistinguishable
+# from a device nobody commented.
+from gx3cli.extract_hmi_build_info import DEVICE_CODE_BY_TYPE
 
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
 
