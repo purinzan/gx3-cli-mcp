@@ -43,6 +43,7 @@
 | `test_gx3_coverage_gaps.py` | 桁指定の範囲展開、lint が範囲を参照できること、パス起因の失敗をパーサ不具合として報告しないこと、ラダーのみのプロジェクトを非対応形式と呼ばないことを検査する。 |
 | `test_gx3_rung_text_driver.py` | rung-text が「駆動デバイス」として名指すのが実際に書き込まれるデバイスであることを検査する。同一デバイスが複数オペランドに現れる算術命令で、ソースを駆動先と報告する退行を防ぐ。 |
 | `test_gx3_dead_logic_runs.py` | ブロック命令や桁指定の範囲として読まれるデバイスを dead-logic が「読まれない」と報告しないことを検査する。書き込みのみの範囲を読み扱いしない点も併せて検査する。 |
+| `test_gx3_project_config.py` | project-config が「読めない」と「そもそも無い」を区別して報告することを検査する。デバイスメモリ不在・MESジョブがプロジェクト外・暗号化本体・DataDefault が空である旨を、それぞれ理由付きで出す。 |
 | `test_gx3_module_params.py` | 記述子テーブル（Prm3=257 の署名）と設定値テーブルの判別、既定値のままの行を設定として報告しないこと、チャンネル/軸ごとの行が取れることを検査する。 |
 | `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
@@ -59,10 +60,6 @@
 | `USER_MANUAL_JA.md` | 人間向けの基本操作、MCP 設定、主要コマンド。 |
 | `USER_MANUAL_EN.md` | 英語圏利用者向けのインストール、最初の3コマンド、主要ワークフロー。 |
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
-| `CONFIG_CPU_UNITS_JA.md` | CPU・ユニット構成・デバイスメモリ・ラベルの読み方。先頭I/O とバッファメモリ U 番号の対応、生パラメータファイルの場所を含む。 |
-| `CONFIG_NETWORK_JA.md` | IP・接続方法・CC-Link・リフレッシュエリアの読み方。confidence 列の意味と、リフレッシュを踏まえた dead-logic の使い方。 |
-| `CONFIG_MODULES_JA.md` | MES・レコーディング・データロギング・EtherNet/IP・シリアルの読み方。パラメータDB から変更済み設定を取り出す手順と、現状読めない範囲。 |
-| `CONFIG_MOTION_JA.md` | シンプルモーション RD77MS の読み方。公式 G ラベル付きバッファアクセスと、未解読の .iut 軸パラメータ。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
@@ -150,6 +147,7 @@
 | `gx3_ladder_logic.py` | 接点/coil/AND/OR/MC zone を論理式にする共通ロジック。 |
 | `gx3_ladder_layout.py` | 座標を視覚の正、既存 operand/comment 解読を意味の正として合流し、ビューアや画像生成向けの JSON/SVG を作る。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
+| `gx3_project_config.py` | ラダー以外のプロジェクト情報を1コマンドで読む。CPU・ユニット構成・アドレス・接続方法・モジュール設定・モーションと、読めないものとその理由を出す。md ではなく実行して得る形にしてある。 |
 | `gx3_module_params.py` | インテリジェント機能ユニットの設定を読む。ProfileTableInfo で記述子テーブルと設定値テーブルを判別し、既定値から変更された設定だけを型名・スロット・バッファU番号とともに出す。 |
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |

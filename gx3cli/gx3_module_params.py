@@ -24,6 +24,12 @@ What is still missing is the name behind `BasePrm<n>`. That mapping lives in
 the module profile GX Works3 installs, not in the project, so this reports the
 number and the value and does not guess the meaning.
 
+`DataDefault` is empty in every row of every one of these files -- 15,530 of
+15,530 on the project this was written against. So "the settings someone
+changed" is not a question the project can answer: what it holds is the values,
+and this reports them as such. The comparison is still made where a default is
+recorded, in case a project ever fills the column in.
+
 `DataArrayIndexX` is the channel or axis the row belongs to: an 8-channel
 analog module repeats each setting eight times, a 16-axis motion module
 sixteen.
@@ -67,6 +73,7 @@ class Module:
     settings: list[Setting] = field(default_factory=list)
     catalogue_tables: list[str] = field(default_factory=list)
     refresh_rows: int = 0
+    defaults_recorded: int = 0
     note: str = ""
 
     @property
@@ -143,7 +150,11 @@ def read_module(path: Path) -> Module:
                 continue
 
             for label, index, value, default in rows:
-                if value in (None, "") or str(value) == str(default):
+                if default not in (None, ""):
+                    module.defaults_recorded += 1
+                    if str(value) == str(default):
+                        continue
+                if value in (None, ""):
                     continue
                 module.settings.append(
                     Setting(table=table, label=str(label), index=str(index), value=str(value))
@@ -185,13 +196,18 @@ def as_text(modules: list[Module]) -> list[str]:
         if module.refresh_rows:
             out.append(f"   refresh/handshake rows: {module.refresh_rows}")
         if not module.settings:
-            out.append("   no setting differs from its default")
+            out.append("   no table holds a value")
             continue
+        if not module.defaults_recorded:
+            out.append(
+                "   every value below is what the project holds; DataDefault is empty in"
+                " this file, so which of them a technician changed cannot be told from here"
+            )
         by_table: dict[str, list[Setting]] = {}
         for setting in module.settings:
             by_table.setdefault(setting.table, []).append(setting)
         for table, settings in by_table.items():
-            out.append(f"   [{table}] {len(settings)} set")
+            out.append(f"   [{table}] {len(settings)} values")
             for setting in settings[:12]:
                 index = f" ch/axis {setting.index}" if setting.index not in ("", "1", "None") else ""
                 out.append(f"      {setting.label:<24}{index:<12} = {setting.value[:48]}")
@@ -211,6 +227,7 @@ def as_data(modules: list[Module]) -> list[dict[str, object]]:
             "buffer_unit": module.unit_number,
             "catalogue_tables": module.catalogue_tables,
             "refresh_rows": module.refresh_rows,
+            "defaults_recorded": module.defaults_recorded,
             "settings": [
                 {"table": s.table, "label": s.label, "index": s.index, "value": s.value}
                 for s in module.settings
