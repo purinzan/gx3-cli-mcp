@@ -45,6 +45,7 @@ from gx3cli.gx3_analysis_state import (
     DECODE,
     PARTIAL,
     REACH,
+    SEMANTICS,
     TRUNCATED,
     AnalysisState,
     label_for,
@@ -81,6 +82,9 @@ class Change:
     unreadable: bool = False
     # Whether the walk from this change hit a limit before it was exhausted.
     truncated: bool = False
+    # Whether a run this rung writes has a length that only the running program
+    # knows. The instruction was read; how far it reaches was not settled.
+    unsettled: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -93,10 +97,11 @@ class Change:
             "reaches": list(self.reaches),
             "unreadable": self.unreadable,
             "truncated": self.truncated,
+            "unsettled": self.unsettled,
         }
 
 
-def written_devices(data: str) -> tuple[list[str], bool]:
+def written_devices(data: str) -> tuple[list[str], bool, bool]:
     """The devices a rung writes, and whether part of it could not be read.
 
     A block instruction names the first device of the run it writes and no
@@ -115,15 +120,24 @@ def written_devices(data: str) -> tuple[list[str], bool]:
     try:
         operations, status = parse_row_occurrences(data)
     except Exception:
-        return [], True
+        return [], True, False
     for operation in operations:
         for occ in operation[2]:
             if occ.access not in {"write", "both"} or not occ.device:
                 continue
             if occ.is_index_register:
                 continue
-            span = max(1, int(occ.range_len or 1))
-            for offset in range(span):
+            span = int(occ.range_len)
+            if span == 0:
+                # A run whose count lives in a device: its end is whatever that
+                # device holds when the scan reaches it. The first device is
+                # real and the rest cannot be written down, so the run is
+                # recorded as unsettled instead of being cut to one.
+                uncertain = True
+                if occ.device not in devices:
+                    devices.append(occ.device)
+                continue
+            for offset in range(max(1, span)):
                 name = (
                     occ.device
                     if offset == 0
@@ -131,7 +145,7 @@ def written_devices(data: str) -> tuple[list[str], bool]:
                 )
                 if name and name not in devices:
                     devices.append(name)
-    return devices, status != "exact" or uncertain
+    return devices, status != "exact", uncertain
 
 
 # Devices that leave the PLC, or that a person is paged about. A reach of 135
@@ -184,14 +198,14 @@ def order_changes(
     out: list[Change] = []
     for guid in moved:
         pos, data, title = new_pou[guid]
-        writes, unreadable = written_devices(data)
+        writes, unreadable, unsettled = written_devices(data)
         was = place_before[guid]
         now = after.index(guid)
         out.append(
             Change(
                 ORDER, pou, pos, title,
                 f"runs {was - now} place(s) earlier" if now < was else f"runs {now - was} place(s) later",
-                writes, [], unreadable,
+                writes, [], unreadable, unsettled=unsettled,
             )
         )
     return out
@@ -208,13 +222,13 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
 
         for guid in sorted(old_pou.keys() - new_pou.keys()):
             pos, data, title = old_pou[guid]
-            writes, unreadable = written_devices(data)
-            changes.append(Change(REMOVED, pou, pos, title, "", writes, [], unreadable))
+            writes, unreadable, unsettled = written_devices(data)
+            changes.append(Change(REMOVED, pou, pos, title, "", writes, [], unreadable, unsettled=unsettled))
 
         for guid in sorted(new_pou.keys() - old_pou.keys()):
             pos, data, title = new_pou[guid]
-            writes, unreadable = written_devices(data)
-            changes.append(Change(ADDED, pou, pos, title, "", writes, [], unreadable))
+            writes, unreadable, unsettled = written_devices(data)
+            changes.append(Change(ADDED, pou, pos, title, "", writes, [], unreadable, unsettled=unsettled))
 
         for guid in sorted(old_pou.keys() & new_pou.keys()):
             _, old_data, _ = old_pou[guid]
@@ -224,8 +238,8 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
             if logic_signature(old_data) == logic_signature(new_data):
                 changes.append(Change(LAYOUT_ONLY, pou, new_pos, new_title))
                 continue
-            writes, unreadable = written_devices(new_data)
-            old_writes, old_unreadable = written_devices(old_data)
+            writes, unreadable, unsettled = written_devices(new_data)
+            old_writes, old_unreadable, old_unsettled = written_devices(old_data)
             for device in old_writes:
                 if device not in writes:
                     writes.append(device)
@@ -234,6 +248,7 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
                     LOGIC, pou, new_pos, new_title,
                     summarize_change(old_data, new_data),
                     writes, [], unreadable or old_unreadable,
+                    unsettled=unsettled or old_unsettled,
                 )
             )
 
@@ -245,13 +260,13 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
     for hexid in sorted(set(new_rows) - set(old_rows)):
         pou = new_names.get(hexid, hexid)
         for _, (pos, data, title) in sorted(new_rows[hexid].items()):
-            writes, unreadable = written_devices(data)
-            changes.append(Change(ADDED, pou, pos, title, "whole POU is new", writes, [], unreadable))
+            writes, unreadable, unsettled = written_devices(data)
+            changes.append(Change(ADDED, pou, pos, title, "whole POU is new", writes, [], unreadable, unsettled=unsettled))
     for hexid in sorted(set(old_rows) - set(new_rows)):
         pou = old_names.get(hexid, hexid)
         for _, (pos, data, title) in sorted(old_rows[hexid].items()):
-            writes, unreadable = written_devices(data)
-            changes.append(Change(REMOVED, pou, pos, title, "whole POU is gone", writes, [], unreadable))
+            writes, unreadable, unsettled = written_devices(data)
+            changes.append(Change(REMOVED, pou, pos, title, "whole POU is gone", writes, [], unreadable, unsettled=unsettled))
 
     if include_comments:
         from gx3cli.gx3_semantic_diff import comment_map
@@ -285,6 +300,7 @@ def attach_reach(
     """
     con = open_xref_db(Path(xref_db), read_only=True, root=root)
     unreadable = 0
+    unsettled = 0
     stopped: set[str] = set()
     try:
         for change in changes:
@@ -292,6 +308,8 @@ def attach_reach(
                 continue
             if change.unreadable:
                 unreadable += 1
+            if change.unsettled:
+                unsettled += 1
             # The whole run a block instruction writes, walked together, so a
             # device that only reads the middle of it is not lost.
             found = reach(con, change.writes, max_depth, max_nodes)
@@ -314,6 +332,20 @@ def attach_reach(
             reason=f"{unreadable} changed rungs hold something the decoder could not read",
             next_step="gx3-cli parse-gaps --root <project>",
             stage=DECODE,
+        )
+    if unsettled:
+        # The instruction was read correctly. How many devices it writes is a
+        # value the running program holds, so the run's end is not something
+        # any reading of the file can settle -- a different thing from a gap in
+        # the decoding, and a different thing to do about it.
+        return AnalysisState(
+            PARTIAL,
+            reason=(
+                f"{unsettled} changed rungs write a run whose length is held in a device; "
+                "only its first device is certain"
+            ),
+            next_step="check that device's value on the machine to know how far the run reaches",
+            stage=SEMANTICS,
         )
     if stopped:
         limits = ", ".join(sorted(stopped))
@@ -377,6 +409,12 @@ def render(changes: list[Change], state: AnalysisState, limit: int, ja: bool = F
                 "    ※ このラングに解釈できない部分があり、以下は不完全です"
                 if ja
                 else "    ! part of this rung could not be read; what follows is incomplete"
+            )
+        if change.unsettled:
+            lines.append(
+                "    ※ 書込先の範囲長がデバイス値で決まります。確実なのは先頭のみです"
+                if ja
+                else "    ! the length of a run this writes is held in a device; only its first is certain"
             )
         if change.truncated:
             lines.append(

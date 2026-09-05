@@ -227,7 +227,7 @@ def test_written_devices_follows_the_decoder_on_what_was_read() -> None:
     # Text with nothing in it to decode yields no writes and no complaint; the
     # case that matters -- a rung whose header names operands its elements do
     # not supply -- is covered above, and is what a real gap looks like.
-    devices, unreadable = written_devices("not a rung at all")
+    devices, unreadable, _ = written_devices("not a rung at all")
     assert devices == [], devices
     assert not unreadable, "nothing to decode is not the same as failing to decode"
 
