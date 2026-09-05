@@ -179,7 +179,9 @@ def worst(states: list[AnalysisState]) -> AnalysisState:
     """
     order = {CHECKED: 0, NO_MEASUREMENT: 1, TRUNCATED: 2, PARTIAL: 3, UNSUPPORTED: 4, NOT_EVALUATED: 5}
     if not states:
-        return AnalysisState(NOT_EVALUATED, reason="nothing was examined")
+        return AnalysisState(
+            NOT_EVALUATED, reason="nothing was examined", stage=DISCOVERY
+        )
     return max(states, key=lambda s: order[s.state])
 
 

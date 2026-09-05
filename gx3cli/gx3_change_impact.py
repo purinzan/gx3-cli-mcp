@@ -40,7 +40,15 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE
-from gx3cli.gx3_analysis_state import CHECKED, DECODE, PARTIAL, AnalysisState, label_for
+from gx3cli.gx3_analysis_state import (
+    CHECKED,
+    DECODE,
+    PARTIAL,
+    REACH,
+    TRUNCATED,
+    AnalysisState,
+    label_for,
+)
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_semantic_diff import ensure_root, load_side, logic_signature, summarize_change
 from gx3cli.gx3_workspace import prepare
@@ -67,6 +75,8 @@ class Change:
     writes: list[str] = field(default_factory=list)
     reaches: list[dict[str, Any]] = field(default_factory=list)
     unreadable: bool = False
+    # Whether the walk from this change hit a limit before it was exhausted.
+    truncated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +88,7 @@ class Change:
             "writes": list(self.writes),
             "reaches": list(self.reaches),
             "unreadable": self.unreadable,
+            "truncated": self.truncated,
         }
 
 
@@ -95,14 +106,23 @@ def written_devices(data: str) -> tuple[list[str], bool]:
     return devices, status != "exact"
 
 
-def reach_of(con: sqlite3.Connection, device: str, max_depth: int, max_nodes: int) -> list[dict[str, Any]]:
-    """Devices the given one can reach, through rungs and through transfers.
+def reach_of(
+    con: sqlite3.Connection, device: str, max_depth: int, max_nodes: int
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Devices the given one can reach, and the limits that stopped the walk.
 
     Static candidates. A device is here because something that reads the one
     before it writes this, which is what the saved file supports and no more.
+
+    The limits are returned rather than swallowed. A walk that stopped at
+    max-depth has not shown what the change reaches; it has shown what it
+    reaches within that depth, and the two read identically unless the
+    difference is stated. M100 -> M200 -> M300 at depth 1 loses M300, and
+    reporting that as a complete answer is the failure this returns for.
     """
     seen = {device}
     out: list[dict[str, Any]] = []
+    stopped: set[str] = set()
     frontier = [(device, 0)]
     has_flow = bool(
         con.execute(
@@ -112,6 +132,8 @@ def reach_of(con: sqlite3.Connection, device: str, max_depth: int, max_nodes: in
     while frontier and len(out) < max_nodes:
         current, depth = frontier.pop(0)
         if depth >= max_depth:
+            # There was somewhere further to go and the depth stopped it.
+            stopped.add("max-depth")
             continue
         rows = con.execute(
             """
@@ -153,8 +175,11 @@ def reach_of(con: sqlite3.Connection, device: str, max_depth: int, max_nodes: in
             )
             frontier.append((name, depth + 1))
             if len(out) >= max_nodes:
+                stopped.add("max-nodes")
                 break
-    return out
+    if frontier and len(out) >= max_nodes:
+        stopped.add("max-nodes")
+    return out, stopped
 
 
 # Devices that leave the PLC, or that a person is paged about. A reach of 135
@@ -247,6 +272,7 @@ def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes
     con = sqlite3.connect(f"file:{xref_db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     unreadable = 0
+    stopped: set[str] = set()
     try:
         for change in changes:
             if change.kind not in BEHAVIOURAL:
@@ -255,7 +281,10 @@ def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes
                 unreadable += 1
             seen: set[str] = set()
             for device in change.writes:
-                for item in reach_of(con, device, max_depth, max_nodes):
+                items, limits = reach_of(con, device, max_depth, max_nodes)
+                stopped |= limits
+                change.truncated = change.truncated or bool(limits)
+                for item in items:
                     if item["device"] in seen:
                         continue
                     seen.add(item["device"])
@@ -263,12 +292,22 @@ def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes
     finally:
         con.close()
 
+    # A rung the decoder could not read outranks a limit: raising the limit
+    # would not recover what was never read.
     if unreadable:
         return AnalysisState(
             PARTIAL,
             reason=f"{unreadable} changed rungs hold something the decoder could not read",
             next_step="gx3-cli parse-gaps --root <project>",
             stage=DECODE,
+        )
+    if stopped:
+        limits = ", ".join(sorted(stopped))
+        return AnalysisState(
+            TRUNCATED,
+            reason=f"the walk stopped at {limits}; what a change reaches beyond it is not listed",
+            next_step="raise --max-depth or --max-nodes and run it again",
+            stage=REACH,
         )
     return AnalysisState(CHECKED)
 
@@ -324,6 +363,12 @@ def render(changes: list[Change], state: AnalysisState, limit: int, ja: bool = F
                 "    ※ このラングに解釈できない部分があり、以下は不完全です"
                 if ja
                 else "    ! part of this rung could not be read; what follows is incomplete"
+            )
+        if change.truncated:
+            lines.append(
+                "    ※ 到達先の探索が上限で止まりました。この先はこの一覧にありません"
+                if ja
+                else "    ! the walk stopped at a limit; what lies beyond it is not listed"
             )
         if change.writes:
             lines.append(("    書き込み: " if ja else "    writes:  ") + ", ".join(change.writes))

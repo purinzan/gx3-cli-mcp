@@ -27,7 +27,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from gx3cli.gx3_analysis_state import CHECKED, PARTIAL, AnalysisState
+from gx3cli.gx3_analysis_state import CHECKED, PARTIAL, REACH, TRUNCATED, AnalysisState
 from gx3cli.gx3_change_impact import (
     ADDED,
     COMMENT_ONLY,
@@ -232,6 +232,77 @@ def test_written_devices_follows_the_decoder_on_what_was_read() -> None:
     assert not unreadable, "nothing to decode is not the same as failing to decode"
 
 
+def test_a_reach_that_stopped_at_a_limit_is_not_called_checked() -> None:
+    """The failure this exists for: a shorter answer that reads as a complete one.
+
+    M100 -> M200 -> M300, walked at depth 1. M300 is missing from the reach and
+    the run reported "checked within the supported range", which is the one
+    thing it must not say: raising the depth changes the answer, and nothing in
+    the output suggested trying.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        old, new = two_versions(
+            work,
+            [
+                ("_guid/one", coil("b", 1, 100)),
+                ("_guid/two", coil("a", 100, 200)),
+                ("_guid/three", coil("a", 200, 300)),
+            ],
+        )
+        db = xref_for(new, work / "x.sqlite")
+
+        shallow = collect_changes(old, new, include_comments=False)
+        state = attach_reach(shallow, db, max_depth=1, max_nodes=50)
+        logic = [change for change in shallow if change.kind == LOGIC][0]
+        assert "M300" not in {item["device"] for item in logic.reaches}
+        assert state.state == TRUNCATED, state
+        assert state.stage == REACH, state
+        assert not state.conclusive
+        assert "max-depth" in state.reason, state.reason
+        assert logic.truncated
+
+        deep = collect_changes(old, new, include_comments=False)
+        deep_state = attach_reach(deep, db, max_depth=4, max_nodes=50)
+        deep_logic = [change for change in deep if change.kind == LOGIC][0]
+        assert "M300" in {item["device"] for item in deep_logic.reaches}
+        assert deep_state.state == CHECKED, deep_state
+
+
+def test_a_node_limit_is_reported_the_same_way() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        old, new = two_versions(
+            work,
+            [
+                ("_guid/one", coil("b", 1, 100)),
+                ("_guid/two", coil("a", 100, 200)),
+                ("_guid/three", coil("a", 200, 300)),
+            ],
+        )
+        changes = collect_changes(old, new, include_comments=False)
+        state = attach_reach(changes, xref_for(new, work / "x.sqlite"), max_depth=9, max_nodes=1)
+        assert state.state == TRUNCATED, state
+        assert "max-nodes" in state.reason, state.reason
+
+
+def test_the_page_says_which_change_was_cut_short() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        old, new = two_versions(
+            work,
+            [
+                ("_guid/one", coil("b", 1, 100)),
+                ("_guid/two", coil("a", 100, 200)),
+                ("_guid/three", coil("a", 200, 300)),
+            ],
+        )
+        changes = collect_changes(old, new, include_comments=False)
+        state = attach_reach(changes, xref_for(new, work / "x.sqlite"), max_depth=1, max_nodes=50)
+        body = "\n".join(render(changes, state, 10))
+        assert "stopped at a limit" in body, body
+
+
 def main() -> int:
     test_a_changed_contact_reaches_what_the_rung_drives()
     test_an_added_rung_is_followed_too()
@@ -241,6 +312,9 @@ def main() -> int:
     test_an_unreadable_rung_makes_the_reach_incomplete_and_says_so()
     test_the_output_calls_the_reach_candidates()
     test_written_devices_follows_the_decoder_on_what_was_read()
+    test_a_reach_that_stopped_at_a_limit_is_not_called_checked()
+    test_a_node_limit_is_reported_the_same_way()
+    test_the_page_says_which_change_was_cut_short()
     print("change impact checks passed")
     return 0
 
