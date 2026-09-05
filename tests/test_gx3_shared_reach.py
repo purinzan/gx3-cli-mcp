@@ -20,6 +20,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from gx3cli.gx3_analysis_state import PARTIAL, SEMANTICS
 from gx3cli.gx3_change_impact import ORDER, attach_reach, collect_changes, written_devices
 from gx3cli.gx3_reach import reach, successors, has_value_edges
 from gx3cli.gx3_xref import downstream, main as xref_main
@@ -83,7 +84,7 @@ def test_a_block_write_is_followed_through_the_middle_of_its_run() -> None:
         write_program(work / "new", [("_guid/b", BMOV_EDITED), ("_guid/m", MOV_FROM_MIDDLE)])
         db = build_xref(work / "new", work / "x.sqlite")
 
-        devices, _ = written_devices(BMOV_EDITED)
+        devices, _, _ = written_devices(BMOV_EDITED)
         assert devices == ["D400", "D401", "D402", "D403"], devices
 
         changes = collect_changes(work / "old", work / "new", include_comments=False)
@@ -214,6 +215,97 @@ def test_a_transfer_outranks_sharing_a_rung_as_the_basis() -> None:
         assert bases.get("D200") == "via MOV", bases
 
 
+DYNAMIC_BMOV = rung("BMOV:D:D:D", "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:d{s=#:a=10:vt=nn}")
+DYNAMIC_BMOV_EDITED = rung("BMOV:D:D:D", "d{s=#:a=310:vt=nn}:d{s=#:a=400:vt=nn}:d{s=#:a=10:vt=nn}")
+
+
+def test_a_run_whose_length_lives_in_a_device_is_not_treated_as_settled() -> None:
+    """`BMOV D300 D400 D10` writes as many words as D10 holds when it runs.
+
+    The instruction was read correctly, so this is not a decoding gap; how far
+    the run reaches is a value the running program has. Reported as "checked"
+    it claimed the write was D400 and nothing else, which is true only if D10
+    happens to hold 1.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "old", [("_guid/b", DYNAMIC_BMOV)])
+        write_program(work / "new", [("_guid/b", DYNAMIC_BMOV_EDITED)])
+        db = build_xref(work / "new", work / "x.sqlite")
+
+        devices, unreadable, unsettled = written_devices(DYNAMIC_BMOV_EDITED)
+        assert devices == ["D400"], devices
+        assert not unreadable, "the instruction reads fine; only its extent is open"
+        assert unsettled, "a run of unknown length was recorded as settled"
+
+        changes = collect_changes(work / "old", work / "new", include_comments=False)
+        state = attach_reach(changes, db, max_depth=3, max_nodes=50, root=work / "new")
+        assert state.state == PARTIAL, state
+        assert state.stage == SEMANTICS, state
+        assert not state.conclusive
+        assert "held in a device" in state.reason, state.reason
+
+
+def test_a_constant_run_stays_settled() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "old", [("_guid/b", BMOV)])
+        write_program(work / "new", [("_guid/b", BMOV_EDITED)])
+        db = build_xref(work / "new", work / "x.sqlite")
+        changes = collect_changes(work / "old", work / "new", include_comments=False)
+        state = attach_reach(changes, db, max_depth=3, max_nodes=50, root=work / "new")
+        assert state.stage != SEMANTICS, state
+
+
+def test_the_walk_matches_a_device_inside_a_recorded_run() -> None:
+    """Asking about the middle of a run finds the rung that covers it.
+
+    A run is stored once, under its first device, with its length beside it, so
+    matching on the name alone answers "nothing uses D301" about a device a
+    rung reads every scan.
+
+    The row here is written by hand because the builder does not currently
+    record a run on the reading side: `BMOV (s) (d) (n)` copies a run from (s),
+    and `FMOV (s) (d) (n)` fills from a single (s), and the manual data in this
+    repository spells both as ("(s)", "(d)", "(n)"). Which of the two an
+    instruction is cannot be told from what we have, so it is not guessed. The
+    walk is ready for those rows; nothing produces them yet.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "p", [("_guid/m", MOV_FROM_MIDDLE)])
+        db = build_xref(work / "p", work / "x.sqlite")
+
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            con.execute(
+                "insert into xref(device, device_type, number, range_len, access, role,"
+                " opcode, arg_index, const_args, detail, access_basis, lddb, pos, pou,"
+                " step, title, comment, parse_status)"
+                " values ('D300','D',300,4,'read','','BLOCK',0,'','','manual',"
+                " '001_LDDB.db', 999, '001', 999, '', '', 'exact')"
+            )
+            con.execute(
+                "insert into xref(device, device_type, number, range_len, access, role,"
+                " opcode, arg_index, const_args, detail, access_basis, lddb, pos, pou,"
+                " step, title, comment, parse_status)"
+                " values ('D888','D',888,1,'write','','BLOCK',1,'','','manual',"
+                " '001_LDDB.db', 999, '001', 999, '', 'downstream of the run', 'exact')"
+            )
+            con.commit()
+
+            named = {step.device for step in reach(con, "D300", 2, 50).steps}
+            middle = {step.device for step in reach(con, "D301", 2, 50).steps}
+            past_end = {step.device for step in reach(con, "D304", 2, 50).steps}
+        finally:
+            con.close()
+
+        assert "D888" in named, named
+        assert "D888" in middle, "a device inside the run was not matched"
+        assert "D888" not in past_end, "a device past the end of the run was matched"
+
+
 def main() -> int:
     test_a_block_write_is_followed_through_the_middle_of_its_run()
     test_a_reordered_pair_of_rungs_is_a_change()
@@ -221,6 +313,9 @@ def main() -> int:
     test_a_cross_reference_of_another_project_is_refused()
     test_both_callers_walk_the_same_graph()
     test_a_transfer_outranks_sharing_a_rung_as_the_basis()
+    test_a_run_whose_length_lives_in_a_device_is_not_treated_as_settled()
+    test_a_constant_run_stays_settled()
+    test_the_walk_matches_a_device_inside_a_recorded_run()
     print("shared reach checks passed")
     return 0
 

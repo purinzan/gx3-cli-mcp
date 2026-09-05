@@ -23,6 +23,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+from gx3cli.gx3_device_name import split_device
+
 
 SAME_RUNG = "same-rung"
 
@@ -88,8 +90,25 @@ def successors(
     much weaker. Collapsing them was the thing #36 existed to stop.
     """
     read_access = ("read",) if strict_bit else ("read", "ref", "both")
+
+    # A block instruction is recorded once, under the first device of the run
+    # it covers, with the length beside it. So a rung that reads D300..D303 has
+    # one row saying "D300, 4 long", and asking about D301 by name finds
+    # nothing -- which reads as "nothing uses it". The occurrence is matched on
+    # the run as well as on the name, the same way `xref where-used` does.
+    parsed = split_device(device)
+    match = "r.device = ?"
+    match_params: list[Any] = [device]
+    if parsed is not None:
+        dev_type, number = parsed
+        match = (
+            "(r.device = ? or (r.device_type = ? and r.range_len > 1"
+            " and r.number <= ? and ? < r.number + r.range_len))"
+        )
+        match_params = [device, dev_type, number, number]
+
     roles = ""
-    params: list[Any] = [device, *read_access, "write", "both"]
+    params: list[Any] = [*match_params, *read_access, "write", "both"]
     if strict_bit:
         roles = (
             f" and r.role in ({','.join('?' * len(CONTACT_ROLES))})"
@@ -101,7 +120,7 @@ def successors(
         select distinct w.device as device, w.comment as comment, w.pou as pou,
                w.step as step, w.role as role
         from xref r join xref w on r.lddb = w.lddb and r.pos = w.pos
-        where r.device = ? and r.access in ({','.join('?' * len(read_access))})
+        where {match} and r.access in ({','.join('?' * len(read_access))})
           and w.access in (?, ?) and w.device <> r.device
           {roles}
         """,

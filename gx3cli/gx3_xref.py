@@ -28,7 +28,7 @@ from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_occurrences
-from gx3cli.gx3_reach import has_value_edges, successors
+from gx3cli.gx3_reach import has_value_edges, reach
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_program_map import load_program_map
@@ -632,39 +632,35 @@ def downstream(args: argparse.Namespace) -> int:
             "edges. Rebuild it to tell a transfer from a co-occurrence.\n"
         )
 
-    visited = {device}
-    frontier = [(device, 0)]
-    total = 0
-    while frontier:
-        dev, depth = frontier.pop(0)
-        if depth >= args.max_depth:
-            continue
-        children = successors(con, dev, has_flow, args.strict_bit)
-        shown = 0
-        for ch, basis in children:
-            child = ch["device"]
-            if child in visited:
-                continue
-            visited.add(child)
-            total += 1
-            shown += 1
-            if total > args.max_nodes:
-                print(f"... truncated at {args.max_nodes} devices")
-                con.close()
-                return 0
-            indent = "  " * (depth + 1)
-            step = f"st{ch['step']}" if ch["step"] is not None else ""
-            comment = ch["comment"] or ""
+    found = reach(con, device, args.max_depth, args.max_nodes, args.strict_bit)
+
+    # Grouped by where each device was reached from, so the per-parent cap
+    # and the indentation still work while the walk itself is the shared one.
+    by_source: dict[str, list] = {}
+    for item in found.steps:
+        by_source.setdefault(item.source, []).append(item)
+
+    for source, items in by_source.items():
+        for item in items[: args.max_children]:
+            indent = "  " * item.depth
+            step = f"st{item.step}" if item.step is not None else ""
             print(
-                f"{indent}{child:<14} {ch['role']:<8} {basis:<10} "
-                f"{ch['pou']:<6}{step:<7} {comment}"
+                f"{indent}{item.device:<14} {item.basis:<10} "
+                f"{item.pou:<6}{step:<7} {item.comment}".rstrip()
             )
-            frontier.append((child, depth + 1))
-            if shown >= args.max_children:
-                remaining = len(children) - shown
-                if remaining > 0:
-                    print(f"{indent}... {remaining} more direct targets of {dev} suppressed")
-                break
+        if len(items) > args.max_children:
+            indent = "  " * items[0].depth
+            print(
+                f"{indent}... {len(items) - args.max_children} more direct targets "
+                f"of {source} suppressed"
+            )
+
+    total = len(found.steps)
+    if found.truncated:
+        print(
+            f"\n... the walk stopped at {', '.join(sorted(found.stopped))}; "
+            "devices past that are not listed"
+        )
     print(f"\ntotal affected devices: {total} (visited within depth {args.max_depth})")
     con.close()
     return 0
