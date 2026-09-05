@@ -246,6 +246,19 @@ def row_dict(row: sqlite3.Row) -> dict[str, object]:
     return {key: row[key] for key in row.keys()}
 
 
+def device_filter(device: str) -> tuple[str, tuple[object, ...]]:
+    """Use the same exact/range predicate for page rows and total counts."""
+    parsed = _split_device(device)
+    if parsed is None:
+        return "device = ?", (device,)
+    dev_type, number = parsed
+    return (
+        "device = ? or (device_type = ? and number <= ? "
+        "and range_len > 1 and ? < number + range_len)",
+        (device, dev_type, number, number),
+    )
+
+
 def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sqlite3.Row]:
     """Occurrences of a device, including the runs that cover it unnamed.
 
@@ -258,24 +271,24 @@ def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sq
     running the program, and a guess here would put occurrences on devices the
     instruction may never touch.
     """
-    parsed = _split_device(device)
-    if parsed is None:
-        return con.execute(
-            "select * from xref where device=? order by pou, pos limit ?", (device, limit)
-        ).fetchall()
-    dev_type, number = parsed
+    predicate, params = device_filter(device)
     return con.execute(
-        """
-        select * from xref
-        where device = ?
-           or (device_type = ?
-               and number <= ?
-               and range_len > 1
-               and ? < number + range_len)
-        order by pou, pos limit ?
-        """,
-        (device, dev_type, number, number, limit),
+        f"select * from xref where {predicate} order by pou, pos, id limit ?",
+        (*params, limit),
     ).fetchall()
+
+
+def device_counts(con: sqlite3.Connection, device: str) -> dict[str, int]:
+    predicate, params = device_filter(device)
+    counts = {"writers": 0, "readers": 0, "refs": 0}
+    for row in con.execute(
+        f"select access, count(*) as n from xref where {predicate} group by access", params
+    ):
+        group = "writers" if row["access"] in {"write", "both"} else (
+            "readers" if row["access"] == "read" else "refs"
+        )
+        counts[group] += int(row["n"])
+    return counts
 
 
 def indexed_note(con: sqlite3.Connection, device: str) -> str:
@@ -324,10 +337,18 @@ def span_note(row: sqlite3.Row, device: str) -> str:
 def where_used(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
-    rows = rows_for_device(con, device, args.limit)
-    if not rows:
-        print(f"no occurrences: {device}")
-        return 1
+    try:
+        rows = rows_for_device(con, device, args.limit)
+        counts = device_counts(con, device)
+        note = indexed_note(con, device).strip()
+    finally:
+        con.close()
+    total = sum(counts.values())
+    truncated = len(rows) < total
+    warnings = [note] if note else []
+    if truncated:
+        warnings.insert(0, f"Note: showing {len(rows)} of {total} occurrences (--limit {args.limit}); "
+                        "writers/readers may be omitted. Increase --limit or use --limit -1 for all occurrences.")
     comment = next((r["comment"] for r in rows if r["comment"]), "")
     writers = [r for r in rows if r["access"] in {"write", "both"}]
     readers = [r for r in rows if r["access"] == "read"]
@@ -345,6 +366,12 @@ def where_used(args: argparse.Namespace) -> int:
                             "writers": [row_dict(r) for r in writers],
                             "readers": [row_dict(r) for r in readers],
                             "refs": [row_dict(r) for r in refs],
+                            "total_counts": counts,
+                            "total_count": total,
+                            "returned_count": len(rows),
+                            "limit": args.limit,
+                            "truncated": truncated,
+                            "warnings": warnings,
                         }
                     ],
                 },
@@ -352,23 +379,30 @@ def where_used(args: argparse.Namespace) -> int:
                 indent=2,
             )
         )
-        con.close()
-        return 0
+        return 0 if total else 1
+    if not total:
+        print(f"no occurrences: {device}")
+        for warning in warnings:
+            print(warning)
+        return 1
     print(f"{device} {comment}".rstrip())
-    print(f"\nWriters ({len(writers)}):")
+    for warning in warnings:
+        print(warning)
+
+    def heading(name: str, shown: int) -> str:
+        count = counts[name.lower()]
+        return f"\n{name} ({shown} shown / {count} total):" if truncated else f"\n{name} ({shown}):"
+
+    print(heading("Writers", len(writers)))
     for r in writers:
         print(fmt_row(r) + span_note(r, device))
-    print(f"\nReaders ({len(readers)}):")
+    print(heading("Readers", len(readers)))
     for r in readers:
         print(fmt_row(r) + span_note(r, device))
-    if refs:
-        print(f"\nUnclassified refs ({len(refs)}):")
+    if counts["refs"]:
+        print(heading("Refs", len(refs)).replace("Refs", "Unclassified refs"))
         for r in refs:
             print(fmt_row(r) + span_note(r, device))
-    note = indexed_note(con, device)
-    if note:
-        print(note)
-    con.close()
     if args.cross:
         print_cross_where_used(args, device)
     return 0
@@ -552,7 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("where-used", help="list writers/readers of one device")
     p.add_argument("device")
-    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--limit", type=int, default=200, help="maximum occurrences shown; -1 shows all (totals are always reported)")
     p.add_argument("--cross", action="store_true", help="also show linked devices in other project xref DBs")
     p.add_argument("--project", default=None, help="current project label for --cross; defaults from --root")
     p.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="link-map sqlite path for --cross")
