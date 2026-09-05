@@ -279,12 +279,12 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
         occ = decode_args(raw_args, arg_tokens, hop.op, labels)
         wset, rmw = write_indices(hop.op, len(raw_args))
         basis = write_index_basis(hop.op, len(raw_args))
-        # Only the destination is given a span. Whether a source covers the
-        # same run differs by instruction -- BMOV reads (n) words, FMOV repeats
-        # one -- and the operand tables do not say which, so claiming a read
-        # range here would be a guess. Missing a read is a smaller wrong answer
-        # than inventing one.
+        # The destination always gets the span. A source gets it only where
+        # the instruction is known to read a run of the same length -- see
+        # SOURCE_RUN_OPERANDS, which is written per instruction because the
+        # operand tables spell BMOV and FMOV identically.
         span, span_basis = block_span(hop.op, raw_args)
+        source_runs = source_run_indices(hop.op, len(raw_args)) if span != 1 else set()
         for a in occ:
             if a.is_index_register:
                 # It shares its arg_index with the operand it modifies, so the
@@ -302,6 +302,15 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
                     a.detail = (a.detail + "; " if a.detail else "") + (
                         f"covers {span} devices" if span else "covers a run of unknown length"
                     )
+            elif a.arg_index in source_runs:
+                a.access = "read"
+                a.range_len = span
+                a.access_basis = a.access_basis or span_basis
+                a.detail = (a.detail + "; " if a.detail else "") + (
+                    f"reads a run of {span} devices"
+                    if span
+                    else "reads a run of unknown length"
+                )
             else:
                 a.access = "read"
             a.access_basis = basis
@@ -339,6 +348,36 @@ def top_level_arg_items(text: str) -> list[str]:
             start = index + 1
     items.append(text[start:])
     return [item for item in items if item]
+
+
+# Instructions whose source operand covers the same run as the destination.
+#
+# The operand tables cannot tell these apart. BMOV and FMOV are both spelled
+# ("(s)", "(d)", "(n)"): one copies a run of (n) words, the other repeats a
+# single word (n) times, and nothing in the generated tables says which. So the
+# difference is written down here, per instruction, from what the instruction
+# is documented to do -- and only where that is unambiguous.
+#
+# Anything absent keeps a length of 1. That is the reading that misses a
+# device rather than inventing one, which is the right way round: a missed
+# occurrence is found by looking, an invented one is believed.
+SOURCE_RUN_OPERANDS: dict[str, tuple[str, ...]] = {
+    # Block transfer: (n) words are read from (s) and written to (d).
+    "BMOV": ("(s)",),
+    "BMOVL": ("(s)",),
+}
+
+
+def source_run_indices(opcode: str, argc: int) -> set[int]:
+    """Which operand positions read a run as long as the destination's."""
+    base = base_opcode(opcode)
+    operands = SOURCE_RUN_OPERANDS.get(base) or SOURCE_RUN_OPERANDS.get(opcode)
+    if not operands:
+        return set()
+    names = manual_operand_names(opcode, argc) or manual_operand_names(base, argc)
+    if names is None:
+        return set()
+    return {names.index(name) for name in operands if name in names}
 
 
 def block_span(opcode: str, raw_args: list[str]) -> tuple[int, str]:

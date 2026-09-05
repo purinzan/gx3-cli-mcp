@@ -60,8 +60,19 @@ def test_the_destination_carries_the_length_the_manual_names() -> None:
     bmov = [entry for entry in operations if entry[1] == "BMOV"][0]
     spans = {occ.device: (occ.access, occ.range_len) for occ in bmov[2]}
     assert spans["D64061"] == ("write", 4), spans
-    # Whether a source covers the same run differs by instruction and the
-    # operand tables do not say, so the source stays a single device.
+    # BMOV copies a run: the source covers the same four devices. Which
+    # instructions do that is written down per instruction, because the
+    # operand tables spell BMOV and FMOV identically -- see
+    # SOURCE_RUN_OPERANDS, and the fill case below.
+    assert spans["D64060"] == ("read", 4), spans
+
+
+def test_a_fill_reads_one_device_however_many_it_writes() -> None:
+    fill = ROW.replace(":BMOV:", ":FMOV:")
+    operations, _ = parse_row_occurrences(fill)
+    fmov = [entry for entry in operations if entry[1] == "FMOV"][0]
+    spans = {occ.device: (occ.access, occ.range_len) for occ in fmov[2]}
+    assert spans["D64061"] == ("write", 4), spans
     assert spans["D64060"] == ("read", 1), spans
 
 
@@ -124,6 +135,7 @@ def test_the_stamp_moved_with_the_change() -> None:
 
 def main() -> int:
     test_the_destination_carries_the_length_the_manual_names()
+    test_a_fill_reads_one_device_however_many_it_writes()
     test_an_instruction_with_no_count_operand_is_left_alone()
     test_a_count_held_in_a_device_is_reported_as_unknown()
     test_a_search_finds_the_device_the_run_writes_without_naming()

@@ -49,7 +49,7 @@
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
 | `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
-| `test_gx3_shared_reach.py` | #76 の再現3件（BMOV の範囲途中を経由した到達、ラング順序の入替え、別プロジェクトの xref 指定）と、change-impact と downstream が同じグラフを歩くことを検査する。 |
+| `test_gx3_shared_reach.py` | #76 の再現3件（BMOV の範囲途中を経由した到達、ラング順序の入替え、別プロジェクトの xref 指定）と、change-impact と downstream が同じグラフを歩くことを検査する。さらに、`BMOV D300 D400 K4` → `MOV D401 D900` の検体を**無加工**で通し、D300〜D303 のどこから探索しても D900 へ到達すること、FMOV の読出は展開されないこと、書込範囲が探索中も引き継がれることを検査する。 |
 | `test_gx3_change_impact.py` | 接点変更が駆動先まで到達すること、コメントのみ・キャンバス寸法のみの変更に影響一覧を付けないこと、要素の移動は保守的に論理変更として扱うこと、解釈できないラングを含む場合に到達先が不完全である旨を出すことを検査する。 |
 | `test_gx3_flow_consumers.py` | `graph --type device-flow` が値の出所を辿れること（ワードデバイスは以前まったく辿れなかった）、`lint` の multi-writer が分かる範囲で値の出所を併記すること、辺が無い場合は従来どおりの表示に戻ることを検査する。さらに `external-value-source` チェックが、ラダーが書かないワードからの転送を「外部との境界」として挙げること、リフレッシュエリアのデバイスを除外すること、リフレッシュ情報が無い場合は件数を水増しせず未評価とすることを検査する。 |
 | `test_gx3_flow_in_xref.py` | xref に値の流れ（source→destination）が格納され、MOV が1本の有向辺、BMOV が範囲と語数、二項演算が read-modify-write として記録されること、未知命令に辺を作らないこと、`downstream` が転送（via OPCODE）と同一ラング上の共起（same-rung）を区別することを検査する。 |
@@ -64,7 +64,7 @@
 | `test_gx3_step_not_pos.py` | rung-text の位置表示が内部 pos ではなく GX Works3 のステップ番号であること、ステップ不明時は pos と明示すること、印字ラダーの表示と一致することを検査する。 |
 | `test_gx3_trace_state.py` | trace-device の打切り・未解釈が共通語彙で結論の直前に出ること、完了した追跡では何も出ないこと、未解釈が打切りより優先されることを検査する。 |
 | `test_gx3_analysis_state.py` | 実行できなかった検査が「検出0件」として正常扱いされないこと、理由と次の手順が summary に残ること、--require-evaluated で落とせることを検査する。さらに、checked 以外の結果は5段階（発見／復元／配線／実行意味／追跡）のどれで止まったかを必ず名乗ることを検査する。 |
-| `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
+| `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。BMOV は読出側も同じ範囲を持ち、FMOV は持たないこと（命令ごとの規則）も検査する。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
