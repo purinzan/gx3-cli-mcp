@@ -127,6 +127,20 @@ gx3-cli device-dictionary --root project.gx3 --format csv -o address-comment.csv
 
 このコマンドは CLI 専用です。MCP からは公開せず、PLC 書き込み、run/stop、download、online edit は実装しません。
 
+## デバイス参照検索の件数と限界
+
+`gx3-cli xref where-used DEVICE --root project.gx3` は既定で最大200件を表示します。
+上限で省略がある場合、書込・読出・未分類参照それぞれの表示件数と総件数、
+省略の警告を表示します。表示された書込が0件でも、総件数が0件とは限りません。
+`--limit -1` で全件を表示できます。
+
+JSONでは各 `results` 要素に `total_counts`、`total_count`、`returned_count`、
+`limit`、`truncated`、`warnings` を返します。既存の `writers` / `readers` / `refs`
+配列は表示対象の行です。該当0件でもJSONを返し、終了コードは従来どおり1です。
+
+インデックス修飾によって検索対象へ到達する可能性は、該当0件の場合も警告します。
+総件数は静的に特定できた参照の件数であり、実行時に到達する全アドレスを保証しません。
+
 ## MCP で AI から使う
 
 MCP クライアント設定例:
@@ -155,20 +169,6 @@ gx3-cli synthetic-project demo.gx3 --overwrite
 gx3-cli doctor --root demo.gx3
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 ```
-
-## デバイス参照検索の件数と限界
-
-`gx3-cli xref where-used DEVICE --root project.gx3` は既定で最大200件を表示します。
-上限で省略がある場合、書込・読出・未分類参照それぞれの表示件数と総件数、
-省略の警告を表示します。表示された書込が0件でも、総件数が0件とは限りません。
-`--limit -1` で全件を表示できます。
-
-JSONでは各 `results` 要素に `total_counts`、`total_count`、`returned_count`、
-`limit`、`truncated`、`warnings` を返します。既存の `writers` / `readers` / `refs`
-配列は表示対象の行です。該当0件でもJSONを返し、終了コードは従来どおり1です。
-
-インデックス修飾によって検索対象へ到達する可能性は、該当0件の場合も警告します。
-総件数は静的に特定できた参照の件数であり、実行時に到達する全アドレスを保証しません。
 
 ## 注意
 
