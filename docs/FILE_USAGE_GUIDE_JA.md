@@ -49,6 +49,7 @@
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
 | `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
+| `test_gx3_identity_reach.py` | index-lite と project-survey も入力指紋を記録し、別プロジェクトの索引を拒否すること、root 未指定の呼び出しは従来通り動くことを検査する。 |
 | `test_gx3_input_identity.py` | 入力指紋が内容の変化に追随すること、別プロジェクトで作られた xref が拒否されること、指紋を持たない古い DB は二重に失敗しないことを検査する。 |
 | `test_gx3_step_not_pos.py` | rung-text の位置表示が内部 pos ではなく GX Works3 のステップ番号であること、ステップ不明時は pos と明示すること、印字ラダーの表示と一致することを検査する。 |
 | `test_gx3_trace_state.py` | trace-device の打切り・未解釈が共通語彙で結論の直前に出ること、完了した追跡では何も出ないこと、未解釈が打切りより優先されることを検査する。 |
