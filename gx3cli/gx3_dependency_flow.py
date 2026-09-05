@@ -9,7 +9,7 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_device_name import split_device as _split_device
+from gx3cli.gx3_device_name import format_device, split_device, split_device as _split_device
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import (
     LadderRow,
@@ -166,17 +166,35 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
 
     found: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        found.setdefault(row["destination_device"], []).append(
-            {
-                "device": row["source_device"],
-                "opcode": row["opcode"],
-                "pou": row["pou"],
-                "step": row["step"],
-                "range_count": int(row["range_count"] or 1),
-                "read_modify_write": bool(row["read_modify_write"]),
-            }
-        )
+        record = {
+            "device": row["source_device"],
+            "opcode": row["opcode"],
+            "pou": row["pou"],
+            "step": row["step"],
+            "range_count": int(row["range_count"] or 1),
+            "read_modify_write": bool(row["read_modify_write"]),
+        }
+        destination = str(row["destination_device"])
+        found.setdefault(destination, []).append(record)
+
+        # A block transfer writes a run and names its first device, so keying
+        # only on that name left every other word of the run looking like a
+        # device nothing writes. Asked where D900 came from, the trace answered
+        # D401 and marked it terminal -- "this is the origin" -- about a device
+        # the BMOV above it fills every scan.
+        for member in _run_members(destination, record["range_count"]):
+            found.setdefault(member, []).append(record)
     return found
+
+
+def _run_members(device: str, length: int) -> list[str]:
+    if length <= 1:
+        return []
+    parsed = split_device(device)
+    if parsed is None:
+        return []
+    dev_type, number = parsed
+    return [format_device(dev_type, number + offset) for offset in range(1, length)]
 
 
 def build_flow(
@@ -223,7 +241,10 @@ def build_flow(
                     "comment": device_comment(source["device"], comments),
                     "depth": depth + 1,
                     "driver_row_count": len(drivers.get(source["device"], [])),
-                    "terminal": not drivers.get(source["device"]),
+                    "terminal": (
+                        not drivers.get(source["device"])
+                        and not sources.get(source["device"])
+                    ),
                 }
             edges.append(
                 {
@@ -243,7 +264,9 @@ def build_flow(
             "comment": device_comment(device, comments),
             "depth": depth,
             "driver_row_count": len(rows_for_device),
-            "terminal": not rows_for_device,
+            # "terminal" is read as "this is where the value comes from", so a
+            # device that no coil drives but an instruction writes is not one.
+            "terminal": not rows_for_device and not sources.get(device),
         }
 
         for row in rows_for_device:

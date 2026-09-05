@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from gx3cli.gx3_analysis_state import (
+    DISCOVERY,
+    UNSUPPORTED,
+    AnalysisState,
+    checked,
+)
+
 
 DB_PATTERNS = {
     "lddb": "*_LDDB.db",
@@ -83,6 +90,36 @@ class GX3FormatInventory:
         ]
         detail = ", ".join(part for part in parts if part)
         return f"unsupported/non-ladder formats detected: {detail}" if detail else "no known program DB files"
+
+
+def unsupported_programs(inventory: "GX3FormatInventory") -> AnalysisState:
+    """Programs in a form this tool does not read, if the project holds any.
+
+    The counts every command prints are of ladder programs. A project with an
+    FBD program alongside them reported "programs 1" for two, and every answer
+    after that -- "nothing writes this device", "0 findings" -- was quietly
+    about the ladder subset. The inventory has known about the other files all
+    along; nothing asked it.
+
+    This is what the UNSUPPORTED state was defined for, and until now nothing
+    constructed it: the vocabulary claimed a distinction the code never made.
+    """
+    kinds = []
+    if inventory.fbddb_count:
+        kinds.append(f"{inventory.fbddb_count} FBD")
+    if inventory.stdb_count:
+        kinds.append(f"{inventory.stdb_count} ST")
+    if not kinds:
+        return checked()
+    return AnalysisState(
+        UNSUPPORTED,
+        reason=(
+            f"{', '.join(kinds)} program(s) here are in a form this does not read; "
+            "the numbers below cover the ladder programs only"
+        ),
+        next_step="read those in GX Works3; this tool reports on LD",
+        stage=DISCOVERY,
+    )
 
 
 def build_format_inventory(root: Path) -> GX3FormatInventory:

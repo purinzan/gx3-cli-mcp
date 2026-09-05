@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_output import add_format_argument, emit
+from gx3cli.gx3_analysis_state import CHECKED
+from gx3cli.gx3_format import build_format_inventory, unsupported_programs
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_rung_text import RungText, collect
 
@@ -209,6 +211,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+    # Said before the counts, because it is a statement about what the counts
+    # cover: "programs 1" for a project holding two is a wrong answer, not a
+    # partial one.
+    unread = unsupported_programs(build_format_inventory(root))
+    if unread.state != CHECKED:
+        print(unread.line("scope"))
+        print("")
+
     items = collect(root)
     if not items:
         print("no rungs found")
