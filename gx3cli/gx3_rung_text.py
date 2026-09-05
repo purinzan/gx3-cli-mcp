@@ -37,6 +37,7 @@ from gx3cli.gx3_ladder_logic import (
     positioned_elements,
 )
 from gx3cli.gx3_arg_decode import write_indices
+from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
 from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
@@ -53,10 +54,17 @@ class RungText:
     opcode: str
     device: str
     condition: str
+    # The GX Works3 step number, where the program map knows it. It is not the
+    # same number as pos, which is this format's own row offset -- and a bare
+    # ":2048" reads exactly like a step to someone looking for the rung in GX
+    # Works3.
+    step: int | None = None
 
     @property
     def location(self) -> str:
-        return f"{self.lddb}:{self.pos}"
+        if self.step is not None:
+            return f"{self.lddb} st{self.step}"
+        return f"{self.lddb} pos{self.pos}"
 
     def to_line(self, width: int = 0) -> str:
         arrow = f"{self.opcode} {self.device}" if self.opcode not in ("", "OUT") else self.device
@@ -130,7 +138,9 @@ def driver_elements(row: LadderRow, labels: LabelResolver | None = None) -> list
     return sorted(elements, key=lambda element: (element.y, element.x))
 
 
-def rung_texts(row: LadderRow, labels: LabelResolver | None = None) -> list[RungText]:
+def rung_texts(
+    row: LadderRow, labels: LabelResolver | None = None, step: int | None = None
+) -> list[RungText]:
     out: list[RungText] = []
     for element in driver_elements(row, labels):
         try:
@@ -149,6 +159,7 @@ def rung_texts(row: LadderRow, labels: LabelResolver | None = None) -> list[Rung
                     opcode=(element.opcode or "").upper(),
                     device=device,
                     condition=condition,
+                    step=step,
                 )
             )
     return out
@@ -156,13 +167,15 @@ def rung_texts(row: LadderRow, labels: LabelResolver | None = None) -> list[Rung
 
 def collect(root: Path, lddb: str = "", device: str = "") -> list[RungText]:
     labels = load_label_resolver(root)
+    program_map = load_program_map(root)
     out: list[RungText] = []
     for row in load_rows(root, {}):
         if int(row.blocktype) != 0:
             continue
         if lddb and row.lddb != lddb:
             continue
-        for text in rung_texts(row, labels):
+        step = program_map.step_of(row.lddb, int(row.pos))
+        for text in rung_texts(row, labels, step):
             if device and text.device != device:
                 continue
             out.append(text)
@@ -186,7 +199,10 @@ def to_json(items: list[RungText]) -> list[dict[str, Any]]:
     return [
         {
             "lddb": item.lddb,
+            # Both, named: pos is this format's row offset, step is the number
+            # GX Works3 shows.
             "pos": item.pos,
+            "step": item.step,
             "title": item.title,
             "opcode": item.opcode,
             "device": item.device,

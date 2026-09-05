@@ -113,7 +113,9 @@ def test_json_carries_the_same_fields() -> None:
         items = collect(_fixture(tmp))
         rows = to_json(items)
         assert len(rows) == len(items)
-        assert set(rows[0]) == {"lddb", "pos", "title", "opcode", "device", "condition"}
+        # pos is this format's row offset and step is the number GX Works3 shows;
+    # both are carried, under their own names.
+    assert set(rows[0]) == {"lddb", "pos", "step", "title", "opcode", "device", "condition"}
 
 
 def main() -> int:
