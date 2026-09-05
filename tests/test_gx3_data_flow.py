@@ -87,6 +87,42 @@ def test_two_operand_arithmetic_keeps_read_modify_write_edge() -> None:
     assert all(record.read_modify_write for record in records)
 
 
+def test_a_pulse_instruction_flows_like_its_level_form() -> None:
+    """MOVP moves on the edge; where the value goes is the same question.
+
+    The acceptance criteria for #36 name pulse variants, and they worked --
+    41 edges over one real project, MOVP and BMOVP among them -- on the base
+    opcode falling out of base_opcode(). Nothing pinned it.
+    """
+    records = records_for_operation(
+        "MOVP",
+        2,
+        [occ("D100", 0, "read"), occ("D200", 1, "write")],
+    )
+    assert len(records) == 1, records
+    edge = records[0]
+    assert edge.record_kind == "edge"
+    assert edge.opcode == "MOVP"
+    assert (edge.source_device, edge.destination_device) == ("D100", "D200")
+    assert edge.confidence == "manual"
+
+
+def test_an_index_modified_operand_keeps_the_modifier_in_the_edge() -> None:
+    """D41000Z6 names one device and reaches another at run time.
+
+    The edge is recorded under the device the ladder names, with the modifier
+    kept in the detail: dropping it would state a provenance the program does
+    not have, and dropping the edge would lose the only evidence there is.
+    """
+    source = occ("D41000", 0, "read")
+    source.detail = "Z6 indexed"
+    records = records_for_operation("MOV", 2, [source, occ("D32704", 1, "write")])
+    assert len(records) == 1, records
+    edge = records[0]
+    assert edge.source_device == "D41000"
+    assert "indexed" in edge.source_detail, edge.source_detail
+
+
 def test_unknown_and_partial_operations_are_unresolved_not_edges() -> None:
     unknown = records_for_operation(
         "NOT_A_REAL_INSTRUCTION",
