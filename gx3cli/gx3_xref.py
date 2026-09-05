@@ -132,6 +132,39 @@ def open_xref_db(
     return con
 
 
+def member_rows(con: sqlite3.Connection) -> list[tuple]:
+    """One line per device an occurrence covers, including the one it names.
+
+    A block instruction is stored once, under the first device of its run. So
+    `where device = ?` about the middle of a run finds nothing, and half the
+    readers wrote exactly that. The correct predicate has existed in this file
+    all along; what did not exist was a way to be right without knowing it.
+
+    A run whose length lives in a device gets one member, the device it names.
+    How far it actually reaches is a value the running program holds, and rows
+    invented here would put occurrences on devices the instruction may never
+    touch.
+    """
+    rows = con.execute(
+        "select id, device, device_type, number, range_len from xref"
+    ).fetchall()
+    out: list[tuple] = []
+    for row in rows:
+        src_id, device, dev_type, number, length = row
+        out.append((src_id, device, dev_type, number, 0))
+        for offset in range(1, max(1, int(length or 1))):
+            out.append(
+                (
+                    src_id,
+                    _format_device(dev_type, number + offset),
+                    dev_type,
+                    number + offset,
+                    offset,
+                )
+            )
+    return out
+
+
 def flow_edge_rows(root: Path) -> list[tuple]:
     """The directed value-flow edges of a project, ready to store.
 
@@ -205,6 +238,7 @@ def build(args: argparse.Namespace) -> int:
         drop table if exists xref;
         drop table if exists meta;
         drop table if exists data_flow;
+        drop table if exists xref_members;
         create table meta(key text primary key, value text not null);
         create table xref(
             id integer primary key autoincrement,
@@ -315,8 +349,31 @@ def build(args: argparse.Namespace) -> int:
         """,
         flow_edge_rows(root),
     )
+    # Every device a row covers, one line each, so a reader can ask about a
+    # device instead of remembering that `device` is the first of a run. The
+    # occurrence rows are untouched: `xref.device` still means "the device the
+    # instruction names", and `run_offset` says which of the two a member is.
     con.executescript(
         """
+        create table xref_members(
+            src_id integer not null,
+            member_device text not null,
+            device_type text not null,
+            number integer not null,
+            run_offset integer not null
+        );
+        """
+    )
+    con.executemany(
+        "insert into xref_members(src_id, member_device, device_type, number, run_offset)"
+        " values (?, ?, ?, ?, ?)",
+        member_rows(con),
+    )
+    con.executescript(
+        """
+        create index idx_members_device on xref_members(member_device);
+        create index idx_members_span on xref_members(device_type, number);
+        create index idx_members_src on xref_members(src_id);
         create index idx_flow_source on data_flow(source_device);
         create index idx_flow_destination on data_flow(destination_device);
         create index idx_flow_row on data_flow(lddb, pos);

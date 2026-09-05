@@ -22,6 +22,7 @@ from gx3cli.gx3_exec_config import program_file_names
 from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_program_map import PouInfo, load_program_map
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_xref_read import has_members, occurrences_of
 from gx3cli.gx3_xref import default_db_path, normalize_device
 from gx3cli.gx3_instruction_table import is_edge_triggered
 
@@ -244,20 +245,38 @@ def to_xref_row(row: sqlite3.Row) -> XrefRow:
 
 
 def load_rows_for_device(con: sqlite3.Connection, device: str) -> list[XrefRow]:
-    rows = con.execute(
-        """
-        select * from xref
-        where device=?
-          and access in ('read', 'write', 'both')
-        order by pou, pos, id
-        """,
-        (device,),
-    ).fetchall()
+    """Occurrences that touch this device, runs included.
+
+    A block instruction names the first device of the run it writes, so asking
+    by name gave `writers=0` for every device inside one -- and a stale read of
+    such a device could never be found, which is the whole subject of this
+    command.
+    """
+    rows = occurrences_of(con, device, access=("read", "write", "both"))
     return [to_xref_row(row) for row in rows]
 
 
 def load_all_device_rows(con: sqlite3.Connection) -> dict[str, list[XrefRow]]:
+    """Every device, with the occurrences that touch it.
+
+    Grouped by the device an occurrence reaches, not by the one it names: a
+    BMOV over four words belongs to all four, and grouping on `xref.device`
+    put it under the first and left the rest looking untouched.
+    """
     grouped: dict[str, list[XrefRow]] = defaultdict(list)
+    if has_members(con):
+        rows = con.execute(
+            """
+            select x.*, m.member_device as member_device
+            from xref x join xref_members m on m.src_id = x.id
+            where x.access in ('read', 'write', 'both')
+            order by m.device_type, m.number, x.pou, x.pos, x.id
+            """
+        )
+        for row in rows:
+            grouped[str(row["member_device"])].append(to_xref_row(row))
+        return grouped
+
     for row in con.execute(
         """
         select * from xref

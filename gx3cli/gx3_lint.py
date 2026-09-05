@@ -45,6 +45,7 @@ from gx3cli.gx3_project_paths import (
     default_project_root,
 )
 from gx3cli.gx3_device_name import format_device, split_device
+from gx3cli.gx3_xref_read import device_match
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE, collect_alarms
@@ -596,7 +597,8 @@ def device_has_writer(ctx: LintContext, device: str) -> bool | None:
     if ctx.xref is None:
         return None
     row = ctx.xref.execute(
-        "select count(*) from xref where device=? and access in ('write','both')", (device,)
+        f"select count(*) from {device_match(ctx.xref)[0]} "
+        f"where {device_match(ctx.xref)[1]} and x.access in ('write','both')", (device,)
     ).fetchone()
     return int(row[0]) > 0
 
@@ -773,7 +775,9 @@ def check_link_range(ctx: LintContext) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for device, link in inbound.items():
         writers = ctx.xref.execute(
-            "select * from xref where device=? and access in ('write','both') order by pou, pos limit 12",
+            f"select x.* from {device_match(ctx.xref)[0]} "
+            f"where {device_match(ctx.xref)[1]} and x.access in ('write','both') "
+            f"order by x.pou, x.pos limit 12",
             (device,),
         ).fetchall()
         if not writers:
