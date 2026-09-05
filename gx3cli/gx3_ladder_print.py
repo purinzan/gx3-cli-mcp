@@ -191,7 +191,7 @@ def display_operands(
     the modifier folded into the name (K4M100, D100.5, D100Z2).
     """
     out: list[str] = []
-    for operand in parse_operands(raw_args, arg_tokens, allow_pointer=True):
+    for operand in parse_operands(raw_args, arg_tokens):
         if operand.kind == "label":
             ref = labels.resolve_token(operand.label_token) if labels is not None and operand.label_token else None
             out.append(ref.name if ref is not None else "?")
@@ -217,6 +217,10 @@ def display_operands(
                 out.append(f"{prefix}{value}")
             continue
 
+        if operand.kind == "pointer":
+            out.append(f"#P{operand.number}")
+            continue
+
         if operand.kind == "buffer":
             if operand.bit:
                 modifier = f".{int(operand.bit):X}"
@@ -232,9 +236,6 @@ def display_operands(
             continue
 
         number = int(operand.number)
-        if operand.device_type == "P":
-            out.append(f"#P{number}")
-            continue
         dev_text = format_device(operand.device_type, number) if operand.device_type else f"?{number}"
         if operand.index_reg:
             out.append(f"{dev_text}Z{operand.index_reg}")
@@ -351,6 +352,15 @@ def parse_rung(
         x, y = pos
         if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             wires.append((x, y, x + 1))
+            continue
+        if "s=ce{" not in raw:
+            # A connector, not an operation: GX writes e{s=src{n=#}} and
+            # e{s=dst{n=#}} where a rung continues on another grid row. They
+            # carry a position and no arguments, and counting one as an
+            # operation took a header op that belonged to the element after it
+            # -- so every device from there on was printed with the previous
+            # one's type. The cross-reference pairs on ce{ elements and was
+            # right; this now does the same.
             continue
         if op_index >= len(header_ops):
             continue

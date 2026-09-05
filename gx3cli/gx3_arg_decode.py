@@ -416,6 +416,12 @@ def decode_args(
             occs.append(make_label_occ(operand.label_token, arg_index, labels))
             continue
 
+        if operand.kind == "pointer":
+            # Where the program jumps or calls to, not a device anything reads
+            # or writes. It is left out of the occurrences and its token is
+            # spent by the walk, which is the part that matters.
+            continue
+
         if operand.kind == "const":
             if operand.index_reg:
                 # K2400Z2: the constant is an offset, the index register is a
@@ -430,7 +436,14 @@ def decode_args(
             suffix = ""
             detail = f"unit=0x{operand.unit:X}"
             if operand.bit:
-                suffix = f".{operand.bit}"
+                # GX Works3 spells a bit position in hexadecimal: bit 13 of a
+                # word is ".D", not ".13". Writing the decimal here made the
+                # cross-reference name a device the printed rung spells
+                # differently -- found by comparing the two over a corpus.
+                try:
+                    suffix = f".{int(operand.bit):X}"
+                except ValueError:
+                    suffix = f".{operand.bit}"
                 detail += f" bit={operand.bit}"
             elif operand.index_reg:
                 suffix = f"Z{operand.index_reg}"

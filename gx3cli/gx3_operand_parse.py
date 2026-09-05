@@ -47,6 +47,7 @@ class Operand:
     - ``buffer``   unit + number (the offset), with the same modifiers
     - ``const``    const_token ("K_1", "H_1", "String") + const_value, with
                    index_reg set for the K2400Z2 offset form
+    - ``pointer``  number, the P the ladder jumps or calls to; not a device
     - ``label``    label_token, the "_lid/..." reference
     - ``unknown``  the header and the element did not agree; nothing decoded
     """
@@ -66,17 +67,18 @@ class Operand:
     extra_numbers: tuple[int, ...] = ()
 
 
-def parse_operands(
-    raw_args: list[str], arg_tokens: list[str], allow_pointer: bool = False
-) -> list[Operand]:
+def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
     """Walk the element's values against the header's type tokens.
 
-    ``allow_pointer`` accepts the "P" type, which a printed rung spells as a
-    pointer (#P100) and which the cross-reference has no device for.
+    A pointer operand comes back as kind "pointer": the printed rung spells it
+    #P240 and the cross-reference has no device for it, but both have to spend
+    its "P" token. Leaving it unspent is what made a "CALL #P240 D13491" read
+    as a single D240 -- the pointer's number wearing the next operand's type,
+    and the operand that type belonged to gone.
     """
     ti = 0
     n_tokens = len(arg_tokens)
-    extra_types = ("U", "P") if allow_pointer else ("U",)
+    extra_types = ("U", "P")
 
     def peek() -> str:
         return arg_tokens[ti] if ti < n_tokens else ""
@@ -98,7 +100,7 @@ def parse_operands(
                 or tok in SKIP_ARG_TOKENS
                 or tok == "G"
                 or tok == "String"
-                or (allow_pointer and tok == "P")
+                or tok == "P"
                 or re.match(r"^[KHE]_", tok)
             ):
                 return
@@ -160,9 +162,12 @@ def parse_operands(
         if arg.startswith("d{"):
             dev_type = take_type()
             m = INNER_DEV_RE.search(arg)
+            kind = "device" if m else "unknown"
+            if dev_type == "P" and m:
+                kind = "pointer"
             operands.append(
                 Operand(
-                    "device" if m else "unknown",
+                    kind,
                     arg_index,
                     raw=arg,
                     device_type=dev_type,
