@@ -28,6 +28,7 @@ from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_reach import has_value_edges, successors
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
 from gx3cli.gx3_program_map import load_program_map
@@ -610,45 +611,10 @@ def print_cross_where_used(args: argparse.Namespace, device: str) -> None:
 def downstream(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
-    read_access = ("read",) if args.strict_bit else ("read", "ref", "both")
-    write_access = ("write", "both")
-
-    def written_with(dev: str) -> list[sqlite3.Row]:
-        roles = ""
-        if args.strict_bit:
-            roles = " and r1.role in ('a','b') and r2.role in ('c','SET','RST','PLS','PLF','OUT__16','OUTH__16')"
-        q = f"""
-            select distinct r2.device as device, r2.comment as comment, r2.pou as pou,
-                   r2.step as step, r2.role as role, r2.access as access
-            from xref r1 join xref r2 on r1.lddb = r2.lddb and r1.pos = r2.pos
-            where r1.device = ?
-              and r1.access in ({','.join('?' * len(read_access))})
-              and r2.access in ({','.join('?' * len(write_access))})
-              and r2.device <> r1.device
-              {roles}
-        """
-        return con.execute(q, (dev, *read_access, *write_access)).fetchall()
-
-    has_flow = bool(
-        con.execute(
-            "select count(*) from sqlite_master where type='table' and name='data_flow'"
-        ).fetchone()[0]
-    )
-
-    def value_flow_from(dev: str) -> dict[str, str]:
-        """Which of the devices below this one the value actually reaches.
-
-        A rung that reads D100 and writes D200 does not mean D100 went into
-        D200: MOV D100 D200 does, and two unrelated operands on the same rung
-        do not. Where an edge says which, the trace says so; where there is
-        none, the pair stays in the answer as what it is -- a co-occurrence.
-        """
-        if not has_flow:
-            return {}
-        rows = con.execute(
-            "select destination_device, opcode from data_flow where source_device = ?", (dev,)
-        ).fetchall()
-        return {row["destination_device"]: row["opcode"] for row in rows}
+    # The walk itself lives in gx3_reach, so a correction to it -- block
+    # instruction spans, value edges, exact limit reporting -- reaches this
+    # command and change-impact at once instead of one of the two.
+    has_flow = has_value_edges(con)
 
     start_comment = con.execute(
         "select comment from xref where device=? and comment<>'' limit 1", (device,)
@@ -673,10 +639,9 @@ def downstream(args: argparse.Namespace) -> int:
         dev, depth = frontier.pop(0)
         if depth >= args.max_depth:
             continue
-        children = written_with(dev)
-        flow = value_flow_from(dev)
+        children = successors(con, dev, has_flow, args.strict_bit)
         shown = 0
-        for ch in children:
+        for ch, basis in children:
             child = ch["device"]
             if child in visited:
                 continue
@@ -690,9 +655,6 @@ def downstream(args: argparse.Namespace) -> int:
             indent = "  " * (depth + 1)
             step = f"st{ch['step']}" if ch["step"] is not None else ""
             comment = ch["comment"] or ""
-            # "via -" reads better than "<--": the subtraction instruction is
-            # spelled "-", and an arrow glued to it is unreadable.
-            basis = f"via {flow[child]}" if child in flow else "same-rung"
             print(
                 f"{indent}{child:<14} {ch['role']:<8} {basis:<10} "
                 f"{ch['pou']:<6}{step:<7} {comment}"

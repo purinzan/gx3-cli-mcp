@@ -50,8 +50,11 @@ from gx3cli.gx3_analysis_state import (
     label_for,
 )
 from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_device_name import format_device
+from gx3cli.gx3_reach import reach
 from gx3cli.gx3_semantic_diff import ensure_root, load_side, logic_signature, summarize_change
 from gx3cli.gx3_workspace import prepare
+from gx3cli.gx3_xref import open_xref_db
 
 
 # What a change can be. The first three can alter behaviour; the rest cannot,
@@ -59,10 +62,11 @@ from gx3cli.gx3_workspace import prepare
 LOGIC = "logic"
 ADDED = "added"
 REMOVED = "removed"
+ORDER = "order"
 LAYOUT_ONLY = "layout-only"
 COMMENT_ONLY = "comment-only"
 
-BEHAVIOURAL = (LOGIC, ADDED, REMOVED)
+BEHAVIOURAL = (LOGIC, ADDED, REMOVED, ORDER)
 
 
 @dataclass
@@ -93,104 +97,41 @@ class Change:
 
 
 def written_devices(data: str) -> tuple[list[str], bool]:
-    """The devices a rung writes, and whether part of it could not be read."""
+    """The devices a rung writes, and whether part of it could not be read.
+
+    A block instruction names the first device of the run it writes and no
+    other: `BMOV D300 D400 K4` writes D400 through D403, and a walk that
+    started only from D400 missed everything reading D401. The occurrence
+    carries how many devices the run covers, so the span is spelled out here
+    rather than left for each caller to remember.
+
+    A run whose length is not a constant -- a count in a register, an
+    index-modified destination -- has no span that can be written down from the
+    file, and none is invented. The first device stands, and the rung is
+    reported as one whose extent is not settled.
+    """
     devices: list[str] = []
+    uncertain = False
     try:
         operations, status = parse_row_occurrences(data)
     except Exception:
         return [], True
     for operation in operations:
         for occ in operation[2]:
-            if occ.access in {"write", "both"} and occ.device and occ.device not in devices:
-                devices.append(occ.device)
-    return devices, status != "exact"
-
-
-def successors(con: sqlite3.Connection, device: str, has_flow: bool) -> list[tuple[Any, str]]:
-    """Everything one device leads to: same-rung writes, and value transfers."""
-    rows = con.execute(
-        """
-        select distinct w.device as device, w.comment as comment, w.pou as pou,
-               w.step as step, w.role as role
-        from xref r join xref w on r.lddb = w.lddb and r.pos = w.pos
-        where r.device = ? and r.access in ('read', 'ref', 'both')
-          and w.access in ('write', 'both') and w.device <> r.device
-        """,
-        (device,),
-    ).fetchall()
-    out: list[tuple[Any, str]] = [(row, "same-rung") for row in rows]
-    if has_flow:
-        for row in con.execute(
-            """
-            select f.destination_device as device, f.destination_comment as comment,
-                   f.pou as pou, f.step as step, f.opcode as role
-            from data_flow f where f.source_device = ?
-            """,
-            (device,),
-        ):
-            out.append((row, f"via {row['role']}"))
-    return out
-
-
-def reach_of(
-    con: sqlite3.Connection, device: str, max_depth: int, max_nodes: int
-) -> tuple[list[dict[str, Any]], set[str]]:
-    """Devices the given one can reach, and the limits that cost it something.
-
-    Static candidates. A device is here because something that reads the one
-    before it writes this, which is what the saved file supports and no more.
-
-    A limit is reported only when it actually hid something. Reaching the last
-    depth and finding nothing beyond it is a complete answer, not a truncated
-    one, and saying "truncated" there trains a reader to ignore the word --
-    which costs exactly as much as the silence it replaced. So a node at the
-    depth limit is asked whether it leads anywhere unseen, and the answer, not
-    the arithmetic, decides.
-    """
-    seen = {device}
-    out: list[dict[str, Any]] = []
-    stopped: set[str] = set()
-    frontier = [(device, 0)]
-    has_flow = bool(
-        con.execute(
-            "select count(*) from sqlite_master where type='table' and name='data_flow'"
-        ).fetchone()[0]
-    )
-    while frontier:
-        current, depth = frontier.pop(0)
-        candidates = successors(con, current, has_flow)
-        unseen = [(row, basis) for row, basis in candidates if str(row["device"]) not in seen]
-
-        if depth >= max_depth:
-            # The walk ends here. Whether that lost anything is a question
-            # about this node, not about the depth number.
-            if unseen:
-                stopped.add("max-depth")
-            continue
-
-        for row, basis in unseen:
-            name = str(row["device"])
-            if name in seen:
-                continue  # an earlier sibling in this same batch reached it
-            if len(out) >= max_nodes:
-                stopped.add("max-nodes")
-                break
-            seen.add(name)
-            out.append(
-                {
-                    "device": name,
-                    "comment": str(row["comment"] or ""),
-                    "from": current,
-                    "basis": basis,
-                    "pou": str(row["pou"] or ""),
-                    "step": row["step"],
-                    "depth": depth + 1,
-                }
-            )
-            frontier.append((name, depth + 1))
-        if "max-nodes" in stopped:
-            break
-    return out, stopped
+            if occ.access not in {"write", "both"} or not occ.device:
+                continue
+            if occ.is_index_register:
+                continue
+            span = max(1, int(occ.range_len or 1))
+            for offset in range(span):
+                name = (
+                    occ.device
+                    if offset == 0
+                    else format_device(occ.device_type, occ.number + offset)
+                )
+                if name and name not in devices:
+                    devices.append(name)
+    return devices, status != "exact" or uncertain
 
 
 # Devices that leave the PLC, or that a person is paged about. A reach of 135
@@ -211,6 +152,49 @@ def notable(reaches: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[d
     outputs = [item for item in reaches if is_output(str(item["device"]))]
     alarms = [item for item in reaches if is_alarm(str(item["comment"]))]
     return outputs, alarms
+
+
+def order_changes(
+    pou: str,
+    old_pou: dict[str, tuple[int, str, str]],
+    new_pou: dict[str, tuple[int, str, str]],
+) -> list[Change]:
+    """Rungs that kept their contents and changed places.
+
+    Two rungs writing the same coil give a different result depending on which
+    runs first, and the comparison before this one saw nothing at all: same
+    GUIDs, same rung data, therefore no change. The scan order is part of the
+    program.
+
+    What counts is the relative order, not the numbers. Positions are rewritten
+    whenever anything above them is edited, and calling that an execution
+    change would put a finding on nearly every diff.
+    """
+    shared = sorted(set(old_pou) & set(new_pou))
+    before = [guid for guid in sorted(shared, key=lambda g: old_pou[g][0])]
+    after = [guid for guid in sorted(shared, key=lambda g: new_pou[g][0])]
+    if before == after:
+        return []
+
+    place_before = {guid: index for index, guid in enumerate(before)}
+    moved = [
+        guid for index, guid in enumerate(after) if place_before[guid] != index
+    ]
+
+    out: list[Change] = []
+    for guid in moved:
+        pos, data, title = new_pou[guid]
+        writes, unreadable = written_devices(data)
+        was = place_before[guid]
+        now = after.index(guid)
+        out.append(
+            Change(
+                ORDER, pou, pos, title,
+                f"runs {was - now} place(s) earlier" if now < was else f"runs {now - was} place(s) later",
+                writes, [], unreadable,
+            )
+        )
+    return out
 
 
 def collect_changes(old_root: Path, new_root: Path, include_comments: bool = True) -> list[Change]:
@@ -253,6 +237,10 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
                 )
             )
 
+    for hexid in sorted(set(old_rows) & set(new_rows)):
+        pou = new_names.get(hexid) or old_names.get(hexid, hexid)
+        changes.extend(order_changes(pou, old_rows[hexid], new_rows[hexid]))
+
     # A POU that exists on one side only. Every rung in it is a change.
     for hexid in sorted(set(new_rows) - set(old_rows)):
         pou = new_names.get(hexid, hexid)
@@ -279,9 +267,23 @@ def collect_changes(old_root: Path, new_root: Path, include_comments: bool = Tru
     return changes
 
 
-def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes: int) -> AnalysisState:
-    con = sqlite3.connect(f"file:{xref_db}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
+def attach_reach(
+    changes: list[Change],
+    xref_db: Path,
+    max_depth: int,
+    max_nodes: int,
+    root: Path | None = None,
+) -> AnalysisState:
+    """Follow what each change writes, through a cross-reference of *this* input.
+
+    The database was opened here with a bare connect, so a cross-reference of
+    another project answered every question with silence: no rows, no reach,
+    and a run that exited zero saying the change reached nothing. `open_xref_db`
+    already refuses that -- it checks the decoder version and the input
+    fingerprint -- and the only reason this did not use it was that it did not
+    ask.
+    """
+    con = open_xref_db(Path(xref_db), read_only=True, root=root)
     unreadable = 0
     stopped: set[str] = set()
     try:
@@ -290,16 +292,17 @@ def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes
                 continue
             if change.unreadable:
                 unreadable += 1
+            # The whole run a block instruction writes, walked together, so a
+            # device that only reads the middle of it is not lost.
+            found = reach(con, change.writes, max_depth, max_nodes)
+            stopped |= found.stopped
+            change.truncated = change.truncated or found.truncated
             seen: set[str] = set()
-            for device in change.writes:
-                items, limits = reach_of(con, device, max_depth, max_nodes)
-                stopped |= limits
-                change.truncated = change.truncated or bool(limits)
-                for item in items:
-                    if item["device"] in seen:
-                        continue
-                    seen.add(item["device"])
-                    change.reaches.append(item)
+            for item in found.steps:
+                if item.device in seen:
+                    continue
+                seen.add(item.device)
+                change.reaches.append(item.as_dict())
     finally:
         con.close()
 
@@ -408,7 +411,20 @@ def render(changes: list[Change], state: AnalysisState, limit: int, ja: bool = F
                 for item in change.reaches
                 if item not in outputs and item not in alarms
             ]
-            if rest:
+            if rest and not outputs and not alarms:
+                # Nothing left an output and nothing raised an alarm, so the
+                # count on its own says nothing at all. Name a few.
+                for item in rest[:6]:
+                    lines.append(
+                        f"      {'経路' if ja else 'path':<8} {item['device']:<12} "
+                        f"{item['basis']:<10} {item['pou']}:st{item['step']} "
+                        f"{item['comment']}".rstrip()
+                    )
+                if len(rest) > 6:
+                    lines.append(
+                        f"      ... {len(rest) - 6} more" if not ja else f"      ほか {len(rest) - 6} 件"
+                    )
+            elif rest:
                 lines.append(
                     (f"      ほか {len(rest)} 件（経路上のデバイス）"
                      if ja
@@ -450,7 +466,9 @@ def main(argv: list[str] | None = None) -> int:
         changes = collect_changes(old_root, new_root, include_comments=not args.skip_comments)
 
         xref_db = Path(args.xref_db) if args.xref_db else prepare(new_root).xref.path
-        state = attach_reach(changes, xref_db, args.max_depth, args.max_nodes)
+        # Checked against the new side: the reach is about what the change
+        # leads to in the version that has it.
+        state = attach_reach(changes, xref_db, args.max_depth, args.max_nodes, new_root)
 
         if args.format == "json":
             print(
