@@ -38,6 +38,8 @@ from gx3cli.gx3_external_inputs import (
 )
 from gx3cli.gx3_analysis_state import (
     DECODE,
+    DISCOVERY,
+    NOT_EVALUATED,
     PARTIAL,
     REACH,
     TOPOLOGY,
@@ -154,14 +156,26 @@ def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) ->
 
 
 def driver_index(rows: list[LadderRow], include_reset: bool = True) -> dict[str, list[LadderRow]]:
+    """Rows that decide a device's value, by device.
+
+    A coil drives a bit. A word device is not driven -- a value is put into it
+    -- so filtering on coil roles alone meant `trace-device D900` answered
+    "driver_rows=0, truncated=False": nothing decides this, as a complete
+    answer, about a device a MOV writes every scan. An instruction that writes
+    is as much the reason a device holds what it holds as a coil is.
+    """
     roles = DRIVER_ROLES if include_reset else ON_DRIVER_ROLES
     index: dict[str, list[LadderRow]] = defaultdict(list)
     for row in rows:
         seen: set[str] = set()
         for occ in row.occurrences:
-            if occ.role in roles and occ.device not in seen:
-                index[occ.device].append(row)
-                seen.add(occ.device)
+            if occ.device in seen:
+                continue
+            writes = occ.role in roles or occ.access in {"write", "both"}
+            if not writes:
+                continue
+            index[occ.device].append(row)
+            seen.add(occ.device)
     return index
 
 
@@ -491,6 +505,13 @@ def build_trace(
     # have different remedies, so they are counted separately and reported as
     # different stages.
     partial_driver_rows = [row for row in driver_rows if row.get("parse_status") != "exact"]
+    # A device that appears nowhere in the program is a different answer from a
+    # device that appears and nothing writes. The first is usually a typo or
+    # the wrong project, and both came back as "devices=1, driver_rows=0,
+    # truncated=False" -- an empty answer wearing the clothes of a complete
+    # one. `xref where-used` has always said "no occurrences" for this.
+    absent = not counts.get(target)
+
     capped_driver_rows = [
         row
         for row in driver_rows
@@ -509,8 +530,20 @@ def build_trace(
         "strict_logic": strict_logic,
         "truncated": truncated,
         "truncated_reasons": sorted(truncated_reasons),
-        "analysis": trace_state(
-            truncated, sorted(truncated_reasons), partial_driver_rows, capped_driver_rows
+        "analysis": (
+            AnalysisState(
+                NOT_EVALUATED,
+                reason=f"{target} does not appear anywhere in this project",
+                next_step=(
+                    "check the device name and the project; "
+                    f"gx3-cli xref where-used {target} lists occurrences"
+                ),
+                stage=DISCOVERY,
+            )
+            if absent
+            else trace_state(
+                truncated, sorted(truncated_reasons), partial_driver_rows, capped_driver_rows
+            )
         ).as_dict(),
         "stats": {
             "devices_traced": len(devices),

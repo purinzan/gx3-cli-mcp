@@ -38,6 +38,8 @@ from typing import Any
 from gx3cli.gx3_analysis_state import (
     CHECKED,
     DECODE,
+    DISCOVERY,
+    NOT_EVALUATED,
     PARTIAL,
     REACH,
     TRUNCATED,
@@ -246,7 +248,20 @@ def build(
             "everywhere": everywhere.get(name, []),
         }
 
-    if total > len(kept):
+    if device and not rungs:
+        # An empty page for a device nobody can find reads as "this device is
+        # not used in this program", which may be true and may be a typo. The
+        # page said neither; it just came out blank and exited zero.
+        state = AnalysisState(
+            NOT_EVALUATED,
+            reason=f"no rung in {lddb} references {device}",
+            next_step=(
+                f"check the device name, or look project-wide: "
+                f"gx3-cli xref where-used {device}"
+            ),
+            stage=DISCOVERY,
+        )
+    elif total > len(kept):
         state = AnalysisState(
             TRUNCATED,
             reason=f"{len(kept)} of {total} rungs are in this report",
