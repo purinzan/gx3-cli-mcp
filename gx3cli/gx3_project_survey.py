@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_input_identity import fingerprint
+from gx3cli.gx3_version import package_version
 from gx3cli.review_gx3_project import (
     LadderRow,
     comment_for_device,
@@ -766,6 +768,11 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = {
         "root": str(root),
+        # Which input this package describes. A survey outlives the folder it
+        # was made from, and a reader months later has no other way to tell
+        # whether it is about the project in front of them.
+        "input_sha256": fingerprint(root),
+        "analyzer_version": package_version(),
         "outputs": {key: str(value) for key, value in paths.__dict__.items()},
         "counts": {
             "ladder_rows": len(rows),

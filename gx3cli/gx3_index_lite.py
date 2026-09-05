@@ -11,6 +11,8 @@ from typing import Any
 
 from gx3cli.gx3_device_name import canonical_device as _canonical_device, format_device as _format_device
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
+from gx3cli.gx3_input_identity import fingerprint, mismatch_message
+from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_output import add_format_alias, fold_format_alias
@@ -207,6 +209,12 @@ def build_index(args: argparse.Namespace) -> int:
             ("refresh_csv", str(refresh_csv)),
             ("unit_csv", str(unit_csv)),
             ("device_naming", DEVICE_NAMING),
+            # Which input this index is of. The path above is where it was
+            # read from; the folder behind a path can be rebuilt, edited or
+            # replaced, and every answer afterwards is about a file nobody
+            # opened.
+            ("input_sha256", fingerprint(root)),
+            ("analyzer_version", package_version()),
             ("ladder_rows", str(len(rows))),
             ("external_sources", str(len(external_sources))),
         ],
@@ -395,7 +403,40 @@ def build_index(args: argparse.Namespace) -> int:
 DEVICE_NAMING = "hex-1-ranges"
 
 
-def open_existing(path: Path) -> sqlite3.Connection:
+def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
+    """Refuse an index built from a different project than the one asked for."""
+    if root is None:
+        return
+    row = con.execute("select value from meta where key='input_sha256'").fetchone()
+    stored = row["value"] if row is not None else ""
+    if not stored:
+        # Built before inputs were stamped. The naming check already refuses
+        # the ones that would answer differently.
+        return
+    actual = fingerprint(Path(root))
+    if not actual or actual == stored:
+        return
+    con.close()
+    raise SystemExit(
+        mismatch_message(
+            "index db", path, stored, actual,
+            f"gx3-cli index-lite build --root {root} --out {path}",
+        )
+    )
+
+
+def root_of(args: argparse.Namespace) -> Path | None:
+    """The project a query was asked about, when it named one.
+
+    The query commands take --root to find the default index; it also says
+    which project the answer is supposed to be about, which is what makes the
+    input check possible.
+    """
+    root = getattr(args, "root", "")
+    return Path(root) if root else None
+
+
+def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
     con = connect(path)
@@ -406,6 +447,7 @@ def open_existing(path: Path) -> sqlite3.Connection:
             "X, Y, B and W devices are now numbered in hexadecimal, matching GX Works3.\n"
             "Rebuild it: gx3-cli index-lite build --root <project>"
         )
+    check_input(path, con, root)
     return con
 
 
@@ -446,7 +488,7 @@ def expanded_terms(text: str) -> list[str]:
 
 def query_device(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     rec = con.execute("select * from devices where device=?", (device,)).fetchone()
     if not rec:
         if args.json:
@@ -527,7 +569,7 @@ def query_device(args: argparse.Namespace) -> int:
 
 
 def query_comment(args: argparse.Namespace) -> int:
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     terms = expanded_terms(args.text) if args.expand_synonyms else [args.text]
     clauses = " or ".join("comment like ?" for _ in terms)
     rows = con.execute(
@@ -549,7 +591,7 @@ def query_comment(args: argparse.Namespace) -> int:
 
 
 def query_external(args: argparse.Namespace) -> int:
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     if args.device:
         device = normalize_device(args.device)
         rows = con.execute("select * from external_sources where device=?", (device,)).fetchall()
@@ -599,7 +641,7 @@ def classify_cycle_comment(comment: str) -> str:
 
 
 def query_cycle(args: argparse.Namespace) -> int:
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     dev_type = args.device_type.upper()
     start = int(args.start)
     end = int(args.end)
@@ -639,7 +681,7 @@ def query_cycle(args: argparse.Namespace) -> int:
 
 
 def device_map(args: argparse.Namespace) -> int:
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     min_free = int(args.min_free)
     types_filter = {t.strip().upper() for t in args.types.split(",")} if args.types else None
     rows = con.execute("select device_type, number from devices order by device_type, number").fetchall()
@@ -682,7 +724,7 @@ def device_map(args: argparse.Namespace) -> int:
 
 
 def stats(args: argparse.Namespace) -> int:
-    con = open_existing(Path(args.db or default_db_path()))
+    con = open_existing(Path(args.db or default_db_path()), root_of(args))
     for table in ["devices", "device_usages", "ladder_rows", "comments", "external_sources"]:
         count = con.execute(f"select count(*) from {table}").fetchone()[0]
         print(f"{table}: {count}")
