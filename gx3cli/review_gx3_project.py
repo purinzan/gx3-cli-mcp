@@ -141,34 +141,39 @@ def load_comments_for_root(root: Path) -> dict[tuple[str, int], CommentInfo]:
     con = sqlite3.connect(comment_db)
     cur = con.cursor()
     comments: dict[tuple[str, int], CommentInfo] = {}
-    for dev_type, dev_code in DEVICE_CODE_BY_TYPE.items():
-        rows = cur.execute("select SEQ, DevNoLow from DEVICE_DATA where DevCode=?", (dev_code,)).fetchall()
-        for seq, dev_no in rows:
-            key = (dev_type, int(dev_no))
-            info = comments.setdefault(key, CommentInfo(exists=True))
-            c_rows = cur.execute(
-                """
-                select CmtNo, CmtData
-                from COMMENT_DATA
-                where DeviceSEQ=?
-                  and coalesce(DelFlag, 0)=0
-                  and trim(coalesce(CmtData, ''))<>''
-                order by CmtNo
-                """,
-                (seq,),
-            ).fetchall()
-            texts: list[str] = []
-            for cmt_no, text in c_rows:
-                value = str(text).strip()
-                if not value:
-                    continue
-                texts.append(value)
-                if cmt_no == 5 and not info.japanese:
-                    info.japanese = value
-                elif cmt_no == 6 and not info.english:
-                    info.english = value
-            info.all_text = " / ".join(dict.fromkeys(texts))
-    con.close()
+    # A comment database that is not shaped the way this expects raises
+    # partway through, and without this the connection stayed open --
+    # which on Windows means the file cannot be removed afterwards.
+    try:
+        for dev_type, dev_code in DEVICE_CODE_BY_TYPE.items():
+            rows = cur.execute("select SEQ, DevNoLow from DEVICE_DATA where DevCode=?", (dev_code,)).fetchall()
+            for seq, dev_no in rows:
+                key = (dev_type, int(dev_no))
+                info = comments.setdefault(key, CommentInfo(exists=True))
+                c_rows = cur.execute(
+                    """
+                    select CmtNo, CmtData
+                    from COMMENT_DATA
+                    where DeviceSEQ=?
+                      and coalesce(DelFlag, 0)=0
+                      and trim(coalesce(CmtData, ''))<>''
+                    order by CmtNo
+                    """,
+                    (seq,),
+                ).fetchall()
+                texts: list[str] = []
+                for cmt_no, text in c_rows:
+                    value = str(text).strip()
+                    if not value:
+                        continue
+                    texts.append(value)
+                    if cmt_no == 5 and not info.japanese:
+                        info.japanese = value
+                    elif cmt_no == 6 and not info.english:
+                        info.english = value
+                info.all_text = " / ".join(dict.fromkeys(texts))
+    finally:
+        con.close()
     return comments
 
 

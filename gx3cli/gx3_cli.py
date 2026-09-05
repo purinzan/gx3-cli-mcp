@@ -88,6 +88,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "motion-rd77": CommandSpec("gx3_motion_rd77.py", "RD77 simple-motion buffer access map with official G labels", "Utilities"),
     "iut-probe": CommandSpec("gx3_iut_probe.py", "probe RD77 *.iut motion-setting container strings and paths", "Utilities"),
     "convertdata": CommandSpec("gx3_convertdata_probe.py", "probe ConvertData qpg and PouPCode record layout", "Utilities"),
+    "change-impact": CommandSpec("gx3_change_impact.py", "what each change between two versions writes, and what that reaches", "Analysis"),
     "semantic-diff": CommandSpec("gx3_semantic_diff.py", "rung-level diff between two projects (folders or .gx3)", "Analysis"),
     "interlock-check": CommandSpec("gx3_interlock.py", "check if two coils' ON conditions can be true simultaneously (static SAT)", "Analysis"),
     "dead-logic": CommandSpec("gx3_dead_logic.py", "constant-OFF branches, unread coils/words, SET without RST", "Analysis"),
