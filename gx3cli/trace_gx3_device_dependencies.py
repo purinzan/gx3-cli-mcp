@@ -36,7 +36,15 @@ from gx3cli.gx3_external_inputs import (
     RefreshArea,
     UnitIoArea,
 )
-from gx3cli.gx3_analysis_state import DECODE, PARTIAL, REACH, TRUNCATED, AnalysisState, checked
+from gx3cli.gx3_analysis_state import (
+    DECODE,
+    PARTIAL,
+    REACH,
+    TOPOLOGY,
+    TRUNCATED,
+    AnalysisState,
+    checked,
+)
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 
 
@@ -93,7 +101,7 @@ def device_key(device: str) -> tuple[str, int]:
 
 
 def trace_state(
-    truncated: bool, reasons: list[str], partial_rows: list
+    truncated: bool, reasons: list[str], partial_rows: list, capped_rows: list | None = None
 ) -> AnalysisState:
     """What this trace is worth, in the words every command uses.
 
@@ -103,13 +111,31 @@ def trace_state(
     the list below it is not the whole answer, and saying so next to the answer
     is the point -- "truncated=True" inside a stats line is not where a reader
     looks.
+
+    A row whose condition stopped expanding is a third thing, and it was being
+    reported as the second. The instructions and operands were read correctly;
+    what could not be finished was folding the wiring into one expression. That
+    is the topology stage, and the next step is to read the rung -- parse-gaps
+    has nothing to say about it, and sending a reader there wastes their time
+    on a gap that is not there.
     """
+    capped_rows = capped_rows or []
     if partial_rows:
         return AnalysisState(
             PARTIAL,
             reason=f"{len(partial_rows)} driver rows were not fully interpreted",
             next_step="gx3-cli parse-gaps --root <project>",
             stage=DECODE,
+        )
+    if capped_rows:
+        return AnalysisState(
+            PARTIAL,
+            reason=(
+                f"{len(capped_rows)} driver rows have a condition too large to expand; "
+                "the conditions listed are fewer than the rung has"
+            ),
+            next_step="read the rung itself: gx3-cli ladder-print / ladder-report",
+            stage=TOPOLOGY,
         )
     if truncated:
         limit = ", ".join(reasons) or "a limit"
@@ -460,14 +486,16 @@ def build_trace(
                 queue.append((cond["device"], depth + 1, device))
 
     edge_counter = Counter(edge["condition_device"] for edge in edges)
-    # A row whose condition stopped expanding is as incomplete as one the
-    # decoder could not read: the conditions listed under it are fewer than the
-    # rung has, and nothing else in the answer would say so.
-    partial_driver_rows = [
+    # Both kinds of incompleteness, kept apart. A row the decoder could not
+    # read and a row whose condition would not fit are equally incomplete and
+    # have different remedies, so they are counted separately and reported as
+    # different stages.
+    partial_driver_rows = [row for row in driver_rows if row.get("parse_status") != "exact"]
+    capped_driver_rows = [
         row
         for row in driver_rows
-        if row.get("parse_status") != "exact"
-        or int((row.get("logic_stats") or {}).get("too_large", 0)) > 0
+        if row.get("parse_status") == "exact"
+        and int((row.get("logic_stats") or {}).get("too_large", 0)) > 0
     ]
     return {
         "target": {
@@ -481,11 +509,16 @@ def build_trace(
         "strict_logic": strict_logic,
         "truncated": truncated,
         "truncated_reasons": sorted(truncated_reasons),
-        "analysis": trace_state(truncated, sorted(truncated_reasons), partial_driver_rows).as_dict(),
+        "analysis": trace_state(
+            truncated, sorted(truncated_reasons), partial_driver_rows, capped_driver_rows
+        ).as_dict(),
         "stats": {
             "devices_traced": len(devices),
             "driver_rows": len(driver_rows),
             "partial_driver_rows": len(partial_driver_rows),
+            # Counted beside it so the numbers agree with the verdict: a
+            # trace can be partial with no unreadable row at all.
+            "capped_driver_rows": len(capped_driver_rows),
             "dependency_edges": len(edges),
             "terminal_conditions": sum(1 for edge in edges if not edge["has_driver"]),
             "self_references": sum(1 for edge in edges if edge["self_reference"]),
@@ -617,7 +650,7 @@ def format_text(trace: dict[str, Any]) -> str:
         "Stats: "
         f"devices={trace['stats']['devices_traced']}, "
         f"driver_rows={trace['stats']['driver_rows']}, "
-        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "
+        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
         f"edges={trace['stats']['dependency_edges']}, "
         f"terminal={trace['stats']['terminal_conditions']}, "
         f"self_refs={trace['stats']['self_references']}, "
@@ -836,7 +869,7 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
         f"{label['stats']}: "
         f"devices={trace['stats']['devices_traced']}, "
         f"driver_rows={trace['stats']['driver_rows']}, "
-        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "
+        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
         f"edges={trace['stats']['dependency_edges']}, "
         f"truncated={trace['truncated']}"
     )

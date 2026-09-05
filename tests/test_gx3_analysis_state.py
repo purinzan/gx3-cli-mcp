@@ -169,6 +169,21 @@ def test_an_unknown_stage_is_refused() -> None:
         raise AssertionError("an invented stage was accepted")
 
 
+def test_aggregating_nothing_does_not_raise() -> None:
+    """`worst([])` is the "no results at all" case, and it has to survive it.
+
+    Requiring a stage made every construction site name one, and this branch --
+    which builds a state rather than being handed one -- was missed. Nothing
+    having been examined is a statement about what could be found, so it
+    belongs to the discovery stage.
+    """
+    state = worst([])
+    assert state.state == NOT_EVALUATED, state
+    assert state.stage == DISCOVERY, state
+    assert not state.conclusive
+    assert state.as_dict()["stage"] == DISCOVERY
+
+
 def main() -> int:
     test_a_state_says_why_and_what_to_do()
     test_an_unknown_state_is_refused()
@@ -179,6 +194,7 @@ def main() -> int:
     test_the_stage_is_in_the_line_and_in_the_data()
     test_the_five_stages_are_the_five_the_issue_names()
     test_an_unknown_stage_is_refused()
+    test_aggregating_nothing_does_not_raise()
     print("analysis state checks passed")
     return 0
 
