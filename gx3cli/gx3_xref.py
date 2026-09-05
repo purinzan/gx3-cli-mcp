@@ -131,6 +131,44 @@ def open_xref_db(
     return con
 
 
+def flow_edge_rows(root: Path) -> list[tuple]:
+    """The directed value-flow edges of a project, ready to store.
+
+    Only the edges: an unresolved record says an operation could not be turned
+    into one, and inventing an edge for it is the thing #36 asks not to happen.
+    A caller that needs to know an operation went unread has the occurrence
+    rows and parse-gaps for that.
+    """
+    from gx3cli.gx3_data_flow import build_report
+
+    report = build_report(root)
+    rows: list[tuple] = []
+    for edge in report.get("edges", []) or []:
+        rows.append(
+            (
+                edge.get("source_device", ""),
+                edge.get("destination_device", ""),
+                edge.get("opcode", ""),
+                edge.get("source_arg_index"),
+                edge.get("destination_arg_index"),
+                int(edge.get("range_count") or 1),
+                int(edge.get("source_word_width") or 1),
+                int(edge.get("destination_word_width") or 1),
+                1 if edge.get("read_modify_write") else 0,
+                edge.get("confidence", "unknown"),
+                edge.get("parse_status", "exact"),
+                edge.get("lddb", ""),
+                int(edge.get("pos") or 0),
+                edge.get("pou", ""),
+                edge.get("step"),
+                edge.get("title", ""),
+                edge.get("source_comment", ""),
+                edge.get("destination_comment", ""),
+            )
+        )
+    return rows
+
+
 def default_db_path(root: Path) -> Path:
     name = root.name
     if name.startswith("_extracted_"):
@@ -165,6 +203,7 @@ def build(args: argparse.Namespace) -> int:
         """
         drop table if exists xref;
         drop table if exists meta;
+        drop table if exists data_flow;
         create table meta(key text primary key, value text not null);
         create table xref(
             id integer primary key autoincrement,
@@ -233,8 +272,53 @@ def build(args: argparse.Namespace) -> int:
         """,
         records,
     )
+    # The value-flow edges, stored beside the occurrences rather than derived
+    # again by every caller. `downstream` joins reads and writes that happen on
+    # the same rung, which cannot tell "D100 was moved into D200" from "D100
+    # and D200 were mentioned together"; #36 asks for the difference, and for
+    # graph, downstream and lint to be able to see it without each of them
+    # re-reading every program.
     con.executescript(
         """
+        create table data_flow(
+            id integer primary key autoincrement,
+            source_device text not null,
+            destination_device text not null,
+            opcode text not null,
+            source_arg_index integer,
+            destination_arg_index integer,
+            range_count integer not null default 1,
+            source_word_width integer not null default 1,
+            destination_word_width integer not null default 1,
+            read_modify_write integer not null default 0,
+            confidence text not null default 'unknown',
+            parse_status text not null default 'exact',
+            lddb text not null,
+            pos integer not null,
+            pou text,
+            step integer,
+            title text,
+            source_comment text,
+            destination_comment text
+        );
+        """
+    )
+    con.executemany(
+        """
+        insert into data_flow(
+            source_device, destination_device, opcode, source_arg_index,
+            destination_arg_index, range_count, source_word_width,
+            destination_word_width, read_modify_write, confidence, parse_status,
+            lddb, pos, pou, step, title, source_comment, destination_comment
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        flow_edge_rows(root),
+    )
+    con.executescript(
+        """
+        create index idx_flow_source on data_flow(source_device);
+        create index idx_flow_destination on data_flow(destination_device);
+        create index idx_flow_row on data_flow(lddb, pos);
         create index idx_xref_device on xref(device);
         create index idx_xref_span on xref(device_type, number);
         create index idx_xref_row on xref(lddb, pos);
@@ -545,11 +629,42 @@ def downstream(args: argparse.Namespace) -> int:
         """
         return con.execute(q, (dev, *read_access, *write_access)).fetchall()
 
+    has_flow = bool(
+        con.execute(
+            "select count(*) from sqlite_master where type='table' and name='data_flow'"
+        ).fetchone()[0]
+    )
+
+    def value_flow_from(dev: str) -> dict[str, str]:
+        """Which of the devices below this one the value actually reaches.
+
+        A rung that reads D100 and writes D200 does not mean D100 went into
+        D200: MOV D100 D200 does, and two unrelated operands on the same rung
+        do not. Where an edge says which, the trace says so; where there is
+        none, the pair stays in the answer as what it is -- a co-occurrence.
+        """
+        if not has_flow:
+            return {}
+        rows = con.execute(
+            "select destination_device, opcode from data_flow where source_device = ?", (dev,)
+        ).fetchall()
+        return {row["destination_device"]: row["opcode"] for row in rows}
+
     start_comment = con.execute(
         "select comment from xref where device=? and comment<>'' limit 1", (device,)
     ).fetchone()
     print(f"downstream impact of {device} {start_comment[0] if start_comment else ''}".rstrip())
-    print(f"(max-depth={args.max_depth}, strict-bit={args.strict_bit})\n")
+    print(f"(max-depth={args.max_depth}, strict-bit={args.strict_bit})")
+    if has_flow:
+        print(
+            "basis: `via OPCODE` means the value goes there through that instruction; "
+            "same-rung means only that both appear on one rung.\n"
+        )
+    else:
+        print(
+            "basis: same-rung only -- this cross-reference holds no value-flow "
+            "edges. Rebuild it to tell a transfer from a co-occurrence.\n"
+        )
 
     visited = {device}
     frontier = [(device, 0)]
@@ -559,6 +674,7 @@ def downstream(args: argparse.Namespace) -> int:
         if depth >= args.max_depth:
             continue
         children = written_with(dev)
+        flow = value_flow_from(dev)
         shown = 0
         for ch in children:
             child = ch["device"]
@@ -574,7 +690,13 @@ def downstream(args: argparse.Namespace) -> int:
             indent = "  " * (depth + 1)
             step = f"st{ch['step']}" if ch["step"] is not None else ""
             comment = ch["comment"] or ""
-            print(f"{indent}{child:<14} {ch['role']:<8} {ch['pou']:<6}{step:<7} {comment}")
+            # "via -" reads better than "<--": the subtraction instruction is
+            # spelled "-", and an arrow glued to it is unreadable.
+            basis = f"via {flow[child]}" if child in flow else "same-rung"
+            print(
+                f"{indent}{child:<14} {ch['role']:<8} {basis:<10} "
+                f"{ch['pou']:<6}{step:<7} {comment}"
+            )
             frontier.append((child, depth + 1))
             if shown >= args.max_children:
                 remaining = len(children) - shown
