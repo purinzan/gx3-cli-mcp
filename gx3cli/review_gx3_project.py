@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from gx3cli.gx3_device_name import format_device as _format_device
-from gx3cli.gx3_analysis_state import PARTIAL, AnalysisState, checked
+from gx3cli.gx3_analysis_state import DECODE, PARTIAL, AnalysisState, checked
 from gx3cli.extract_hmi_build_info import CommentInfo, DEVICE_CODE_BY_TYPE, comment_status
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPE_ALIASES,
@@ -898,6 +898,7 @@ def main() -> None:
             PARTIAL,
             reason=f"{len(partial_rows)} of {len(rows)} rungs were not fully interpreted",
             next_step="gx3-cli parse-gaps --root <project>",
+            stage=DECODE,
         )
     else:
         analysis = checked()

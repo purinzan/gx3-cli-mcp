@@ -62,7 +62,7 @@
 | `test_gx3_input_identity.py` | 入力指紋が内容の変化に追随すること、別プロジェクトで作られた xref が拒否されること、指紋を持たない古い DB は二重に失敗しないことを検査する。 |
 | `test_gx3_step_not_pos.py` | rung-text の位置表示が内部 pos ではなく GX Works3 のステップ番号であること、ステップ不明時は pos と明示すること、印字ラダーの表示と一致することを検査する。 |
 | `test_gx3_trace_state.py` | trace-device の打切り・未解釈が共通語彙で結論の直前に出ること、完了した追跡では何も出ないこと、未解釈が打切りより優先されることを検査する。 |
-| `test_gx3_analysis_state.py` | 実行できなかった検査が「検出0件」として正常扱いされないこと、理由と次の手順が summary に残ること、--require-evaluated で落とせることを検査する。 |
+| `test_gx3_analysis_state.py` | 実行できなかった検査が「検出0件」として正常扱いされないこと、理由と次の手順が summary に残ること、--require-evaluated で落とせることを検査する。さらに、checked 以外の結果は5段階（発見／復元／配線／実行意味／追跡）のどれで止まったかを必ず名乗ることを検査する。 |
 | `test_gx3_block_range.py` | ブロック命令が書き込む範囲（BMOV ... K4 は4デバイス）が occurrence に記録され、範囲内のデバイスを where-used で検索できることを検査する。名前が出ないデバイスが「該当なし」と返る退行を防ぐ。 |
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
@@ -108,7 +108,7 @@
 | `gx3_mcp_server.py` | `gx3-mcp-server` | MCP 本体 | AI クライアントから GX3 解析 tool を呼ぶ。 |
 | `gx3_cli.py` | `gx3-cli` | `gx3_run_command` | CLI dispatcher、help/list、query 系ラッパー。 |
 | `gx3_doctor.py` | `doctor` | `gx3_run_command` | 解析対象、index、xref DB、link-map の状態確認。 |
-| `gx3_ladder_report.py` | `ladder-report` | `gx3_run_command` | オフラインで開ける単一HTML。中央にラダーSVG、左にデバイス・コメント検索、右に選択デバイスの読出・書込一覧と根拠。各デバイスに「この画面での件数」と「プロジェクト全体の件数」を併記し、描画本数が足りない場合は打切りとして表示する。実測値は扱わず、接点をONとして着色しない。 |
+| `gx3_ladder_report.py` | `ladder-report` | `gx3_run_command` | オフラインで開ける単一HTML。中央にラダーSVG、左にデバイス・コメント検索、右に選択デバイスの読出・書込一覧と根拠。各デバイスに「この画面での件数」と「プロジェクト全体の件数」を併記し、描画本数が足りない場合は打切りとして表示する。実測値は扱わず、接点をONとして着色しない。`--all` は全プログラム分のページを相互リンク付きで出力し、他プログラムの読み書きへ移動できるようにする。リンク先ラングがページに無い場合はその旨を表示する。 |
 | `gx3_explore.py` | `explore` | `gx3_run_command` | 目的別の4つの入口（overview / why / concerns / changed）。新しい解析はせず、索引を自動準備して既存コマンドを問いに沿った順で実行し、共通のヘッダ（対象・入力指紋）の下にまとめる。時間切れの項目は「取得できなかった」ではなく「終わらなかった」と区別して報告する。 |
 | `gx3_change_impact.py` | `change-impact` | `gx3_run_command` | 2版の差分を取り、変更ラングが書き込むデバイスと、その到達先（出力・警報を切り出して表示）を出す。到達先は静的な候補であり実行順・実行条件・インタロックは判定していないと明示する。コメントのみ・キャンバス寸法のみの変更は「動作は変わらない」として影響一覧を付けない。 |
 | `gx3_flow_db.py` | — | `gx3_graph`, `gx3_dependency_flow` | 値の流れを持つ xref の場所をworkspace 経由で解決する。呼び出し側にパスを覚えさせないための小さな共通部品。 |
