@@ -67,6 +67,40 @@ def label_for(state: str, ja: bool = False) -> str:
     return (LABELS_JA if ja else LABELS)[state]
 
 
+# The five stages an answer passes through, from #49. A result that is not
+# "checked" was stopped at one of them, and which one decides what to do next:
+# a program in a language this does not read is not fixed by raising a depth
+# limit, and neither is a rung whose wiring could not be folded into a
+# condition.
+DISCOVERY = "discovery"
+DECODE = "decode"
+TOPOLOGY = "topology"
+SEMANTICS = "semantics"
+REACH = "reach"
+
+STAGES = (DISCOVERY, DECODE, TOPOLOGY, SEMANTICS, REACH)
+
+STAGE_LABELS = {
+    DISCOVERY: "containers and programs",
+    DECODE: "instructions and operands",
+    TOPOLOGY: "wiring and enable logic",
+    SEMANTICS: "execution meaning (SET/RST, timers, edges, MC, jumps, multiple writes)",
+    REACH: "how far the search went",
+}
+
+STAGE_LABELS_JA = {
+    DISCOVERY: "コンテナとプログラムの発見",
+    DECODE: "命令とオペランドの復元",
+    TOPOLOGY: "配線と成立論理の復元",
+    SEMANTICS: "実行上の意味（SET/RST・タイマ・立上り・MC・ジャンプ・複数書込）",
+    REACH: "問われた範囲までの追跡",
+}
+
+
+def stage_label(stage: str, ja: bool = False) -> str:
+    return (STAGE_LABELS_JA if ja else STAGE_LABELS).get(stage, stage)
+
+
 @dataclass
 class AnalysisState:
     """The state of one result, and the reason it is not simply "checked"."""
@@ -75,10 +109,18 @@ class AnalysisState:
     reason: str = ""
     next_step: str = ""
     detail: dict[str, object] = field(default_factory=dict)
+    # Which of the five stages stopped this. Empty when nothing did.
+    stage: str = ""
 
     def __post_init__(self) -> None:
         if self.state not in STATES:
             raise ValueError(f"unknown analysis state: {self.state}")
+        if self.stage and self.stage not in STAGES:
+            raise ValueError(f"unknown analysis stage: {self.stage}")
+        if self.state != CHECKED and not self.stage:
+            raise ValueError(
+                f"a result that is not '{CHECKED}' has to say which stage stopped it: {self.state}"
+            )
 
     @property
     def conclusive(self) -> bool:
@@ -91,6 +133,10 @@ class AnalysisState:
             "label": LABELS[self.state],
             "label_ja": LABELS_JA[self.state],
         }
+        if self.stage:
+            out["stage"] = self.stage
+            out["stage_label"] = STAGE_LABELS[self.stage]
+            out["stage_label_ja"] = STAGE_LABELS_JA[self.stage]
         if self.reason:
             out["reason"] = self.reason
         if self.next_step:
@@ -102,6 +148,8 @@ class AnalysisState:
     def line(self, subject: str = "", ja: bool = False) -> str:
         head = f"{subject}: " if subject else ""
         text = f"{head}{label_for(self.state, ja)}"
+        if self.stage:
+            text += f" [{stage_label(self.stage, ja)}]"
         if self.reason:
             text += f" -- {self.reason}"
         if self.next_step:
@@ -109,8 +157,13 @@ class AnalysisState:
         return text
 
 
-def not_evaluated(reason: str, next_step: str = "") -> AnalysisState:
-    return AnalysisState(NOT_EVALUATED, reason=reason, next_step=next_step)
+def not_evaluated(reason: str, next_step: str = "", stage: str = DISCOVERY) -> AnalysisState:
+    """A check that could not run. By default its prerequisite was missing.
+
+    DISCOVERY is the honest default: "the thing this needed was not there" is a
+    statement about what could be found, not about what could be decoded.
+    """
+    return AnalysisState(NOT_EVALUATED, reason=reason, next_step=next_step, stage=stage)
 
 
 def checked(detail: dict[str, object] | None = None) -> AnalysisState:

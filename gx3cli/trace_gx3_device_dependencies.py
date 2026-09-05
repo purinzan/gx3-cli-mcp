@@ -36,7 +36,7 @@ from gx3cli.gx3_external_inputs import (
     RefreshArea,
     UnitIoArea,
 )
-from gx3cli.gx3_analysis_state import PARTIAL, TRUNCATED, AnalysisState, checked
+from gx3cli.gx3_analysis_state import DECODE, PARTIAL, REACH, TRUNCATED, AnalysisState, checked
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 
 
@@ -109,6 +109,7 @@ def trace_state(
             PARTIAL,
             reason=f"{len(partial_rows)} driver rows were not fully interpreted",
             next_step="gx3-cli parse-gaps --root <project>",
+            stage=DECODE,
         )
     if truncated:
         limit = ", ".join(reasons) or "a limit"
@@ -116,6 +117,7 @@ def trace_state(
             TRUNCATED,
             reason=f"the search stopped at {limit}",
             next_step="raise --max-depth or --max-devices and run it again",
+            stage=REACH,
         )
     return checked()
 
@@ -808,6 +810,9 @@ def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
     head = "結果" if ja else "Result"
     nxt = "次の手順" if ja else "next"
     label = analysis.get("label_ja" if ja else "label", "") or analysis.get("label", "")
+    stage = analysis.get("stage_label_ja" if ja else "stage_label", "")
+    if stage:
+        label = f"{label}（{stage}）" if ja else f"{label} [{stage}]"
     out = ["", f"{head}: {label} -- {analysis.get('reason', '')}".rstrip(" -")]
     if analysis.get("next_step"):
         out.append(f"  {nxt}: {analysis['next_step']}")

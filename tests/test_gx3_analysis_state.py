@@ -21,7 +21,17 @@ from pathlib import Path
 
 from gx3cli.gx3_analysis_state import (
     CHECKED,
+    DECODE,
+    DISCOVERY,
     NOT_EVALUATED,
+    PARTIAL,
+    REACH,
+    SEMANTICS,
+    STAGE_LABELS,
+    STAGE_LABELS_JA,
+    STAGES,
+    TOPOLOGY,
+    TRUNCATED,
     AnalysisState,
     checked,
     not_evaluated,
@@ -110,11 +120,65 @@ def test_lint_says_which_checks_did_not_run_and_can_fail_on_it() -> None:
         assert "require-evaluated" in gated.stderr, gated.stderr
 
 
+def test_a_result_that_is_not_checked_has_to_name_a_stage() -> None:
+    """#49 asks the five stages to be part of the shared form, not a comment.
+
+    "partly read" tells a reader that something is missing. Which of the five
+    stages it went missing at tells them what to do: a rung whose wiring could
+    not be folded into a condition is not fixed by raising a depth limit, and a
+    program in a language this does not read is not fixed by either.
+
+    Making it a constructor error rather than a convention is the only way the
+    next state added somewhere else carries it too.
+    """
+    try:
+        AnalysisState(PARTIAL, reason="something was missing")
+    except ValueError as error:
+        assert "stage" in str(error), str(error)
+    else:
+        raise AssertionError("a partial result was allowed to skip the stage")
+
+
+def test_checked_needs_no_stage() -> None:
+    state = AnalysisState(CHECKED)
+    assert state.stage == ""
+    assert "[" not in state.line()
+
+
+def test_the_stage_is_in_the_line_and_in_the_data() -> None:
+    state = AnalysisState(TRUNCATED, reason="stopped", stage=REACH)
+    assert "how far the search went" in state.line(), state.line()
+    assert "問われた範囲" in state.line(ja=True), state.line(ja=True)
+    data = state.as_dict()
+    assert data["stage"] == REACH, data
+    assert data["stage_label"] and data["stage_label_ja"], data
+
+
+def test_the_five_stages_are_the_five_the_issue_names() -> None:
+    assert STAGES == (DISCOVERY, DECODE, TOPOLOGY, SEMANTICS, REACH)
+    for stage in STAGES:
+        assert STAGE_LABELS[stage] and STAGE_LABELS_JA[stage], stage
+
+
+def test_an_unknown_stage_is_refused() -> None:
+    try:
+        AnalysisState(PARTIAL, reason="x", stage="whenever")
+    except ValueError as error:
+        assert "stage" in str(error), str(error)
+    else:
+        raise AssertionError("an invented stage was accepted")
+
+
 def main() -> int:
     test_a_state_says_why_and_what_to_do()
     test_an_unknown_state_is_refused()
     test_one_check_that_did_not_run_makes_the_set_inconclusive()
     test_lint_says_which_checks_did_not_run_and_can_fail_on_it()
+    test_a_result_that_is_not_checked_has_to_name_a_stage()
+    test_checked_needs_no_stage()
+    test_the_stage_is_in_the_line_and_in_the_data()
+    test_the_five_stages_are_the_five_the_issue_names()
+    test_an_unknown_stage_is_refused()
     print("analysis state checks passed")
     return 0
 

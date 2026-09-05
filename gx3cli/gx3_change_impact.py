@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE
-from gx3cli.gx3_analysis_state import CHECKED, PARTIAL, AnalysisState, label_for
+from gx3cli.gx3_analysis_state import CHECKED, DECODE, PARTIAL, AnalysisState, label_for
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_semantic_diff import ensure_root, load_side, logic_signature, summarize_change
 from gx3cli.gx3_workspace import prepare
@@ -268,6 +268,7 @@ def attach_reach(changes: list[Change], xref_db: Path, max_depth: int, max_nodes
             PARTIAL,
             reason=f"{unreadable} changed rungs hold something the decoder could not read",
             next_step="gx3-cli parse-gaps --root <project>",
+            stage=DECODE,
         )
     return AnalysisState(CHECKED)
 

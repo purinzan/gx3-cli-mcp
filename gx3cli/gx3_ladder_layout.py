@@ -12,6 +12,7 @@ import argparse
 import html
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -486,18 +487,45 @@ def layouts_to_svg(payload: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+@dataclass
+class ProjectSources:
+    """What every program of one project shares: the map, comments, labels, rows.
+
+    Reading them per program is fine for one program and quadratic for all of
+    them -- `read_ladder_rows` opens every LDDB in the project each time it is
+    called, so a report over seventy programs read the project seventy times.
+    A caller building more than one payload passes this in.
+    """
+
+    program_map: Any
+    comments: dict
+    labels: Any
+    rows: dict[str, list[dict[str, object]]]
+
+
+def load_project_sources(root: Path) -> ProjectSources:
+    return ProjectSources(
+        program_map=load_program_map(root),
+        comments=load_print_comments(root),
+        labels=load_label_resolver(root),
+        rows=read_ladder_rows(root),
+    )
+
+
 def build_layout_payload(
     root: Path,
     program: str,
     pos_range: tuple[int, int] | None = None,
     device: str | None = None,
+    sources: ProjectSources | None = None,
 ) -> dict[str, Any]:
-    pm = load_program_map(root)
+    sources = sources or load_project_sources(root)
+    pm = sources.program_map
     lddb_name = program if program.endswith("_LDDB.db") else resolve_lddb(root, program, pm)
-    comments = load_print_comments(root)
-    labels = load_label_resolver(root)
+    comments = sources.comments
+    labels = sources.labels
     rows = []
-    for raw in read_ladder_rows(root).get(lddb_name, []):
+    for raw in sources.rows.get(lddb_name, []):
         if int(raw.get("blocktype") or 0) != 0:
             continue
         row = _row_from_raw(lddb_name, raw)

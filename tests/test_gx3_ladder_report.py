@@ -109,6 +109,73 @@ def test_a_device_without_a_comment_is_said_to_have_none() -> None:
             assert "コメントなし" in page
 
 
+def test_a_write_in_another_program_can_be_reached() -> None:
+    """The completion condition #49 sets: reach every write, not a count of them.
+
+    A page covering one program used to say "seven writers in the project" and
+    leave the reader to find the other five. Each of those is now a link into
+    the page for the program that holds it.
+    """
+    import re
+
+    from gx3cli.gx3_ladder_report import build_set, page_name
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project, xref, _ = a_project(tmp)
+        programs = sorted(path.name for path in project.glob("*_LDDB.db"))
+        if len(programs) < 2:
+            return  # a single-program fixture has no other program to reach
+
+        out = work / "pages"
+        reports = build_set(project, xref, programs, out, limit=0)
+        assert len(reports) == len(programs)
+        for name in programs:
+            assert (out / page_name(name)).exists(), name
+
+        # Some device on some page is used in another program, and the entry
+        # for it points at a page that exists, at a rung that exists.
+        checked = 0
+        for report in reports:
+            page = (out / page_name(report.program)).read_text(encoding="utf-8")
+            for device in report.devices.values():
+                for occurrence in device["everywhere"]:
+                    if occurrence["lddb"] == report.program:
+                        continue
+                    target = report.pages.get(occurrence["lddb"])
+                    assert target, (report.program, occurrence)
+                    other = (out / target).read_text(encoding="utf-8")
+                    assert f'id="pos-{occurrence["pos"]}"' in other, occurrence
+                    checked += 1
+                    if checked >= 5:
+                        return
+        assert checked, "no device was used in more than one program"
+
+
+def test_a_link_into_a_shortened_page_is_not_left_silent() -> None:
+    # Pages hold a bounded number of rungs, so a link can name one that is not
+    # drawn. Landing nowhere with no explanation reads as a broken report.
+    with tempfile.TemporaryDirectory() as tmp:
+        project, xref, program = a_project(tmp)
+        page = render_html(build(project, xref, program, limit=1))
+        assert "このページにありません" in page, "no handling for a link that misses"
+
+
+def test_every_program_page_lists_the_others() -> None:
+    from gx3cli.gx3_ladder_report import build_set, page_name
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project, xref, _ = a_project(tmp)
+        programs = sorted(path.name for path in project.glob("*_LDDB.db"))
+        out = work / "pages"
+        build_set(project, xref, programs, out, limit=1)
+        for name in programs:
+            page = (out / page_name(name)).read_text(encoding="utf-8")
+            for other in programs:
+                assert page_name(other) in page, (name, other)
+
+
 def main() -> int:
     test_a_report_carries_its_rungs_and_the_devices_in_them()
     test_every_device_panel_carries_the_project_totals_too()
@@ -117,6 +184,9 @@ def main() -> int:
     test_the_page_never_claims_to_know_a_present_value()
     test_the_page_is_one_file_that_opens_without_a_network()
     test_a_device_without_a_comment_is_said_to_have_none()
+    test_a_write_in_another_program_can_be_reached()
+    test_a_link_into_a_shortened_page_is_not_left_silent()
+    test_every_program_page_lists_the_others()
     print("ladder report checks passed")
     return 0
 
