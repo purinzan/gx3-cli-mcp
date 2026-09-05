@@ -30,6 +30,7 @@ from pathlib import Path
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
 from gx3cli.gx3_device_name import split_device
+from gx3cli.gx3_xref_read import device_match
 from gx3cli.gx3_xref import default_db_path, open_xref_db
 
 
@@ -150,11 +151,14 @@ def main(argv: list[str] | None = None) -> int:
 
     findings: list[dict[str, object]] = []
 
+    source, match = device_match(con)
+
     def usage_sites(device: str, access: tuple[str, ...], limit: int = 3) -> str:
         rows = con.execute(
             f"""
-            select pou, step from xref where device=? and access in ({','.join('?' * len(access))})
-            order by pou, step limit ?
+            select x.pou, x.step from {source}
+            where {match} and x.access in ({','.join('?' * len(access))})
+            order by x.pou, x.step limit ?
             """,
             (device, *access, limit),
         ).fetchall()
@@ -176,7 +180,8 @@ def main(argv: list[str] | None = None) -> int:
         roles = {
             r["role"]: r["n"]
             for r in con.execute(
-                "select role, count(*) as n from xref where device=? and role in ('a','b') group by role",
+                f"select x.role, count(*) as n from {source} "
+                f"where {match} and x.role in ('a','b') group by x.role",
                 (device,),
             )
         }

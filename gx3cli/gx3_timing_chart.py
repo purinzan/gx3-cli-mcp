@@ -9,6 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from gx3cli.gx3_xref_read import device_match
 from gx3cli.gx3_xref import open_xref_db
 
 
@@ -129,7 +130,8 @@ def open_xref(path: Path) -> sqlite3.Connection:
 
 def first_comment(con: sqlite3.Connection, device: str) -> str:
     row = con.execute(
-        "select comment from xref where device=? and comment<>'' limit 1",
+        f"select x.comment from {device_match(con)[0]} "
+        f"where {device_match(con)[1]} and x.comment<>'' limit 1",
         (device,),
     ).fetchone()
     return str(row["comment"]) if row else ""
@@ -164,12 +166,13 @@ def same_row_conditions(con: sqlite3.Connection, lddb: str, pos: int) -> str:
 
 
 def device_writer_condition(con: sqlite3.Connection, device: str) -> str:
+    source, match = device_match(con)
     row = con.execute(
-        """
-        select lddb, pos
-        from xref
-        where device=? and access in ('write', 'both')
-        order by pos
+        f"""
+        select x.lddb, x.pos
+        from {source}
+        where {match} and x.access in ('write', 'both')
+        order by x.pos
         limit 1
         """,
         (device,),
@@ -180,12 +183,13 @@ def device_writer_condition(con: sqlite3.Connection, device: str) -> str:
 
 
 def device_reader_condition(con: sqlite3.Connection, device: str) -> str:
+    source, match = device_match(con)
     row = con.execute(
-        """
-        select lddb, pos
-        from xref
-        where device=? and access='read'
-        order by pos
+        f"""
+        select x.lddb, x.pos
+        from {source}
+        where {match} and x.access='read'
+        order by x.pos
         limit 1
         """,
         (device,),
@@ -382,12 +386,13 @@ def detect_data_groups(
         receiver_con = xrefs.get(receiver_project)
         if not receiver_con:
             continue
+        r_source, r_match = device_match(receiver_con)
         for rr in receiver_con.execute(
-            """
-            select lddb, pos, opcode, role
-            from xref
-            where device=? and access='read'
-            order by pos
+            f"""
+            select x.lddb, x.pos, x.opcode, x.role
+            from {r_source}
+            where {r_match} and x.access='read'
+            order by x.pos
             """,
             (receiver_device,),
         ):

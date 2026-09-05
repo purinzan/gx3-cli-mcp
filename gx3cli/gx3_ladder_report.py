@@ -57,6 +57,7 @@ from gx3cli.gx3_input_identity import fingerprint, short
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 from gx3cli.gx3_version import package_version
 from gx3cli.gx3_xref import open_xref_db
+from gx3cli.gx3_xref_read import counts_for, occurrences_of
 
 
 DEFAULT_RUNG_LIMIT = 200
@@ -138,20 +139,12 @@ def project_occurrences(
     program that holds it.
     """
     found: dict[str, list[dict[str, Any]]] = {}
-    chunk = 500
-    for start in range(0, len(devices), chunk):
-        window = devices[start : start + chunk]
-        marks = ",".join("?" for _ in window)
-        rows = con.execute(
-            f"select device, access, role, access_basis, lddb, pos, pou, step "
-            f"from xref where device in ({marks}) order by device, pou, pos",
-            window,
-        ).fetchall()
-        for row in rows:
-            entries = found.setdefault(str(row["device"]), [])
-            if len(entries) >= limit_per_device:
-                continue
-            entries.append(
+    for device in devices:
+        # Asked through the reader, so a block instruction that covers this
+        # device without naming it is in the answer. Before this the panel for
+        # a device a BMOV fills every scan said "writes: 0".
+        for row in occurrences_of(con, device, limit=limit_per_device):
+            found.setdefault(device, []).append(
                 {
                     "access": row["access"] or "",
                     "role": row["role"] or "",
@@ -160,6 +153,9 @@ def project_occurrences(
                     "pos": int(row["pos"] or 0),
                     "pou": str(row["pou"] or ""),
                     "step": row["step"],
+                    # Which of the two this is: the device the instruction
+                    # spells, or one the run reaches.
+                    "named": str(row["device"]) == device,
                 }
             )
     return found
@@ -170,23 +166,10 @@ def project_totals(con: sqlite3.Connection, devices: list[str]) -> dict[str, dic
 
     The report covers one program. Without this, a device panel showing two
     writers reads as "this device has two writers", and the other five in
-    another program are invisible.
+    another program are invisible. Counted through the reader, so a run that
+    covers a device counts for it.
     """
-    totals: dict[str, dict[str, int]] = {}
-    chunk = 500
-    for start in range(0, len(devices), chunk):
-        window = devices[start : start + chunk]
-        marks = ",".join("?" for _ in window)
-        rows = con.execute(
-            f"select device, access, count(*) as n from xref where device in ({marks}) "
-            "group by device, access",
-            window,
-        ).fetchall()
-        for row in rows:
-            entry = totals.setdefault(row["device"], {"read": 0, "write": 0})
-            if row["access"] in entry:
-                entry[row["access"]] += int(row["n"])
-    return totals
+    return counts_for(con, devices)
 
 
 def build(

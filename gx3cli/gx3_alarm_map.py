@@ -25,6 +25,7 @@ from pathlib import Path
 
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 from gx3cli.gx3_xref import default_db_path, normalize_device
+from gx3cli.gx3_xref_read import device_match
 
 
 ALARM_COMMENT_RE = re.compile(
@@ -70,10 +71,11 @@ def row_conditions(con: sqlite3.Connection, lddb: str, pos: int, self_device: st
 
 
 def timer_setpoint(con: sqlite3.Connection, timer: str) -> str:
+    source, match = device_match(con)
     rows = con.execute(
-        """
-        select opcode, const_args from xref
-        where device=? and access='write' and opcode in ('OUT__16','OUTH__16')
+        f"""
+        select x.opcode, x.const_args from {source}
+        where {match} and x.access='write' and x.opcode in ('OUT__16','OUTH__16')
         """,
         (timer,),
     ).fetchall()
@@ -122,7 +124,8 @@ def collect_alarms(con: sqlite3.Connection, pattern: re.Pattern[str]) -> list[di
             timer_info = f"{tdev} {sp}".strip()
 
         resets = con.execute(
-            "select pou, step from xref where device=? and role='RST'", (r["device"],)
+            f"select x.pou, x.step from {device_match(con)[0]} "
+            f"where {device_match(con)[1]} and x.role='RST'", (r["device"],)
         ).fetchall()
         reset_info = "; ".join(f"{x['pou']} st{x['step']}" for x in resets[:6])
 
@@ -173,7 +176,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
     drivers = con.execute(
-        "select * from xref where device=? and access='write' order by pos", (device,)
+        f"select x.* from {device_match(con)[0]} "
+        f"where {device_match(con)[1]} and x.access='write' order by x.pos", (device,)
     ).fetchall()
     if not drivers:
         print(f"no driver rows: {device}")
@@ -192,7 +196,10 @@ def cmd_show(args: argparse.Namespace) -> int:
                 sp = timer_setpoint(con, m.group(1))
                 if sp:
                     print(f"  -> {m.group(1)} setpoint {sp}")
-    resets = con.execute("select pou, step, title from xref where device=? and role='RST'", (device,)).fetchall()
+    resets = con.execute(
+        f"select x.pou, x.step, x.title from {device_match(con)[0]} "
+        f"where {device_match(con)[1]} and x.role='RST'", (device,)
+    ).fetchall()
     if resets:
         print("\nReset (RST):")
         for r in resets:
