@@ -7,6 +7,11 @@ requests are all welcome.
 
 ## Before You Start
 
+Read [docs/REVIEW_QUESTIONS_JA.md](docs/REVIEW_QUESTIONS_JA.md) before opening a
+pull request, and apply its questions to your own change. Green tests do not
+show that a result is honest: this project's worst failures returned exit code
+0 and an empty answer. The questions are the ones that actually found those.
+
 This project is **source-available proprietary software**, not open source. See
 [LICENSE.txt](LICENSE.txt) and the license summary in the
 [README](README.md#license-in-plain-words).

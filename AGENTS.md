@@ -14,6 +14,13 @@ Use repo skills when the task matches them:
 Before finishing code changes, run `python run_tests.py` from the repository
 root and report any remaining failures.
 
+Passing tests are not the finish line. Before opening a pull request, work
+through `docs/REVIEW_QUESTIONS_JA.md` and apply its questions to your own
+change. It exists because every bug in this project that was shaped like a
+success -- exit code 0, `checked`, zero findings -- was found by reading the
+code against its own stated contract, and never by running the tests that came
+with it. Record in the pull request what the questions left standing.
+
 Before preparing a pull request or changing source code for an external
 contributor workflow, read `CONTRIBUTING.md` and follow its Windows-first PR and
 data-safety rules.

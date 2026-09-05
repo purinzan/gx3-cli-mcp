@@ -140,6 +140,8 @@ decrypted; export the folder from GX Works3 instead.
 - [Security note (JA)](docs/SECURITY_JA.md) — local data handling, read-only MCP policy
 - [Validation matrix (JA)](docs/VALIDATION_MATRIX.md) — verified scope and limits
 - [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md) — repository map
+- [Review questions (JA)](docs/REVIEW_QUESTIONS_JA.md) — the questions to ask a
+  change before opening a pull request, and the bugs each of them found
 - [Related projects (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md) — other GX Works3/MELSEC tools and what was taken from them
 - [llms.txt](llms.txt) — machine-readable summary of what this is and is not
 
