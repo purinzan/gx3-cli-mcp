@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Callable
 
 from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations
+from gx3cli.gx3_analysis_state import AnalysisState, checked, not_evaluated, summarise
 from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
 from gx3cli.gx3_index_lite import default_db_path as lite_db_path
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
@@ -147,6 +148,14 @@ class LintContext:
     link: sqlite3.Connection | None = None
     project_label: str = ""
     row_ops_cache: dict[str, list[RowOp]] = field(default_factory=dict)
+    # Why a check could not run, by check name. A check that records one here
+    # is reported as not evaluated rather than as zero findings.
+    states: dict[str, AnalysisState] = field(default_factory=dict)
+
+    def cannot_evaluate(self, check: str, reason: str, next_step: str = "") -> list:
+        self.states[check] = not_evaluated(reason, next_step)
+        print(f"  {check}: {self.states[check].line()}")
+        return []
 
     def comment(self, device_type: str, number: int) -> str:
         return device_comment_text(self.comments.get((device_type, number), CommentInfo()))
@@ -239,8 +248,9 @@ def check_duplicate_coil(ctx: LintContext) -> list[dict[str, object]]:
 @register("multi-writer", "word device written from multiple POUs/rungs")
 def check_multi_writer(ctx: LintContext) -> list[dict[str, object]]:
     if ctx.xref is None:
-        print("  multi-writer: xref DB not found; run `gx3_cli.py xref build --root <root>` first (check skipped)")
-        return []
+        return ctx.cannot_evaluate(
+            "multi-writer", "no cross-reference database",
+            "gx3-cli xref build --root <project>")
     rows = ctx.xref.execute(
         """
         select device, device_type, pou, step, opcode, role, const_args, detail, lddb, pos, title, comment
@@ -372,8 +382,9 @@ def device_is_external(ctx: LintContext, device: str) -> bool:
 @register("alarm-quality", "alarm candidates missing reset/timer/latch clarity")
 def check_alarm_quality(ctx: LintContext) -> list[dict[str, object]]:
     if ctx.xref is None:
-        print("  alarm-quality: xref DB not found; run `gx3_cli.py xref build --root <root>` first (check skipped)")
-        return []
+        return ctx.cannot_evaluate(
+            "alarm-quality", "no cross-reference database",
+            "gx3-cli xref build --root <project>")
     out: list[dict[str, object]] = []
     by_device: dict[str, list[dict[str, object]]] = defaultdict(list)
     for alarm in collect_alarms(ctx.xref, ALARM_COMMENT_RE):
@@ -428,8 +439,9 @@ def is_covered(covered: dict[str, list[tuple[int, int]]], dev_type: str, number:
 @register("unused-device", "devices written but never read, or comments on unused devices")
 def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
     if ctx.lite is None:
-        print("  unused-device: index DB not found; run `gx3_cli.py index-lite build --root <root>` first (check skipped)")
-        return []
+        return ctx.cannot_evaluate(
+            "unused-device", "no lite index",
+            "gx3-cli index-lite build --root <project>")
     out: list[dict[str, object]] = []
     rows = ctx.lite.execute(
         """
@@ -473,11 +485,11 @@ def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
 @register("comment-conflict", "duplicate or contradictory device comments")
 def check_comment_conflict(ctx: LintContext) -> list[dict[str, object]]:
     if not ctx.rows:
-        print("  comment-conflict: no ladder rows found; check skipped")
-        return []
+        return ctx.cannot_evaluate("comment-conflict", "the project has no ladder rows")
     if ctx.lite is None:
-        print("  comment-conflict: index DB not found; run `gx3_cli.py index-lite build --root <root>` first (check skipped)")
-        return []
+        return ctx.cannot_evaluate(
+            "comment-conflict", "no lite index",
+            "gx3-cli index-lite build --root <project>")
     groups: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in ctx.lite.execute(
         "select device, device_type, number, all_text from comments where coalesce(all_text, '') <> ''"
@@ -511,8 +523,9 @@ def check_comment_conflict(ctx: LintContext) -> list[dict[str, object]]:
 @register("link-range", "project writes a linked inbound communication device")
 def check_link_range(ctx: LintContext) -> list[dict[str, object]]:
     if ctx.xref is None or ctx.link is None:
-        print("  link-range: xref/link DB not found; pass --xref-db and --link-db (check skipped)")
-        return []
+        return ctx.cannot_evaluate(
+            "link-range", "no cross-reference or link-map database",
+            "pass --xref-db and --link-db")
     project = ctx.project_label or project_label_from_root(ctx.root)
     rows = ctx.link.execute(
         """
@@ -884,12 +897,30 @@ def run_checks(ctx: LintContext, checks: list[str], prefix: str) -> dict[str, ob
             sev_counts[str(f["severity"])] += 1
         out_path = Path(f"{prefix}_{name}.csv")
         write_csv(out_path, findings, FINDING_FIELDS)
-        summary["checks"][name] = {"count": len(findings), "by_severity": dict(sev_counts)}
+        state = ctx.states.get(name, checked())
+        summary["checks"][name] = {
+            "count": len(findings),
+            "by_severity": dict(sev_counts),
+            **state.as_dict(),
+        }
         summary["outputs"].append(str(out_path))
         total += len(findings)
-        sev_text = ", ".join(f"{k}={v}" for k, v in sorted(sev_counts.items())) or "none"
-        print(f"  {name:<15} findings={len(findings):<4} ({sev_text}) -> {out_path}")
+        if state.conclusive:
+            sev_text = ", ".join(f"{k}={v}" for k, v in sorted(sev_counts.items())) or "none"
+            print(f"  {name:<15} findings={len(findings):<4} ({sev_text}) -> {out_path}")
     summary["total_findings"] = total
+    # A check that could not run reported zero findings, which read exactly
+    # like a check that ran and found nothing. The summary says which is which,
+    # and repeats the names so a reader of the total cannot miss them.
+    states = {name: ctx.states.get(name, checked()) for name in checks}
+    summary["analysis"] = summarise(states)
+    inconclusive = summary["analysis"]["inconclusive"]
+    if inconclusive:
+        print(
+            f"\n{len(inconclusive)} of {len(checks)} checks did not run: "
+            + ", ".join(inconclusive)
+        )
+        print("total findings below counts only the checks that did.")
     return summary
 
 
@@ -897,6 +928,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Static lint checks for a GX Works3 project")
     parser.add_argument("root", nargs="?", default=str(default_project_root()), help="extracted project folder")
     parser.add_argument("--checks", default="all", help="comma-separated check names or 'all'")
+    parser.add_argument(
+        "--require-evaluated",
+        action="store_true",
+        help="exit non-zero if any check could not run (its prerequisite was missing)",
+    )
     parser.add_argument("--xref-db", default=None, help="xref sqlite path (default: .gx3_index/<project>_xref.sqlite)")
     parser.add_argument("--index-db", default=None, help="lite index sqlite path (default: .gx3_index/<project>.sqlite)")
     parser.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="link-map sqlite path for link-range check")
@@ -958,6 +994,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"total findings: {summary['total_findings']}")
         print(f"summary: {summary_path}")
 
+    inconclusive = summary.get("analysis", {}).get("inconclusive", [])
+    if args.fail_on and inconclusive:
+        # A check that could not run has no findings, so a severity gate passes
+        # on it. Saying so is the difference between a gate that checked and a
+        # gate that was not in a position to.
+        print(
+            f"fail-on: {len(inconclusive)} of {len(checks)} checks did not run "
+            f"({', '.join(inconclusive)}); this gate did not cover them",
+            file=sys.stderr,
+        )
+    if args.require_evaluated and inconclusive:
+        print(
+            "require-evaluated: " + ", ".join(inconclusive) + " did not run",
+            file=sys.stderr,
+        )
+        return 2
     if args.fail_on:
         fail_sevs = {s.strip() for s in args.fail_on.split(",") if s.strip()}
         for name in checks:
