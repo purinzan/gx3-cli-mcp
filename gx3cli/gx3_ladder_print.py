@@ -52,14 +52,28 @@ COMMENT_W = 12       # comment wrap width inside one cell
 COMMENT_LINES = 4    # comment lines reserved under each symbol row
 STEP_END = LEFT_RAIL  # step number is right-aligned ending here
 
-def contact_symbol(role: str, ct_code: str) -> str:
+def contact_mark(role: str, ct_code: str) -> str:
+    """What a contact carries inside it: "rising", "falling", "closed" or "".
+
+    A rising-edge contact is not a level contact -- one says "while this is on",
+    the other "when it turns on" -- and a picture that draws them the same way
+    states the wrong logic. Anything that draws a contact asks here, so the
+    printed rung and the SVG cannot disagree about which mark a contact has.
+    """
     if ct_code == "p":
-        return "┤ ↑ ├"
+        return "rising"
     if ct_code == "f":
-        return "┤ ↓ ├"
+        return "falling"
     if role == "b":
-        return "┤ ／ ├"
-    return "┤    ├"
+        return "closed"
+    return ""
+
+
+CONTACT_ART = {"rising": "┤ ↑ ├", "falling": "┤ ↓ ├", "closed": "┤ ／ ├", "": "┤    ├"}
+
+
+def contact_symbol(role: str, ct_code: str) -> str:
+    return CONTACT_ART[contact_mark(role, ct_code)]
 
 HLINE = "─"
 VLINE = "│"
@@ -593,6 +607,19 @@ def op_cells_of(op: Op) -> int:
     return box_cells(op.operands)
 
 
+def ops_past_grid(ops: list, cells: int = N_CELLS) -> list:
+    """The ops that do not fit the printed grid and move to a continuation row.
+
+    An op that pokes past the marker cell moves too, which is why the test is
+    against cells - 1 once anything has overflowed. Both the printed rung and
+    the SVG fold on this, so a rung cannot break in one place on paper and
+    another on screen.
+    """
+    if not any(op.x + op_cells_of(op) > cells for op in ops):
+        return []
+    return [op for op in ops if op.x + op_cells_of(op) > cells - 1]
+
+
 def blocked(
     a_lend: int,
     b_lstart: int,
@@ -657,10 +684,8 @@ def render_rung(
     # "K<n> →" markers (exactly like the GX Works3 print output).
     right_markers: dict[int, str] = {}
     left_markers: dict[int, str] = {}
-    moved_ops = [op for op in ops if op.x + op_cells_of(op) > N_CELLS]
+    moved_ops = ops_past_grid(ops, N_CELLS)
     if moved_ops:
-        # every op that pokes past the marker cell moves too
-        moved_ops = [op for op in ops if op.x + op_cells_of(op) > N_CELLS - 1]
         x_base = min(op.x for op in moved_ops)
         moved_ids = {id(op) for op in moved_ops}
         incident_by_row: dict[int, set[int]] = {}
