@@ -78,6 +78,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "mildb-probe": CommandSpec("gx3_mildb_probe.py", "extract *_MilDB.db rows and MIL device references", "Utilities"),
     "parse-gaps": CommandSpec("analyze_gx3_intermediate_parse_gaps.py", "summarize intermediate parse gaps", "Diagnostics"),
     "index-lite": CommandSpec("gx3_index_lite.py", "build/query lightweight SQLite index", "Getting Started"),
+    "explore": CommandSpec("gx3_explore.py", "answer one of four questions: overview | why <device> | concerns | changed", "Getting Started"),
     "workspace": CommandSpec("gx3_workspace.py", "where this project's index lives, and whether it still answers for it", "Getting Started"),
     "lint": CommandSpec("gx3_lint.py", "static lint checks: coils, writers, alarms, unused/comment issues, links, math/type", "Analysis"),
     "xref": CommandSpec("gx3_xref.py", "full read/write cross-reference: build/where-used/downstream/export", "Getting Started"),
