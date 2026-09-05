@@ -93,7 +93,8 @@ gx3-cli label-probe --root <project>
 | `UNIT.PRM` | ユニットパラメータ（バイナリ、IP や接続方式の文字列を含む） |
 | `SYSTEM.PRM` | システムパラメータ（バイナリ、文字列を含まない） |
 | `Config.xml` | CPU 型名、アーカイブ種別、セキュリティ版数 |
-| `<数字列>.db` | インテリジェント機能ユニットのパラメータ（[モジュール設定](CONFIG_MODULES_JA.md)） |
+| `<数字列>.db` | インテリジェント機能ユニットのパラメータ。`gx3-cli module-params` で読む（[モジュール設定](CONFIG_MODULES_JA.md)） |
+| `_Project.txc` | 暗号化されたプロジェクト本体。エントロピー 8.000 で解読不能。`inspect` も `encrypted/high-entropy project body` と分類する |
 
 関連: [ネットワーク設定](CONFIG_NETWORK_JA.md) /
 [モジュール設定](CONFIG_MODULES_JA.md) /

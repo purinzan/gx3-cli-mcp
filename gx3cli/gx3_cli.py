@@ -65,6 +65,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "gtx-probe": CommandSpec("gtx_probe.py", "probe GT Designer3 GTX HMI project containers", "Utilities"),
     "comm-refresh": CommandSpec("extract_comm_refresh_areas.py", "extract communication units and refresh areas", "Utilities"),
     "comm-detail": CommandSpec("gx3_comm_detail.py", "extract detailed communication source candidates and AJ65BT-R2N settings", "Utilities"),
+    "module-params": CommandSpec("gx3_module_params.py", "what each intelligent function module was set to", "Reports"),
     "w3pa-probe": CommandSpec("gx3_w3pa_probe.py", "probe *.w3pa parameter strings, modules, IPs, and device candidates", "Utilities"),
     "link-map": CommandSpec("gx3_link_map.py", "build/query cross-project communication device links", "Analysis"),
     "live-read": CommandSpec("gx3_live_read.py", "read current PLC device values over MC Protocol/SLMP 3E binary", "Analysis"),
