@@ -17,7 +17,11 @@ from typing import Any
 
 from gx3cli.gx3_ladder_logic import parse_dim
 from gx3cli.gx3_ladder_print import (
+    INLINE_SYMBOL_OPS,
     comment_text_for,
+    contact_mark,
+    op_cells_of,
+    ops_past_grid,
     load_print_comments,
     parse_rung,
     resolve_lddb,
@@ -31,6 +35,11 @@ from gx3cli.review_gx3_project import LadderRow
 
 CELL_W = 104
 CELL_H = 86
+# The printed grid is twelve cells wide whatever a rung contains, and GX Works3
+# draws it that way. Sizing each rung to its own contents instead made a page of
+# rungs a ragged stack of different widths, with the right rail moving from one
+# rung to the next.
+GRID_CELLS = 12
 RAIL_PAD = 32
 ROW_PAD_Y = 22
 CONTACT_W = 54
@@ -72,8 +81,18 @@ def rung_layout(
         from gx3cli.extract_gx3_extended_instruction_knowledge import extract_dim
 
         width, height = parse_dim(extract_dim(row.data))
-    max_x = max([width - 1, *[op.x for op in ops], *[wire[2] for wire in wires], 0])
+    # A rung wider than the printed grid folds onto continuation rows, the way
+    # the printed one does and on the same rule, so the two break in the same
+    # place. Everything then lays out to one width.
+    ops, verticals, wires, folds = _fold_to_grid(ops, verticals, wires)
+    # Constant width, unless something still reaches past the grid: a rung is
+    # drawn too wide far more cheaply than it is drawn with a piece missing.
+    max_x = max(
+        [GRID_CELLS - 1, *[op.x for op in ops], *[wire[2] for wire in wires],
+         *[x for x, _ in verticals]]
+    )
     max_y = max([height - 1, *[op.y for op in ops], *[wire[1] for wire in wires], *[y for _, y in verticals], 0])
+    max_y = max(max_y, *( [f["y"] for f in folds] or [0] ))
 
     elements: list[dict[str, Any]] = []
     for op in ops:
@@ -117,7 +136,41 @@ def rung_layout(
         "elements": elements,
         "wires": [{"x1": x, "y": y, "x2": x2} for x, y, x2 in wires],
         "verticals": [{"x": x, "y1": y - 1, "y2": y} for x, y in verticals],
+        "folds": folds,
     }
+
+
+def _fold_to_grid(ops, verticals, wires):
+    """Move what does not fit the grid onto continuation rows below.
+
+    Which ops move is decided by ops_past_grid, shared with the printed rung.
+    Each pass drops the overflow to a fresh band under everything drawn so far
+    and shifts it left to the rail, and the band is recorded so the drawing can
+    mark where the rung continues.
+    """
+    ops = list(ops)
+    folds: list[dict[str, int]] = []
+    for _ in range(8):  # a rung is not folded forever; this bounds a bad row
+        moved = ops_past_grid(ops, GRID_CELLS)
+        if not moved:
+            break
+        moved_ids = {id(op) for op in moved}
+        x_base = min(op.x for op in moved)
+        band = max([op.y for op in ops] + [y for _, y in verticals] + [w[1] for w in wires]) + 1
+        for op in moved:
+            op.y = op.y + band
+            op.x = op.x - x_base
+        verticals = [
+            (x - x_base, y + band) if x >= x_base else (x, y) for x, y in verticals
+        ]
+        wires = [
+            (x1 - x_base, y + band, x2 - x_base) if x1 >= x_base else (x1, y, x2)
+            for x1, y, x2 in wires
+        ]
+        folds.append({"y": band, "from_x": x_base})
+        if not any(id(op) in moved_ids for op in ops):
+            break
+    return ops, verticals, wires, folds
 
 
 def _cell_center(x: int, y: int, y_offset: int = 0) -> tuple[int, int]:
@@ -236,6 +289,34 @@ def _inferred_horizontal_wires(layout: dict[str, Any], y_offset: int) -> list[st
     return lines
 
 
+def _contact_mark_svg(mark: str, x: int, y: int) -> list[str]:
+    """Draw what a contact carries: the NC slash, or a rising/falling arrow.
+
+    Without the arrows a rising-edge contact was drawn exactly like a level one,
+    so the picture said "while this is on" where the ladder says "when it turns
+    on".
+    """
+    if mark == "closed":
+        return [f'<line class="mark" x1="{x - 12}" y1="{y + 11}" x2="{x + 12}" y2="{y - 11}" />']
+    if mark in ("rising", "falling"):
+        up = mark == "rising"
+        tip_y = y - 12 if up else y + 12
+        tail_y = y + 12 if up else y - 12
+        head = 5 if up else -5
+        return [
+            f'<line class="mark" x1="{x}" y1="{tail_y}" x2="{x}" y2="{tip_y}" />',
+            f'<polyline class="mark-head" points="{x - 6},{tip_y + head} {x},{tip_y} {x + 6},{tip_y + head}" />',
+        ]
+    return []
+
+
+def _inline_symbol_svg(opcode: str, x: int, y: int) -> list[str]:
+    """INV as a slash on the wire, ME and MEF as the edge arrows."""
+    if opcode == "INV":
+        return [f'<line class="mark" x1="{x - 12}" y1="{y + 12}" x2="{x + 12}" y2="{y - 12}" />']
+    return _contact_mark_svg("rising" if opcode == "ME" else "falling", x, y)
+
+
 def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
     dim = layout["dim"]
     width = int(dim["width"])
@@ -302,16 +383,13 @@ def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
         if kind == "contact":
             left_x = (cell_left + cell_right) // 2 - CONTACT_W // 2
             right_x = (cell_left + cell_right) // 2 + CONTACT_W // 2
-            slash = '<line class="mark" x1="{0}" y1="{1}" x2="{2}" y2="{3}" />'.format(
-                x - 12, y + 11, x + 12, y - 11
-            ) if element["role"] == "b" else ""
             lines.extend(
                 [
                     f'<line class="wire" x1="{cell_left}" y1="{y}" x2="{left_x}" y2="{y}" />',
                     f'<line class="wire" x1="{right_x}" y1="{y}" x2="{cell_right}" y2="{y}" />',
                     f'<line class="symbol" x1="{left_x + 10}" y1="{y - CONTACT_H // 2}" x2="{left_x + 10}" y2="{y + CONTACT_H // 2}" />',
                     f'<line class="symbol" x1="{right_x - 10}" y1="{y - CONTACT_H // 2}" x2="{right_x - 10}" y2="{y + CONTACT_H // 2}" />',
-                    slash,
+                    *_contact_mark_svg(contact_mark(str(element["role"]), str(element.get("ct_code", ""))), x, y),
                     f'<text class="label" x="{x}" y="{y - 22}">{label}</text>',
                 ]
             )
@@ -322,6 +400,16 @@ def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
                     f'<line class="wire" x1="{x + COIL_W // 2}" y1="{y}" x2="{cell_right}" y2="{y}" />',
                     f'<ellipse class="symbol" cx="{x}" cy="{y}" rx="22" ry="15" />',
                     f'<text class="label" x="{x}" y="{y - 24}">{label}</text>',
+                ]
+            )
+        elif str(element.get("opcode", "")) in INLINE_SYMBOL_OPS and not element.get("operands"):
+            # The printed rung draws these on the wire rather than in a box:
+            # INV inverts what reached it, ME and MEF are the edge forms. A box
+            # with the letters in it reads as an instruction that moves data.
+            lines.extend(
+                [
+                    f'<line class="wire" x1="{cell_left}" y1="{y}" x2="{cell_right}" y2="{y}" />',
+                    *_inline_symbol_svg(str(element["opcode"]), x, y),
                 ]
             )
         else:
@@ -383,7 +471,7 @@ def layouts_to_svg(payload: dict[str, Any]) -> str:
         "</linearGradient>",
         "</defs>",
         "<style>",
-        ".bg{fill:#fbfcfd}.rung-bg{fill:#fff}.rail,.wire{stroke:#202832;stroke-width:2.4;stroke-linecap:square}.symbol{fill:#fff;stroke:#202832;stroke-width:2}.mark{stroke:#202832;stroke-width:1.8}.box{fill:#fff;stroke:#202832;stroke-width:1.8}.opcode-cell{fill:url(#gx3-opcode);stroke:none}.box-separator{stroke:#9aa4b1;stroke-width:1}.label{font:13px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#0f1720}.opcode-label{font:13px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#1d2630}.operand-label{font:12px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#111827}.comment{font:9px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#14833b}.pos{font:12px Meiryo,Arial,sans-serif;fill:#53606f}",
+        ".bg{fill:#fbfcfd}.rung-bg{fill:#fff}.rail,.wire{stroke:#202832;stroke-width:2.4;stroke-linecap:square}.symbol{fill:#fff;stroke:#202832;stroke-width:2}.mark{stroke:#202832;stroke-width:1.8}.mark-head{fill:none;stroke:#202832;stroke-width:1.8;stroke-linejoin:round}.box{fill:#fff;stroke:#202832;stroke-width:1.8}.opcode-cell{fill:url(#gx3-opcode);stroke:none}.box-separator{stroke:#9aa4b1;stroke-width:1}.label{font:13px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#0f1720}.opcode-label{font:13px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#1d2630}.operand-label{font:12px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#111827}.comment{font:9px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#14833b}.pos{font:12px Meiryo,Arial,sans-serif;fill:#53606f}",
         "</style>",
         f'<rect class="bg" x="0" y="0" width="{svg_width}" height="{svg_height}" />',
     ]

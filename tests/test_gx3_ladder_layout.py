@@ -1,4 +1,4 @@
-from gx3cli.gx3_ladder_layout import layouts_to_svg, rung_layout
+from gx3cli.gx3_ladder_layout import GRID_CELLS, layouts_to_svg, rung_layout
 from gx3cli.gx3_ladder_logic import logic_to_text, enable_logic_for_output, output_elements_for
 from gx3cli.review_gx3_project import LadderRow
 
@@ -22,7 +22,9 @@ def test_layout_keeps_coordinates_and_operands() -> None:
 
     layout = rung_layout(row)
 
-    assert layout["dim"] == {"width": 3, "height": 1}
+    # Every rung lays out to the printed grid width whatever it holds, so a
+    # page of them is not a ragged stack; the elements keep their own columns.
+    assert layout["dim"] == {"width": GRID_CELLS, "height": 1}
     assert [(item["kind"], item["x"], item["y"], item["operands"]) for item in layout["elements"]] == [
         ("contact", 0, 0, ["M100"]),
         ("coil", 2, 0, ["M200"]),
