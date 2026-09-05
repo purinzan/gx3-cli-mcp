@@ -78,6 +78,7 @@ class Workspace:
     xref: Artefact
     built: list[str] = field(default_factory=list)
     reused: list[str] = field(default_factory=list)
+    analysed: list[str] = field(default_factory=list)
 
     @property
     def ready(self) -> bool:
@@ -93,6 +94,7 @@ class Workspace:
             "xref": self.xref.as_dict(),
             "built": list(self.built),
             "reused": list(self.reused),
+            "analysed": list(self.analysed),
         }
 
 
@@ -237,10 +239,47 @@ def prepare(root: Path, *, rebuild: bool = False, quiet: bool = True) -> Workspa
     else:
         workspace.reused.append("xref")
 
+    for artefact in (workspace.index, workspace.xref):
+        if _add_statistics(artefact.path):
+            workspace.analysed.append(artefact.kind)
+
     rechecked = locate(root)
     workspace.index = rechecked.index
     workspace.xref = rechecked.xref
     return workspace
+
+
+def _add_statistics(path: Path) -> bool:
+    """Give a database its query statistics, if it was built without them.
+
+    Without them SQLite picks an index by shape rather than by how many rows it
+    will touch: on a real project it chose the index on `access` -- 53,000 rows
+    for a read -- over the one on `device`, which would have found three. One
+    query took 27ms instead of 0.1ms, and dead-logic runs one per device.
+
+    Databases built before this are otherwise perfectly good, so this repairs
+    them in place rather than declaring them stale: a tenth of a second against
+    rebuilding the whole thing.
+    """
+    if not path.exists():
+        return False
+    try:
+        con = sqlite3.connect(path)
+    except sqlite3.Error:
+        return False
+    try:
+        row = con.execute(
+            "select count(*) from sqlite_master where type='table' and name='sqlite_stat1'"
+        ).fetchone()
+        if row and row[0]:
+            return False
+        con.execute("analyze")
+        con.commit()
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        con.close()
 
 
 def render(workspace: Workspace) -> list[str]:
@@ -259,6 +298,8 @@ def render(workspace: Workspace) -> list[str]:
             lines.append("built:  " + ", ".join(workspace.built))
         if workspace.reused:
             lines.append("reused: " + ", ".join(workspace.reused))
+        if workspace.analysed:
+            lines.append("gave query statistics to: " + ", ".join(workspace.analysed))
     if not workspace.ready and not workspace.built:
         lines.append("")
         lines.append("Nothing here is ready to answer. Build it: gx3-cli workspace --prepare")
