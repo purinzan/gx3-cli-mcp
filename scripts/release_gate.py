@@ -48,6 +48,12 @@ SKIP_DIR_NAMES = {
 }
 
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+# Addresses reserved for documentation (RFC 5737) and loopback. None of them
+# can be a machine on a customer network, so an example may use one -- and an
+# example that shows a setting really is stored as text is worth more than one
+# that hides the shape of the value.
+DOCUMENTATION_IP_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.", "127.0.0.")
 USER_HOME_PATTERN = r"C:" + r"\\Users\\[^\\]+"
 CLOUD_SYNC_PATTERN = "One" + "Drive"
 USERPATH_RE = re.compile(USER_HOME_PATTERN + "|" + CLOUD_SYNC_PATTERN, re.IGNORECASE)
@@ -143,6 +149,8 @@ def main(argv: list[str]) -> int:
             for lineno, line in enumerate(text.splitlines(), 1):
                 for pattern, label in ((IP_RE, "ip"), (USERPATH_RE, "userpath")):
                     m = pattern.search(line)
+                    if m and label == "ip" and m.group(0).startswith(DOCUMENTATION_IP_PREFIXES):
+                        continue
                     if m:
                         violations.append(f"{path.name}:{name}:{lineno} [{label}] {m.group(0)!r} -> {line.strip()[:90]}")
                 for term in extra_terms:
