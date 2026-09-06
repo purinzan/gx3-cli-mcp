@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Tests for MC zone reconstruction, jump indexing, and interlock SAT."""
+"""Tests for MC/CALL execution context, jump indexing, and interlock SAT."""
 
 import sys
 
@@ -75,6 +75,39 @@ def synthetic_row(logic: dict, output: dict, pos: int, role: str | None = None) 
     return LadderRow("SYNTH_LDDB.db", pos, "{x}", "", 0, rowsize, data, "", [], "exact")
 
 
+def call_row(contact_number: int, pointer: int, pos: int, device_type: str = "M") -> LadderRow:
+    """A real-shaped CALL row, based on the corpus regression CALL #P240 row."""
+    from test_gx3_operand_alignment import POINTER_ROW
+
+    data = POINTER_ROW
+    data = data.replace("a:M:CALL:P:D", f"a:{device_type}:CALL:P:D", 1)
+    data = data.replace("a=100", f"a={contact_number}", 1)
+    data = data.replace("a=240", f"a={pointer}", 1)
+    return LadderRow("SYNTH_LDDB.db", pos, "{call}", "", 0, 1, data, "4x1", [], "exact")
+
+
+def pointer_row(pointer: int, condition_device: str, output_device: str, pos: int) -> LadderRow:
+    row = synthetic_row({"device": condition_device}, {"type": "coil", "device": output_device}, pos)
+    # parse_pointers() reads the same p{...} record GX stores beside a rung.
+    # Keeping it outside the generated element list avoids changing the rung
+    # topology under test; the pointer is a label, not a conduction element.
+    row.data += f":p{{s=d{{s=#:a={pointer}:vt=nn}}:pos=0,0}}"
+    return row
+
+
+def ret_row(pos: int) -> LadderRow:
+    return synthetic_row({"device": "SM400"}, {"type": "coil", "device": "M999"}, pos, role="RET")
+
+
+def combined_logic_text(rows: list[LadderRow], target_row: LadderRow, device: str) -> str:
+    from gx3cli.gx3_ladder_logic import enable_logic_for_device, logic_to_text
+    from gx3cli.gx3_mc_zones import active_zones, apply_zone_conditions, build_mc_zones
+
+    zones = build_mc_zones(rows)
+    local = enable_logic_for_device(target_row, device)
+    return logic_to_text(apply_zone_conditions(local, active_zones(zones, target_row.lddb, target_row.pos)))
+
+
 def test_mc_zone_reconstruction_with_synthetic_rows() -> None:
     from gx3cli.gx3_mc_zones import active_zones, build_mc_zones
 
@@ -102,6 +135,73 @@ def test_jump_index_with_synthetic_row() -> None:
     assert len(sites) == 1
     assert sites[0].opcode == "CJ"
     assert sites[0].condition_text == "[M10]"
+
+
+def test_one_conditional_call_is_part_of_the_subroutine_output_condition() -> None:
+    sub = pointer_row(240, "M20", "M100", 1024)
+    rows = [call_row(10, 240, 0), sub, ret_row(2048)]
+    text = combined_logic_text(rows, sub, "M100")
+    assert "[M10]" in text and "[M20]" in text and " AND " in text, text
+
+
+def test_two_call_sites_are_or_alternatives() -> None:
+    sub = pointer_row(240, "M20", "M100", 1024)
+    rows = [call_row(10, 240, 0), call_row(11, 240, 512), sub, ret_row(2048)]
+    text = combined_logic_text(rows, sub, "M100")
+    assert "[M10]" in text and "[M11]" in text and " OR " in text, text
+    assert "[M20]" in text, text
+
+
+def test_nested_call_composes_parent_and_child_invocation() -> None:
+    first = pointer_row(240, "M20", "M200", 1024)
+    nested_call = call_row(30, 241, 1536)
+    second = pointer_row(241, "M40", "M100", 3072)
+    rows = [
+        call_row(10, 240, 0),
+        first,
+        nested_call,
+        ret_row(2048),
+        second,
+        ret_row(4096),
+    ]
+    text = combined_logic_text(rows, second, "M100")
+    for device in ("M10", "M30", "M40"):
+        assert f"[{device}]" in text, text
+    assert text.count(" AND ") >= 2, text
+
+
+def test_unconditional_call_does_not_add_a_false_condition() -> None:
+    sub = pointer_row(240, "M20", "M100", 1024)
+    rows = [call_row(400, 240, 0, device_type="SM"), sub, ret_row(2048)]
+    text = combined_logic_text(rows, sub, "M100")
+    assert text == "[M20]", text
+
+
+def test_missing_ret_is_explicit_unresolved_execution_context() -> None:
+    from gx3cli.gx3_mc_zones import build_jump_index, jumps_before
+
+    sub = pointer_row(240, "M20", "M100", 1024)
+    rows = [call_row(10, 240, 0), sub]
+    sites = jumps_before(build_jump_index(rows), sub.lddb, sub.pos)
+    assert any(site.opcode == "CALL_CONTEXT" for site in sites), sites
+    assert any("no following RET" in site.condition_text for site in sites), sites
+
+
+def test_recursive_call_keeps_known_entry_but_marks_context_unresolved() -> None:
+    from gx3cli.gx3_mc_zones import build_jump_index, jumps_before
+
+    sub = pointer_row(240, "M20", "M100", 1024)
+    recursive = call_row(30, 240, 1536)
+    rows = [call_row(10, 240, 0), sub, recursive, ret_row(2048)]
+
+    # The known external entry is still useful evidence.
+    text = combined_logic_text(rows, sub, "M100")
+    assert "[M10]" in text and "[M20]" in text, text
+
+    # But recursion means the project-level execution model is not complete.
+    sites = jumps_before(build_jump_index(rows), sub.lddb, sub.pos)
+    assert any(site.opcode == "CALL_CONTEXT" for site in sites), sites
+    assert any("recursive/cyclic" in site.condition_text for site in sites), sites
 
 
 def main() -> int:
