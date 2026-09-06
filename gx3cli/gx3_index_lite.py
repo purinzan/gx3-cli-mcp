@@ -445,7 +445,7 @@ def root_of(args: argparse.Namespace) -> Path | None:
     return Path(root) if root else None
 
 
-def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
+def open_existing(path: Path, root: Path | None = None, *, required_tables: tuple[str, ...] | None = None) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -459,6 +459,10 @@ def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
                 "Rebuild it: gx3-cli index-lite build --root <project>"
             )
         check_input(path, con, root)
+        if root is not None:
+            from gx3cli.gx3_index_contract import check_schema
+
+            check_schema(con, "index", path, required_tables)
     except BaseException:
         con.close()
         raise

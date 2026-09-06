@@ -19,6 +19,8 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import shutil
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_input_identity import fingerprint
@@ -152,7 +154,65 @@ def test_the_command_runs() -> None:
         assert "ready" in completed.stdout, completed.stdout
 
 
+def test_schema_is_checked_before_reuse_and_only_broken_artifact_is_rebuilt() -> None:
+    from gx3cli.gx3_index_contract import XREF_COLUMNS, LITE_COLUMNS
+    from gx3cli.gx3_xref import open_xref_db
+    from gx3cli.gx3_index_lite import open_existing
+    from gx3cli.gx3_workspace import UNREADABLE
+    from gx3cli.gx3_dead_logic import load_external_devices
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project = create_demo_line_project(work / "line", overwrite=True)
+        built = prepare(project)
+        for artifact, tables, opener in ((built.xref, XREF_COLUMNS, open_xref_db),
+                                          (built.index, LITE_COLUMNS, open_existing)):
+            backup = work / f"{artifact.kind}-backup.sqlite"
+            shutil.copy2(artifact.path, backup)
+            boundaries = load_external_devices(backup, project) if artifact.kind == "index" else None
+            for table in tables:
+                shutil.copy2(backup, artifact.path)
+                with closing(sqlite3.connect(artifact.path)) as con, con:
+                    con.execute(f'drop table "{table}"')
+                state = getattr(locate(project), artifact.kind)
+                assert state.state == UNREADABLE and table in state.detail, state
+                if artifact.kind == "index" and table != "external_sources":
+                    assert load_external_devices(artifact.path, project) == boundaries
+                if table == "data_flow":
+                    # Only full workspace reuse needs value flow. Basic xref
+                    # investigation still works with that capability absent.
+                    opener(artifact.path, root=project).close()
+                else:
+                    try:
+                        opener(artifact.path, root=project)
+                    except SystemExit as exc:
+                        assert "incomplete schema" in str(exc) and table in str(exc), exc
+                    else:
+                        raise AssertionError(f"reader accepted missing {table}")
+                moved = artifact.path.with_suffix(".moved")
+                artifact.path.rename(moved)
+                moved.rename(artifact.path)
+            shutil.copy2(backup, artifact.path)
+            table, column = ("xref", "range_len") if artifact.kind == "xref" else ("devices", "driver_rows")
+            with closing(sqlite3.connect(artifact.path)) as con, con:
+                con.execute(f'alter table "{table}" rename column "{column}" to missing_column')
+            assert getattr(locate(project), artifact.kind).state == UNREADABLE
+            try:
+                opener(artifact.path, root=project)
+            except SystemExit as exc:
+                assert column in str(exc), exc
+            else:
+                raise AssertionError("reader accepted a missing column")
+            repaired = prepare(project)
+            assert repaired.ready and repaired.built == [artifact.kind], repaired.as_dict()
+            with closing(sqlite3.connect(artifact.path)) as con, con:
+                con.execute(f'alter table "{table}" add column optional_future_column text')
+            assert locate(project).ready
+            opener(artifact.path, root=project).close()
+
+
 def main() -> int:
+    test_schema_is_checked_before_reuse_and_only_broken_artifact_is_rebuilt()
     test_nothing_built_yet_says_so()
     test_preparing_builds_both_and_records_the_input()
     test_a_second_run_on_the_same_input_rebuilds_nothing()

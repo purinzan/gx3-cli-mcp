@@ -140,6 +140,12 @@ def open_xref_db(
     try:
         check_decoder(path, con)
         check_input(path, con, root)
+        if root is not None:
+            from gx3cli.gx3_index_contract import check_schema
+
+            # Value flow is an optional capability; its consumers check it
+            # separately. Where-used still works without a data_flow table.
+            check_schema(con, "xref", path, ("xref", "xref_members", "st_sources", "st_refs"))
     except BaseException:
         con.close()
         raise
