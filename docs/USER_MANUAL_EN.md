@@ -109,6 +109,10 @@ so the rows that did evaluate cannot be read as the whole answer.
 One snapshot answers for the instant it was captured, not for the cause of a
 past stop or trip.
 
+Both offline modes are available through MCP as `gx3_explain_snapshot` and
+`gx3_replay_capture`. The network mode is not: the MCP server decides on the
+mode word, not the command name.
+
 ## MCP
 
 Use the MCP server from AI clients that support stdio MCP servers:

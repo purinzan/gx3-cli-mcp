@@ -61,7 +61,7 @@ Issue #128 の調査結果を、GX Works3 の標準機能と `gx3-cli-mcp` の�
 - `tests/test_gx3_live_read.py`
 - `tests/test_gx3_format_graph.py`
 
-`live-read` は MCP の `EXTERNAL_IO_COMMANDS` として明示的に除外されている。接続を開かない `live-read explain` / `live-read replay` も、同じコマンド入口を共有するため現時点では除外のまま。取得済み JSON を使う `ladder-print` や project-read-only 解析は MCP から利用できる。
+`live-read` は MCP の `EXTERNAL_IO_COMMANDS` に残したまま、許可判定をモード語で行う。ネットワークを開く既定モードは MCP から実行できず、接続を開かない `explain` / `replay` / `modes` は`gx3_explain_snapshot` / `gx3_replay_capture` として利用できる。取得済み JSON を使う `ladder-print` や project-read-only 解析も従来どおり MCP から利用できる。
 
 ### 不足
 
@@ -273,7 +273,7 @@ LD と ST が混在すると、ST 内で読み書きされる device/label が x
 
 | 機能 | CLI | MCP | 備考 |
 |---|---|---|---|
-| live-read | 対応 | 対象外 | external I/O のため MCP から明示除外 |
+| live-read | 対応 | 一部対応 | ネットワークモードは MCP から明示除外。接続を開かない explain/replay のみモード語で許可 |
 | ladder-print / live-values | 対応 | 対応 | 取得済み JSON の解析は project-read-only 範囲 |
 | trace-device | 対応 | 対応 | typed MCP tool あり |
 | xref / data-flow | 対応 | 対応 | project read-only |

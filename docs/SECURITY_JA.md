@@ -35,7 +35,8 @@
 - Python の通常のファイル書込み、rename/delete、SQLite 作成・書込みを中央で検査します。sandbox 外の既存 SQLite は読み取り専用で開きます。
 - MCP 配下から任意の外部実行ファイルを起動すると Python の書込み境界を迂回できるため、MCP sandbox 中の子プロセスは同じ Python 実行環境へ制限します。
 - `live-read` は明示指定した PLC にネットワーク接続して現在値を読む CLI 専用コマンドです。MCP からは公開せず、PLC 書き込み、run/stop、download は実装しません。
-- `live-read explain` と `live-read replay` は接続を開かず、採取済みのファイルだけを読みます。ただし MCP からの公開範囲は変えていません。`live-read` はコマンド単位で `EXTERNAL_IO_COMMANDS` として除外されており、ネットワークを開ける既定モードと同じ入口を共有するためです。オフラインモードを MCP から使えるようにするかは、別途の判断として残します。
+- `live-read explain` と `live-read replay` は接続を開かず、採取済みのファイルだけを読みます。この2モードと `live-read modes` は MCP から利用できます（`gx3_explain_snapshot` / `gx3_replay_capture`）。
+- 許可の判定はコマンド名ではなく**モード語**で行います。`live-read` は `EXTERNAL_IO_COMMANDS` に残したままで、先頭がオフラインモード語でない呼び出しは拒否されます。`live-read` を read-only コマンド一覧に入れると名前ごと許可され、ネットワークモードまで通ってしまうためです。念のため `--ip` / `--port` などネットワーク専用フラグが混ざった呼び出しも、境界の判定側で拒否します（モード側のパーサでも弾かれますが、二重に読みます）。
 - 実プロジェクトを AI クライアントに扱わせる場合は、その AI クライアント側のデータ送信ポリシーも確認してください。
 
 ### この境界が保証しないこと
