@@ -48,6 +48,7 @@ from gx3cli.gx3_analysis_state import (
     AnalysisState,
     checked,
 )
+from gx3cli.gx3_instruction_table import is_edge_triggered, manual_exec_condition
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 
 
@@ -168,6 +169,18 @@ def semantic_gaps(driver_rows: list[dict]) -> list[str]:
         gaps.append("SET/RST: the condition shown is when it changes, not when it holds")
     if {"PLS", "PLF"} & roles:
         gaps.append("PLS/PLF: the write happens on an edge, not while the condition holds")
+    edge_write_roles = sorted(
+        role
+        for role in roles
+        if role not in {"PLS", "PLF"} and is_edge_triggered(role) is True
+    )
+    if edge_write_roles:
+        gaps.append(
+            "edge-triggered value writes ("
+            + ", ".join(edge_write_roles[:6])
+            + (f" +{len(edge_write_roles) - 6} more" if len(edge_write_roles) > 6 else "")
+            + "): the write occurs on an execution edge, not while the rung level holds"
+        )
     if {"OUT__16", "OUTH__16"} & roles:
         gaps.append("a timer or counter is driven here; its contact means done, not enabled")
     temporal = {
@@ -351,6 +364,16 @@ def temporal_predicates(
                 "source": "enable_logic",
                 "requires_runtime_state": True,
             })
+        elif is_edge_triggered(occ.role) is True:
+            execution_condition = manual_exec_condition(occ.role) or "edge"
+            out.append({
+                "kind": "edge_triggered_write",
+                "device": occ.device,
+                "opcode": occ.role,
+                "execution_condition": execution_condition,
+                "source": "instruction_execution_condition",
+                "requires_runtime_state": True,
+            })
 
     for condition in condition_records:
         device = str(condition.get("device", ""))
@@ -433,6 +456,15 @@ def row_driver_occurrences(row: LadderRow) -> list[DeviceOcc]:
     return [occ for occ in row.occurrences if occ.role in DRIVER_ROLES]
 
 
+def row_write_occurrences(row: LadderRow) -> list[DeviceOcc]:
+    """Occurrences that actually write a value, including instruction targets."""
+    return [
+        occ
+        for occ in row.occurrences
+        if occ.role in DRIVER_ROLES or occ.access in {"write", "both"}
+    ]
+
+
 def row_instruction_refs(row: LadderRow) -> list[DeviceOcc]:
     return [occ for occ in row.occurrences if occ.role not in CONTACT_ROLES and occ.role not in DRIVER_ROLES]
 
@@ -450,6 +482,10 @@ def driver_effect(role: str) -> str:
         return "ON/pulse"
     if role in {"OUT__16", "OUTH__16"}:
         return "ON/timer_or_counter"
+    if is_edge_triggered(role) is True:
+        return "write/edge-triggered"
+    if role not in DRIVER_ROLES:
+        return "write/value"
     return "ON/coil"
 
 
@@ -658,7 +694,7 @@ def build_trace(
             continue
 
         for row in rows_for_device:
-            output_occs = [occ for occ in row_driver_occurrences(row) if occ.device == device]
+            output_occs = [occ for occ in row_write_occurrences(row) if occ.device == device]
             output_roles = [occ.role for occ in output_occs]
             row_zones = active_zones(mc_zones, row.lddb, row.pos)
             row_jumps = jumps_before(jump_index, row.lddb, row.pos)
