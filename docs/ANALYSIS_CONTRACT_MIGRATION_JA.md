@@ -33,6 +33,11 @@
 
 ## 共通基盤の変更と残り
 
+xref/liteの明示buildはgx3_index_buildの一時SQLiteへ書込み、開始時・完了時の
+入力指紋/ファイル状態と保存指紋を照合してから公開する。途中変更・例外で旧DBを
+残し、入力/出力のWALや入力DBへの出力を拒否する。STDB内容だけの途中変更も検証。
+全readerの実行中変更検出、外部CSVのprovenance、複数索引の同時公開は未完。
+
 通常OUTの定数証明は、保存されたST/inline-ST coverageがpartialなら停止する。
 STDBの未対応IFに隠れたwriterを実builderで再現し、trace/dead-logic/Doctorに
 decode段階の制約とsource位置を伝える。coverage表欠損も未評価でありSTなしではない。

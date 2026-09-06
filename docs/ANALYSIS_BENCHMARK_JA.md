@@ -176,3 +176,15 @@ SQLは20→22（multi-pouは23→25）。読取りsnapshotのBEGINとST coverage
 Python peak中央値は全caseで420bytes増加。traceの時間・メモリは既存予算内。
 SQLの固定増分を回帰テストにも明記した。STを解析できない場合に枝刈りを止める
 正しさは別のIF文検体で確認し、この性能検体の単純代入STと混同しない。
+
+## 構築中の入力照合と原子的な索引公開
+
+`8edcee6b1e2aee714cb91a47b7710c4895c99276`→`76f5e4def7dd32d9e1536eebe1297e6f79f0272b`。
+同じv2 harness・固定6検体・各3回の順次比較で全入力hash一致。
+cold中央値msはsmall 47.58→54.16、wide 69.96→79.59、deep 65.32→75.04、
+large-span 121.17→121.93、multi-pou 70.94→84.15、ld-st 68.94→80.76。
+coldのSQLは全caseで+2（保存指紋を公開前に読む照会）。DB openとrows/comments/labels
+読込みは不変。入力hash読込みは4→8（multi-pou16→32、ld-st8→16）で、両builderの
+前後確認による必要な追加I/O。Python peak中央値の増分は約22–23KiB。
+coldの時間・Python peak・累積RSSは既存予算内。大規模入力では追加hash I/Oの影響が
+増えうるため、一般的な高速化とは扱わない。固定検体のhash読込み予算を回帰テストに追加。
