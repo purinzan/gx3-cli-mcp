@@ -176,3 +176,13 @@ SQLは20→22（multi-pouは23→25）。読取りsnapshotのBEGINとST coverage
 Python peak中央値は全caseで420bytes増加。traceの時間・メモリは既存予算内。
 SQLの固定増分を回帰テストにも明記した。STを解析できない場合に枝刈りを止める
 正しさは別のIF文検体で確認し、この性能検体の単純代入STと混同しない。
+
+## semantic-diff要約の重複解読
+
+`8edcee6b1e2aee714cb91a47b7710c4895c99276`→`a6644aeaae0d759dcb2b428352af46b7bf5036be`。
+既存branch_rung合成例のM100→M102変更をsummarize_changeで100回、各3反復。
+同じPython/macOSで前後を順次実行し、入力文字列hash一致を確認。
+デコーダ実呼出しは400→200（1要約4→2）、中央値57.57→29.64ms、Python peak
+中央値8696→8865bytes。各版の命令と引数で同じ解読結果を再利用する。
+これは要約関数だけの小測定で、project読込み・SQL・ファイルI/Oや全CLIの速度を
+測ったものではない。未解析時の注記は別の実CLI/CSV回帰で確認する。
