@@ -7,6 +7,7 @@ import tempfile
 from contextlib import closing, redirect_stdout
 from pathlib import Path
 
+from gx3cli.gx3_format import enumerate_inline_st_sources, parse_st_text
 from gx3cli.gx3_intermediate_tool import generate_rung
 from gx3cli.gx3_xref import main as xref_main
 
@@ -89,6 +90,116 @@ def test_range_and_read_modify_write_counts(root: Path) -> None:
         assert len(data["writers"]) == 1 and not data["truncated"], data
 
 
+def test_partial_st_parser_contract() -> None:
+    supported = parse_st_text(
+        "D200 := D100; AlarmLatched := X10 AND InterlockOK;",
+        source_kind="st",
+        source_file="001_STDB.db",
+        source_location="Source:rowid=1:Code",
+        pou="Main",
+    )
+    refs = [(r.symbol, r.access) for r in supported.references]
+    assert supported.coverage == "supported"
+    assert refs == [
+        ("D200", "write"),
+        ("D100", "read"),
+        ("AlarmLatched", "write"),
+        ("X10", "read"),
+        ("InterlockOK", "read"),
+    ], refs
+
+    unsupported = parse_st_text(
+        "IF X0 THEN D0 := D1; END_IF;",
+        source_kind="st",
+        source_file="001_STDB.db",
+        source_location="Source:rowid=2:Code",
+        pou="Main",
+    )
+    assert unsupported.coverage == "partial"
+    assert unsupported.references == [], unsupported.references
+    assert any("control-flow" in reason for reason in unsupported.reasons)
+
+    inline = enumerate_inline_st_sources(
+        {"001_LDDB.db": [{"data": "D10 := M1;", "pos": 42}]},
+        {"001_LDDB.db": "Main"},
+    )
+    assert len(inline) == 1
+    assert inline[0].source_kind == "inline-st"
+    assert inline[0].pou == "Main"
+    assert inline[0].source_location == "pos=42:fragment=1"
+
+
+def build_st_fixture(root: Path) -> None:
+    with closing(sqlite3.connect(root / "001_LDDB.db")) as con:
+        con.execute("create table LadderBlocks(id text, pos real, blocktype integer, data text, rowsize integer, translated integer, ConvTarget integer)")
+        con.commit()
+    with closing(sqlite3.connect(root / "001_STDB.db")) as con:
+        con.execute("create table Source(Pou text, Code text)")
+        con.execute(
+            "insert into Source values (?, ?)",
+            (
+                "MainST",
+                "D200 := D100; AlarmLatched := X10 AND InterlockOK; "
+                "IF X0 THEN D0 := D1; END_IF;",
+            ),
+        )
+        con.commit()
+    code, text = invoke(root, "build")
+    assert code == 0, text
+    assert "ST evidence:" in text and "partial_sources=1" in text, text
+
+
+def test_st_xref_bridge(root: Path) -> None:
+    with closing(sqlite3.connect(root / "xref.sqlite")) as con:
+        con.row_factory = sqlite3.Row
+        d100 = con.execute(
+            "select * from xref where device='D100' and role='ST'"
+        ).fetchone()
+        d200 = con.execute(
+            "select * from xref where device='D200' and role='ST'"
+        ).fetchone()
+        assert d100 is not None and d100["access"] == "read", d100
+        assert d200 is not None and d200["access"] == "write", d200
+        assert d100["access_basis"] == "structured-text-partial"
+        assert d100["parse_status"] == "st-partial"
+        assert d100["pou"] == "MainST", d100
+
+        source = con.execute(
+            "select pou, source_location, coverage from st_sources where source_file='001_STDB.db'"
+        ).fetchone()
+        assert source is not None and source["pou"] == "MainST", source
+        assert source["source_location"] == "Source:rowid=1:Code", source
+        assert source["coverage"] == "partial", source
+
+        refs = {
+            (row["symbol"], row["access"])
+            for row in con.execute("select symbol, access from st_refs")
+        }
+        assert ("AlarmLatched", "write") in refs
+        assert ("InterlockOK", "read") in refs
+        assert ("X10", "read") in refs
+        # Unsupported IF/END_IF is surfaced as partial but contributes no guessed refs.
+        assert ("X0", "read") not in refs
+        assert all(symbol not in {"D0", "D1"} for symbol, _access in refs)
+
+    code, data = result(root, "AlarmLatched")
+    assert code == 0, data
+    assert data["total_count"] == 0
+    assert data["st_symbol_counts"]["writers"] == 1
+    assert len(data["st_symbol_refs"]) == 1
+    assert data["st_symbol_refs"][0]["pou"] == "MainST"
+    assert data["coverage"]["st"]["state"] == "partial"
+    assert any("ST/inline-ST coverage is partial" in warning for warning in data["warnings"])
+
+    code, missing = result(root, "D9999")
+    assert code == 1
+    assert any("ST/inline-ST coverage is partial" in warning for warning in missing["warnings"])
+
+    code, text = invoke(root, "downstream", "D100")
+    assert code == 0
+    assert "Downstream traversal does not infer value-flow through ST" in text, text
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gx3_xref_results_") as tmp:
         root = Path(tmp)
@@ -98,7 +209,14 @@ def main() -> int:
         test_index_warning_survives_json_and_no_matches(root)
         test_empty_json_without_indexed_access(root)
         test_range_and_read_modify_write_counts(root)
-    print("5 xref result completeness checks passed")
+
+    test_partial_st_parser_contract()
+    with tempfile.TemporaryDirectory(prefix="gx3_xref_st_") as tmp:
+        root = Path(tmp)
+        build_st_fixture(root)
+        test_st_xref_bridge(root)
+
+    print("7 xref/ST completeness checks passed")
     return 0
 
 

@@ -9,11 +9,15 @@ this tool decodes every argument of every operation, including:
 - digit-specified bits       M{b=..:m=c{v=k}} + header ``M:Ks`` -> K2M35001
 - bit-of-word / indexed      M{..} + header ``Dots``/``Z``
 
+Supported simple Structured Text assignments are also indexed as partial
+cross-reference evidence. Unsupported ST syntax is never guessed and keeps the
+coverage state partial.
+
 Each occurrence is classified as read / write / both / ref (unknown opcode).
 
 Subcommands:
-  build       parse all LDDBs and write .gx3_index/<label>_xref.sqlite
-  where-used  list writers and readers of one device (with POU name and step)
+  build       parse LDDBs plus supported ST references and write xref sqlite
+  where-used  list writers and readers of one device/label
   downstream  BFS impact trace: devices written by rows that read the target
   export      dump the xref table (optionally one device) to CSV
 """
@@ -37,6 +41,7 @@ from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_label_resolve import load_label_resolver
+from gx3cli.gx3_format import enumerate_inline_st_sources, enumerate_st_sources
 from gx3cli.gx3_output import add_format_alias, fold_format_alias
 
 
@@ -61,18 +66,15 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   each. Coverage changed, so a database built by the previous decoder holds
 #   fewer members than this build would find and must not be reused: the
 #   fingerprint is the same input, and the answer would still be narrower.
-XREF_DECODER = "arg-decode-4"
+#
+#   arg-decode-strefs-5: supported simple ST/inline-ST assignments contribute
+#   read/write evidence. The database also records unresolved ST sources and
+#   label-only references so absence can be reported as partial, not complete.
+XREF_DECODER = "arg-decode-strefs-5"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
-    """Record which decoder wrote this database, and from which input.
-
-    The path a database was built from is not an identity: the folder behind it
-    can be rebuilt, edited or replaced, and every answer afterwards is about a
-    file nobody opened. The fingerprint is of the ladder, comments, labels and
-    parameters together, so "did the logic and the comments come from the same
-    input" is a question this can answer.
-    """
+    """Record which decoder wrote this database, and from which input."""
     con.execute("create table if not exists meta(key text primary key, value text not null)")
     con.execute(
         "insert or replace into meta(key, value) values ('decoder', ?)", (XREF_DECODER,)
@@ -102,7 +104,7 @@ def check_decoder(path: Path, con: sqlite3.Connection) -> None:
     raise SystemExit(
         f"xref db was built by a different decoder version: {path}\n"
         f"  stored: {stored or '(none)'}   expected: {XREF_DECODER}\n"
-        "Its occurrences are the old reading of the ladder, so every answer\n"
+        "Its occurrences are the old reading of the ladder/ST inputs, so every answer\n"
         f"taken from it would be stale. {rebuild_hint(path)}"
     )
 
@@ -114,8 +116,6 @@ def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
     row = con.execute("select value from meta where key='input_sha256'").fetchone()
     stored = (row["value"] if isinstance(row, sqlite3.Row) else row[0]) if row else ""
     if not stored:
-        # Built before inputs were stamped. The decoder check already refuses
-        # those, so there is nothing to add here.
         return
     actual = fingerprint(Path(root))
     if not actual or actual == stored:
@@ -139,18 +139,7 @@ def open_xref_db(
 
 
 def member_rows(con: sqlite3.Connection) -> list[tuple]:
-    """One line per device an occurrence covers, including the one it names.
-
-    A block instruction is stored once, under the first device of its run. So
-    `where device = ?` about the middle of a run finds nothing, and half the
-    readers wrote exactly that. The correct predicate has existed in this file
-    all along; what did not exist was a way to be right without knowing it.
-
-    A run whose length lives in a device gets one member, the device it names.
-    How far it actually reaches is a value the running program holds, and rows
-    invented here would put occurrences on devices the instruction may never
-    touch.
-    """
+    """One line per device an occurrence covers, including the one it names."""
     rows = con.execute(
         "select id, device, device_type, number, range_len from xref"
     ).fetchall()
@@ -172,12 +161,11 @@ def member_rows(con: sqlite3.Connection) -> list[tuple]:
 
 
 def flow_edge_rows(root: Path) -> list[tuple]:
-    """The directed value-flow edges of a project, ready to store.
+    """The directed ladder value-flow edges of a project, ready to store.
 
-    Only the edges: an unresolved record says an operation could not be turned
-    into one, and inventing an edge for it is the thing #36 asks not to happen.
-    A caller that needs to know an operation went unread has the occurrence
-    rows and parse-gaps for that.
+    ST references intentionally do not invent value-flow edges here. A simple
+    assignment proves reads/writes for xref, but the first issue scope does not
+    claim a complete ST evaluator or interprocedural flow model.
     """
     from gx3cli.gx3_data_flow import build_report
 
@@ -224,6 +212,142 @@ def project_label_from_root(root: Path) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "project"
 
 
+def _label_device_for_symbol(labels: object, symbol: str) -> tuple[str, str]:
+    """Resolve one ST label to one physical device only when unambiguous.
+
+    LabelResolver intentionally exposes token lookup because ladder operands
+    carry label IDs, not names. ST already contains names, so this bridge scans
+    the resolver's decoded entries and refuses ambiguous/local-label mappings.
+    The label still remains in st_refs even when no physical address is safe to
+    materialize into the device xref.
+    """
+    entries = getattr(labels, "_entries", {})
+    unique: dict[tuple[object, ...], object] = {}
+    for ref in entries.values():
+        if str(getattr(ref, "name", "")).casefold() != symbol.casefold():
+            continue
+        key = (
+            getattr(ref, "name", ""),
+            getattr(ref, "label_class", ""),
+            getattr(ref, "data_type", ""),
+            getattr(ref, "comment", ""),
+            tuple(getattr(ref, "devices", ())),
+        )
+        unique[key] = ref
+    matches = list(unique.values())
+    if not matches:
+        return "", "label has no decoded LabelData.db match"
+    if len(matches) != 1:
+        return "", "label name is ambiguous across decoded label tables"
+    physical: list[str] = []
+    for raw in getattr(matches[0], "devices", ()):
+        parsed = _split_device(str(raw))
+        if parsed is not None:
+            physical.append(_format_device(*parsed))
+    physical = list(dict.fromkeys(physical))
+    if len(physical) == 1:
+        return physical[0], f"label {symbol} assigned to {physical[0]}"
+    if not physical:
+        return "", "local/unassigned label has no single physical device"
+    return "", "label maps to multiple physical devices; not materialized"
+
+
+def collect_st_evidence(
+    root: Path,
+    rows_by_db: dict[str, list[object]],
+    pm: object,
+    labels: object,
+    comments: dict[tuple[str, int], CommentInfo],
+) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    """Return st_sources rows, st_refs rows, and physical xref rows."""
+    pou_by_file: dict[str, str] = {}
+    for lddb in rows_by_db:
+        pou_by_file[lddb] = pm.label(lddb)
+    for path in sorted(root.glob("*_STDB.db")):
+        pou_by_file[path.name] = pm.label(path.name)
+
+    sources = [
+        *enumerate_st_sources(root, pou_by_file),
+        *enumerate_inline_st_sources(rows_by_db, pou_by_file),
+    ]
+    source_rows: list[tuple] = []
+    ref_rows: list[tuple] = []
+    xref_rows: list[tuple] = []
+    for source_id, source in enumerate(sources, 1):
+        reason = "; ".join(source.reasons)
+        source_rows.append(
+            (
+                source_id,
+                source.source_kind,
+                source.source_file,
+                source.source_location,
+                source.pou,
+                source.coverage,
+                reason,
+            )
+        )
+        for ref in source.references:
+            resolved = ""
+            resolution_reason = ""
+            parsed = _split_device(ref.symbol)
+            if parsed is not None:
+                resolved = _format_device(*parsed)
+            else:
+                resolved, resolution_reason = _label_device_for_symbol(labels, ref.symbol)
+            combined_reason = "; ".join(
+                part for part in (ref.reason, resolution_reason) if part
+            )
+            ref_rows.append(
+                (
+                    source_id,
+                    ref.symbol,
+                    resolved,
+                    ref.access,
+                    ref.source_kind,
+                    ref.source_file,
+                    ref.source_location,
+                    ref.pou,
+                    ref.statement_index,
+                    ref.coverage,
+                    combined_reason,
+                )
+            )
+            if not resolved:
+                continue
+            resolved_parsed = _split_device(resolved)
+            if resolved_parsed is None:
+                continue
+            dev_type, number = resolved_parsed
+            info = comments.get((dev_type, number), CommentInfo())
+            comment = info.japanese or info.english or info.all_text or ""
+            detail_parts = [ref.source_kind, ref.source_location]
+            if ref.symbol != resolved:
+                detail_parts.append(f"symbol={ref.symbol}")
+            xref_rows.append(
+                (
+                    resolved,
+                    dev_type,
+                    number,
+                    1,
+                    ref.access,
+                    "ST",
+                    ":=",
+                    0 if ref.access == "write" else 1,
+                    "",
+                    " ".join(detail_parts),
+                    "structured-text-partial",
+                    ref.source_file,
+                    ref.statement_index,
+                    ref.pou,
+                    None,
+                    "",
+                    comment,
+                    f"st-{ref.coverage}",
+                )
+            )
+    return source_rows, ref_rows, xref_rows
+
+
 def build(args: argparse.Namespace) -> int:
     root = Path(args.root)
     out = Path(args.db or default_db_path(root))
@@ -235,9 +359,6 @@ def build(args: argparse.Namespace) -> int:
     if labels:
         print(f"resolved {len(labels)} label references from LabelData.db")
     elif labels.fatal:
-        # Every label-named operand in this project would come out unresolved,
-        # and the occurrences built from it would be missing devices without
-        # anything in the result saying so.
         raise SystemExit(
             f"LabelData.db is present and could not be read: {labels.reason}. "
             "Every label-named operand would be missing from this "
@@ -245,7 +366,6 @@ def build(args: argparse.Namespace) -> int:
             "Fix or remove the file and build again."
         )
     elif not labels.usable:
-        # Not fatal, and not nothing: the run continues and says what it lost.
         print(f"warning: label names are unavailable -- {labels.reason}")
     comments = load_comments_for_root(root)
     print("parsing ladder rows ...")
@@ -258,15 +378,14 @@ def build(args: argparse.Namespace) -> int:
         drop table if exists meta;
         drop table if exists data_flow;
         drop table if exists xref_members;
+        drop table if exists st_sources;
+        drop table if exists st_refs;
         create table meta(key text primary key, value text not null);
         create table xref(
             id integer primary key autoincrement,
             device text not null,
             device_type text not null,
             number integer not null,
-            -- How many devices this occurrence covers. A block instruction
-            -- names only the first device of the run it writes, so a search
-            -- for one in the middle has to match on the span, not the name.
             range_len integer not null default 1,
             access text not null,
             role text not null,
@@ -283,10 +402,33 @@ def build(args: argparse.Namespace) -> int:
             comment text,
             parse_status text
         );
+        create table st_sources(
+            id integer primary key,
+            source_kind text not null,
+            source_file text not null,
+            source_location text not null,
+            pou text,
+            coverage text not null,
+            reason text
+        );
+        create table st_refs(
+            id integer primary key autoincrement,
+            source_id integer not null,
+            symbol text not null,
+            resolved_device text,
+            access text not null,
+            source_kind text not null,
+            source_file text not null,
+            source_location text not null,
+            pou text,
+            statement_index integer not null,
+            coverage text not null,
+            reason text
+        );
         """
     )
 
-    records = []
+    records: list[tuple] = []
     row_count = 0
     for lddb, rows in rows_by_db.items():
         pou = pm.label(lddb)
@@ -316,6 +458,12 @@ def build(args: argparse.Namespace) -> int:
                             lddb, pos, pou, step, current_title, comment, status,
                         )
                     )
+
+    st_source_rows, st_ref_rows, st_xref_rows = collect_st_evidence(
+        root, rows_by_db, pm, labels, comments
+    )
+    records.extend(st_xref_rows)
+
     con.executemany(
         """
         insert into xref(
@@ -326,12 +474,23 @@ def build(args: argparse.Namespace) -> int:
         """,
         records,
     )
-    # The value-flow edges, stored beside the occurrences rather than derived
-    # again by every caller. `downstream` joins reads and writes that happen on
-    # the same rung, which cannot tell "D100 was moved into D200" from "D100
-    # and D200 were mentioned together"; #36 asks for the difference, and for
-    # graph, downstream and lint to be able to see it without each of them
-    # re-reading every program.
+    con.executemany(
+        """
+        insert into st_sources(id, source_kind, source_file, source_location, pou, coverage, reason)
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        st_source_rows,
+    )
+    con.executemany(
+        """
+        insert into st_refs(
+            source_id, symbol, resolved_device, access, source_kind, source_file,
+            source_location, pou, statement_index, coverage, reason
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        st_ref_rows,
+    )
+
     con.executescript(
         """
         create table data_flow(
@@ -368,10 +527,6 @@ def build(args: argparse.Namespace) -> int:
         """,
         flow_edge_rows(root),
     )
-    # Every device a row covers, one line each, so a reader can ask about a
-    # device instead of remembering that `device` is the first of a run. The
-    # occurrence rows are untouched: `xref.device` still means "the device the
-    # instruction names", and `run_offset` says which of the two a member is.
     con.executescript(
         """
         create table xref_members(
@@ -400,24 +555,31 @@ def build(args: argparse.Namespace) -> int:
         create index idx_xref_span on xref(device_type, number);
         create index idx_xref_row on xref(lddb, pos);
         create index idx_xref_access on xref(access);
+        create index idx_st_refs_symbol on st_refs(symbol collate nocase);
+        create index idx_st_refs_device on st_refs(resolved_device);
+        create index idx_st_refs_access on st_refs(access);
+        create index idx_st_sources_coverage on st_sources(coverage);
         """
     )
+    partial_st_sources = sum(1 for row in st_source_rows if row[5] != "supported")
     con.execute("insert into meta(key, value) values ('root', ?)", (str(root),))
     con.execute("insert into meta(key, value) values ('rows', ?)", (str(row_count),))
     con.execute("insert into meta(key, value) values ('records', ?)", (str(len(records)),))
+    con.execute("insert into meta(key, value) values ('st_sources', ?)", (str(len(st_source_rows)),))
+    con.execute("insert into meta(key, value) values ('st_refs', ?)", (str(len(st_ref_rows)),))
+    con.execute("insert into meta(key, value) values ('st_partial_sources', ?)", (str(partial_st_sources),))
     stamp_decoder(con, root)
-    # Without statistics, SQLite picks an index by shape rather than by how
-    # many rows it will actually touch. On a real project it chose the index on
-    # `access` for "device=? and access=?" -- 53,000 rows for access='read',
-    # scanned and sorted, where the index on `device` would have found three.
-    # One query took 27ms instead of 0.1ms, and dead-logic runs one per device:
-    # 6,665 of them, 72 of its 75 seconds. ANALYZE takes a tenth of a second
-    # and is the difference.
     con.execute("analyze")
     con.commit()
     con.close()
     print(f"xref written: {out}")
     print(f"rows={row_count} occurrences={len(records)}")
+    if st_source_rows:
+        print(
+            f"ST evidence: sources={len(st_source_rows)} refs={len(st_ref_rows)} "
+            f"physical_xref={len(st_xref_rows)} partial_sources={partial_st_sources}"
+        )
+        print("warning: ST/inline-ST coverage is partial; unsupported syntax was not guessed")
     for w in pm.warnings:
         print(f"warning: {w}")
     return 0
@@ -469,17 +631,6 @@ def device_filter(device: str) -> tuple[str, tuple[object, ...]]:
 
 
 def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sqlite3.Row]:
-    """Occurrences of a device, including the runs that cover it unnamed.
-
-    A block instruction names only the first device it writes, so "where is
-    D64063 written" answered "no occurrences" while a BMOV four devices earlier
-    was writing it.
-
-    A run whose length is held in a device (range_len 0) is still found only
-    under the device that starts it: how far it reaches is not knowable without
-    running the program, and a guess here would put occurrences on devices the
-    instruction may never touch.
-    """
     predicate, params = device_filter(device)
     return con.execute(
         f"select * from xref where {predicate} order by pou, pos, id limit ?",
@@ -500,15 +651,46 @@ def device_counts(con: sqlite3.Connection, device: str) -> dict[str, int]:
     return counts
 
 
-def indexed_note(con: sqlite3.Connection, device: str) -> str:
-    """Warn that index-modified access may reach this device unseen.
+def st_symbol_rows(con: sqlite3.Connection, symbol: str) -> list[sqlite3.Row]:
+    """Label/device references retained from ST, including unassigned labels."""
+    return con.execute(
+        "select * from st_refs where symbol = ? collate nocase order by source_file, source_location, statement_index, id",
+        (symbol,),
+    ).fetchall()
 
-    D100Z2 names D100 and reaches whatever D100 plus Z2 is at the time. The
-    occurrence is recorded under D100 because that is all the ladder says, so a
-    device reached only through an index register appears in no search at all.
-    Nothing static can resolve it; saying so is the difference between an
-    incomplete answer and a wrong one.
-    """
+
+def st_coverage(con: sqlite3.Connection) -> dict[str, int | str]:
+    row = con.execute(
+        "select count(*) as total, sum(case when coverage='partial' then 1 else 0 end) as partial from st_sources"
+    ).fetchone()
+    total = int(row["total"] or 0)
+    partial = int(row["partial"] or 0)
+    refs = int(con.execute("select count(*) from st_refs").fetchone()[0] or 0)
+    return {
+        "state": "partial" if total else "not-present",
+        "source_count": total,
+        "partial_source_count": partial,
+        "reference_count": refs,
+    }
+
+
+def st_coverage_note(con: sqlite3.Connection, *, downstream: bool = False) -> str:
+    info = st_coverage(con)
+    if not int(info["source_count"]):
+        return ""
+    suffix = (
+        " Downstream traversal does not infer value-flow through ST, so an empty/short downstream result is partial."
+        if downstream
+        else " Absence of a writer/reader cannot be treated as complete while unresolved ST may contain more references."
+    )
+    return (
+        f"Note: ST/inline-ST coverage is partial: {info['source_count']} source fragment(s), "
+        f"{info['partial_source_count']} with unsupported/unidentified syntax, "
+        f"{info['reference_count']} supported references indexed.{suffix}"
+    )
+
+
+def indexed_note(con: sqlite3.Connection, device: str) -> str:
     parsed = _split_device(device)
     if parsed is None:
         return ""
@@ -533,7 +715,6 @@ def indexed_note(con: sqlite3.Connection, device: str) -> str:
 
 
 def span_note(row: sqlite3.Row, device: str) -> str:
-    """Say so when a row was found by its run rather than by its name."""
     if "range_len" not in row.keys() or row["device"] == device:
         return ""
     length = row["range_len"] or 0
@@ -550,11 +731,14 @@ def where_used(args: argparse.Namespace) -> int:
         rows = rows_for_device(con, device, args.limit)
         counts = device_counts(con, device)
         note = indexed_note(con, device).strip()
+        st_note = st_coverage_note(con)
+        symbol_rows = st_symbol_rows(con, device) if _split_device(device) is None else []
+        st_info = st_coverage(con)
     finally:
         con.close()
     total = sum(counts.values())
     truncated = len(rows) < total
-    warnings = [note] if note else []
+    warnings = [warning for warning in (note, st_note) if warning]
     if truncated:
         warnings.insert(0, f"Note: showing {len(rows)} of {total} occurrences (--limit {args.limit}); "
                         "writers/readers may be omitted. Increase --limit or use --limit -1 for all occurrences.")
@@ -562,6 +746,12 @@ def where_used(args: argparse.Namespace) -> int:
     writers = [r for r in rows if r["access"] in {"write", "both"}]
     readers = [r for r in rows if r["access"] == "read"]
     refs = [r for r in rows if r["access"] == "ref"]
+    symbol_counts = {
+        "writers": sum(1 for r in symbol_rows if r["access"] == "write"),
+        "readers": sum(1 for r in symbol_rows if r["access"] == "read"),
+        "refs": sum(1 for r in symbol_rows if r["access"] not in {"read", "write"}),
+    }
+    found_any = bool(total or symbol_rows)
     if args.json:
         print(
             json.dumps(
@@ -575,6 +765,9 @@ def where_used(args: argparse.Namespace) -> int:
                             "writers": [row_dict(r) for r in writers],
                             "readers": [row_dict(r) for r in readers],
                             "refs": [row_dict(r) for r in refs],
+                            "st_symbol_refs": [row_dict(r) for r in symbol_rows],
+                            "st_symbol_counts": symbol_counts,
+                            "coverage": {"st": st_info},
                             "total_counts": counts,
                             "total_count": total,
                             "returned_count": len(rows),
@@ -588,8 +781,8 @@ def where_used(args: argparse.Namespace) -> int:
                 indent=2,
             )
         )
-        return 0 if total else 1
-    if not total:
+        return 0 if found_any else 1
+    if not found_any:
         print(f"no occurrences: {device}")
         for warning in warnings:
             print(warning)
@@ -598,20 +791,29 @@ def where_used(args: argparse.Namespace) -> int:
     for warning in warnings:
         print(warning)
 
-    def heading(name: str, shown: int) -> str:
-        count = counts[name.lower()]
-        return f"\n{name} ({shown} shown / {count} total):" if truncated else f"\n{name} ({shown}):"
+    if total:
+        def heading(name: str, shown: int) -> str:
+            count = counts[name.lower()]
+            return f"\n{name} ({shown} shown / {count} total):" if truncated else f"\n{name} ({shown}):"
 
-    print(heading("Writers", len(writers)))
-    for r in writers:
-        print(fmt_row(r) + span_note(r, device))
-    print(heading("Readers", len(readers)))
-    for r in readers:
-        print(fmt_row(r) + span_note(r, device))
-    if counts["refs"]:
-        print(heading("Refs", len(refs)).replace("Refs", "Unclassified refs"))
-        for r in refs:
+        print(heading("Writers", len(writers)))
+        for r in writers:
             print(fmt_row(r) + span_note(r, device))
+        print(heading("Readers", len(readers)))
+        for r in readers:
+            print(fmt_row(r) + span_note(r, device))
+        if counts["refs"]:
+            print(heading("Refs", len(refs)).replace("Refs", "Unclassified refs"))
+            for r in refs:
+                print(fmt_row(r) + span_note(r, device))
+    if symbol_rows:
+        print(f"\nST symbol refs ({len(symbol_rows)}):")
+        for r in symbol_rows:
+            resolved = f" -> {r['resolved_device']}" if r["resolved_device"] else ""
+            print(
+                f"  {r['pou'] or '?':<12} {r['access']:<5} {r['source_kind']} "
+                f"{r['source_file']} {r['source_location']} stmt={r['statement_index']}{resolved}"
+            )
     if args.cross:
         print_cross_where_used(args, device)
     return 0
@@ -691,9 +893,6 @@ def print_cross_where_used(args: argparse.Namespace, device: str) -> None:
 def downstream(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
-    # The walk itself lives in gx3_reach, so a correction to it -- block
-    # instruction spans, value edges, exact limit reporting -- reaches this
-    # command and change-impact at once instead of one of the two.
     has_flow = has_value_edges(con)
 
     start_comment = con.execute(
@@ -701,6 +900,9 @@ def downstream(args: argparse.Namespace) -> int:
     ).fetchone()
     print(f"downstream impact of {device} {start_comment[0] if start_comment else ''}".rstrip())
     print(f"(max-depth={args.max_depth}, strict-bit={args.strict_bit})")
+    st_note = st_coverage_note(con, downstream=True)
+    if st_note:
+        print(st_note)
     if has_flow:
         print(
             "basis: `via OPCODE` means the value goes there through that instruction; "
@@ -714,8 +916,6 @@ def downstream(args: argparse.Namespace) -> int:
 
     found = reach(con, device, args.max_depth, args.max_nodes, args.strict_bit)
 
-    # Grouped by where each device was reached from, so the per-parent cap
-    # and the indentation still work while the walk itself is the shared one.
     by_source: dict[str, list] = {}
     for item in found.steps:
         by_source.setdefault(item.source, []).append(item)
@@ -792,7 +992,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("build", help="build the xref database")
     p.set_defaults(func=build)
 
-    p = sub.add_parser("where-used", help="list writers/readers of one device")
+    p = sub.add_parser("where-used", help="list writers/readers of one device or ST label")
     p.add_argument("device")
     p.add_argument("--limit", type=int, default=200, help="maximum occurrences shown; -1 shows all (totals are always reported)")
     p.add_argument("--cross", action="store_true", help="also show linked devices in other project xref DBs")
