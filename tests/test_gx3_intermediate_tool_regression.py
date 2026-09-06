@@ -146,12 +146,12 @@ def test_label_contacts_and_coils_round_trip() -> None:
     """
     from gx3cli.gx3_arg_decode import parse_row_occurrences
     from gx3cli.gx3_intermediate_tool import generate_rung
-    from gx3cli.gx3_label_resolve import EMPTY
+    from gx3cli.gx3_label_resolve import empty_resolver
 
     logic = {"and": [{"device": "_lid/999/1"}, {"not": {"device": "_lid/999/2"}}]}
     data, _rowsize, _ops = generate_rung(logic, {"type": "coil", "device": "_lid/999/3"})
 
-    decoded, status = parse_row_occurrences(data, EMPTY)
+    decoded, status = parse_row_occurrences(data, empty_resolver())
     found = [(role, occ.device, occ.access) for role, _op, occs, _c in decoded for occ in occs]
 
     assert status == "exact"
@@ -165,11 +165,11 @@ def test_label_contacts_and_coils_round_trip() -> None:
 def test_labels_and_devices_can_share_a_rung() -> None:
     from gx3cli.gx3_arg_decode import parse_row_occurrences
     from gx3cli.gx3_intermediate_tool import generate_rung
-    from gx3cli.gx3_label_resolve import EMPTY
+    from gx3cli.gx3_label_resolve import empty_resolver
 
     logic = {"and": [{"device": "X10"}, {"device": "_lid/999/1"}]}
     data, _rowsize, _ops = generate_rung(logic, {"type": "set", "device": "M55"})
-    decoded, status = parse_row_occurrences(data, EMPTY)
+    decoded, status = parse_row_occurrences(data, empty_resolver())
     devices = [occ.device for _r, _o, occs, _c in decoded for occ in occs]
 
     assert status == "exact"

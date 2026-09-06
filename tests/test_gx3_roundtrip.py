@@ -24,7 +24,7 @@ strict direction reported two correct rungs of a real project as failures.
 import tempfile
 from pathlib import Path
 
-from gx3cli.gx3_label_resolve import EMPTY
+from gx3cli.gx3_label_resolve import empty_resolver
 from gx3cli.gx3_roundtrip import (
     DIFFERS,
     EQUIVALENT,
@@ -80,7 +80,7 @@ def test_a_rung_that_reads_back_the_same_is_identical() -> None:
     logic = {"and": [{"device": "X10"}, {"not": {"device": "M2"}}]}
     data, _rowsize, _ops = generate_rung(logic, {"type": "coil", "device": "M55"})
     summary = Summary()
-    result = check_row(_row(data), EMPTY, summary)
+    result = check_row(_row(data), empty_resolver(), summary)
     assert result is not None and result.verdict == IDENTICAL
     assert summary.identical == 1
 
@@ -97,7 +97,7 @@ def test_a_shared_branch_comes_back_as_equivalent_not_a_failure() -> None:
     # Feed the generated row back: it rebuilds to itself, so this is the
     # identical case. The equivalent case needs an original drawn by GX
     # Works3, which the fixture's shared-branch rungs provide.
-    result = check_row(_row(data), EMPTY, summary)
+    result = check_row(_row(data), empty_resolver(), summary)
     assert result is not None
     assert result.verdict in (IDENTICAL, EQUIVALENT)
     assert summary.differs == 0
@@ -106,7 +106,7 @@ def test_a_shared_branch_comes_back_as_equivalent_not_a_failure() -> None:
 def test_a_rung_with_no_rebuildable_logic_is_named_not_dropped() -> None:
     summary = Summary()
     # A row with no driver at all.
-    assert check_row(_row("V1:0:cb{fg=fg{dim=1x1:es=[]}}"), EMPTY, summary) is None
+    assert check_row(_row("V1:0:cb{fg=fg{dim=1x1:es=[]}}"), empty_resolver(), summary) is None
     assert summary.checked == 0
     assert sum(summary.skipped.values()) == 1
 
