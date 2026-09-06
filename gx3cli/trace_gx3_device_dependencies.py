@@ -22,12 +22,12 @@ from gx3cli.review_gx3_project import (
 from gx3cli.gx3_ladder_logic import (
     condition_refs_from_logic,
     enable_logic_for_output,
-    enable_logic_for_device,
     logic_stats,
     logic_to_text,
     or_logic,
-    output_elements_for,
+    row_logic_analysis,
 )
+from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
 from gx3cli.gx3_mc_zones import active_zones, apply_zone_conditions, build_jump_index, build_mc_zones, jumps_before
 from gx3cli.gx3_external_inputs import (
     classify_external_contact,
@@ -92,6 +92,14 @@ def normalize_device(text: str) -> str:
     return _format_device(dev_type, number)
 
 
+def normalize_trace_device(text: str) -> str:
+    """Normalize a physical device and preserve a symbolic label name."""
+    try:
+        return normalize_device(text)
+    except ValueError:
+        return text.strip()
+
+
 def project_label_from_root(root: Path) -> str:
     name = root.name
     if name.startswith("_extracted_"):
@@ -107,6 +115,8 @@ def device_key(device: str) -> tuple[str, int]:
 # folded into its condition. Each of these makes the printed condition an
 # answer to a narrower question than the reader is asking.
 TEMPORAL_DEVICE_TYPES = {"T", "ST", "C", "LT", "LC", "LST"}
+TIMER_DEVICE_TYPES = {"T", "ST", "LT", "LST"}
+COUNTER_DEVICE_TYPES = {"C", "LC"}
 
 
 def semantic_gaps(driver_rows: list[dict]) -> list[str]:
@@ -125,9 +135,9 @@ def semantic_gaps(driver_rows: list[dict]) -> list[str]:
     a timer or counter    the driven contact means "done", which is the
                           condition plus elapsed time or counts
 
-    Reported, not modelled. Folding a timer into a Boolean would be a claim
-    about time that a file cannot support, and leaving the result "checked"
-    was a claim that nothing was missing.
+    The machine-readable counterpart is kept on each driver row as
+    `temporal_predicates` / `execution_guards`. Runtime state is still not
+    invented, so these constructs remain a SEMANTICS limitation.
     """
     gaps: list[str] = []
     if any(row.get("cj_upstream") for row in driver_rows):
@@ -161,23 +171,21 @@ def trace_state(
     partial_rows: list,
     capped_rows: list | None = None,
     gaps: list[str] | None = None,
+    label_gaps: list[str] | None = None,
 ) -> AnalysisState:
     """What this trace is worth, in the words every command uses.
 
-    Four things can be true at once and they are not ranked by importance --
-    they are ranked by what to do next. A row the decoder could not read is
-    first because nothing else can be trusted over it; a depth limit is last
-    because raising it is cheap and changes nothing else.
+    Five things can be true at once and they are ranked by what to do next:
 
-        decode      part of a driver row was not interpreted
+        decode      part of a driver row or a label identity was not recovered
         topology    a condition was too large to fold into one expression
         semantics   the condition is right and does not say what makes the
                     rung run, or what makes the value persist
         reach       the search stopped before it was exhausted
 
-    The state is the first of those that applies. The others are not dropped:
-    a trace that is both semantically incomplete and truncated tells the reader
-    both, because fixing one of them still leaves the other.
+    Structural `parse_status='exact'` is intentionally not proof of semantic
+    correctness. A row can have an exact operation/element shape and still have
+    an unresolved label or an unmodelled timer, counter, edge, latch or jump.
     """
     found: list[tuple[str, str, str, str]] = []
     if partial_rows:
@@ -186,6 +194,13 @@ def trace_state(
             DECODE,
             f"{len(partial_rows)} driver rows were not fully interpreted",
             "gx3-cli parse-gaps --root <project>",
+        ))
+    for gap in label_gaps or []:
+        found.append((
+            PARTIAL,
+            DECODE,
+            gap,
+            "gx3-cli label-probe --root <project>",
         ))
     if capped_rows:
         found.append((
@@ -228,8 +243,152 @@ def trace_state(
 
 
 def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) -> str:
-    dev_type, number = device_key(device)
+    try:
+        dev_type, number = device_key(device)
+    except ValueError:
+        return ""
     return comment_for_device(dev_type, number, comments)
+
+
+def resolve_label_occurrences(rows: list[LadderRow], labels: LabelResolver) -> None:
+    """Give row-level occurrences the same label identity as canonical decode.
+
+    `review_gx3_project.load_rows()` predates LabelData support and therefore
+    leaves `_lid/...` as the occurrence identity. Trace uses those occurrences
+    to build its driver index. Resolve only the label occurrences here; the
+    ladder topology itself is rebuilt below through `row_logic_analysis(...,
+    labels)` so both views share the same resolver without duplicating a parser.
+    """
+    for row in rows:
+        for occ in row.occurrences:
+            if occ.device_type != "LABEL" or not str(occ.device).startswith("_lid/"):
+                continue
+            ref = labels.resolve_token(str(occ.device))
+            if ref is not None:
+                occ.device = ref.name
+
+
+def trace_output_elements_for(
+    row: LadderRow, device: str, labels: LabelResolver
+) -> list[Any]:
+    """Output elements for a physical device or resolved symbolic label."""
+    target = normalize_trace_device(device)
+    return [
+        element
+        for element in row_logic_analysis(row, labels).elements
+        if element.is_sink and any(ref.device == target and ref.is_written for ref in element.devices)
+    ]
+
+
+def relevant_unresolved_labels(driver_rows: list[dict[str, Any]]) -> list[str]:
+    """Unresolved label tokens that actually lie on this trace, not elsewhere."""
+    tokens: set[str] = set()
+    for row in driver_rows:
+        values: list[object] = [row.get("device", "")]
+        values.extend(item.get("device", "") for item in row.get("conditions", []))
+        values.extend(item.get("device", "") for item in row.get("same_row_outputs", []))
+        values.extend(item.get("device", "") for item in row.get("instruction_refs", []))
+        for value in values:
+            text = str(value)
+            if text.startswith("_lid/"):
+                tokens.add(text)
+    return sorted(tokens)
+
+
+def label_resolution_gaps(labels: LabelResolver, unresolved: list[str]) -> list[str]:
+    if not unresolved:
+        return []
+    sample = ", ".join(unresolved[:3])
+    more = f" (+{len(unresolved) - 3} more)" if len(unresolved) > 3 else ""
+    reason = f"; {labels.reason}" if labels.reason else ""
+    return [
+        f"{len(unresolved)} label references on this trace could not be resolved "
+        f"(LabelData status={labels.status}{reason}): {sample}{more}"
+    ]
+
+
+def temporal_predicates(
+    output_occs: list[DeviceOcc], condition_records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Known temporal/state predicates, without inventing their runtime value."""
+    out: list[dict[str, Any]] = []
+    for occ in output_occs:
+        if occ.role == "SET":
+            out.append({
+                "kind": "latch_set",
+                "device": occ.device,
+                "source": "enable_logic",
+                "requires_runtime_state": True,
+            })
+        elif occ.role == "RST":
+            out.append({
+                "kind": "latch_reset",
+                "device": occ.device,
+                "source": "enable_logic",
+                "requires_runtime_state": True,
+            })
+        elif occ.role == "PLS":
+            out.append({
+                "kind": "rising_edge",
+                "device": occ.device,
+                "source": "enable_logic",
+                "requires_runtime_state": True,
+            })
+        elif occ.role == "PLF":
+            out.append({
+                "kind": "falling_edge",
+                "device": occ.device,
+                "source": "enable_logic",
+                "requires_runtime_state": True,
+            })
+        elif occ.role in {"OUT__16", "OUTH__16"}:
+            kind = "timer_or_counter_state"
+            if occ.device_type in TIMER_DEVICE_TYPES:
+                kind = "timer_done"
+            elif occ.device_type in COUNTER_DEVICE_TYPES:
+                kind = "counter_done"
+            out.append({
+                "kind": kind,
+                "device": occ.device,
+                "source": "enable_logic",
+                "requires_runtime_state": True,
+            })
+
+    for condition in condition_records:
+        device = str(condition.get("device", ""))
+        try:
+            dev_type, _number = parse_device(device)
+        except ValueError:
+            continue
+        if dev_type in TIMER_DEVICE_TYPES:
+            out.append({
+                "kind": "timer_done_contact",
+                "device": device,
+                "required_state": condition.get("required_state", ""),
+                "requires_runtime_state": True,
+            })
+        elif dev_type in COUNTER_DEVICE_TYPES:
+            out.append({
+                "kind": "counter_done_contact",
+                "device": device,
+                "required_state": condition.get("required_state", ""),
+                "requires_runtime_state": True,
+            })
+    return out
+
+
+def execution_guards(row_jumps: list[Any]) -> list[dict[str, Any]]:
+    """Control-flow facts known above this row; unresolved means exactly that."""
+    return [
+        {
+            "kind": "conditional_jump_unresolved",
+            "opcode": site.opcode,
+            "pos": site.pos,
+            "condition": site.condition_text,
+            "target_resolved": False,
+        }
+        for site in row_jumps
+    ]
 
 
 def driver_index(rows: list[LadderRow], include_reset: bool = True) -> dict[str, list[LadderRow]]:
@@ -404,7 +563,9 @@ def build_trace(
     strict_logic: bool,
 ) -> dict[str, Any]:
     comments = load_comments_for_root(root)
+    labels = load_label_resolver(root)
     rows = load_rows(root, comments)
+    resolve_label_occurrences(rows, labels)
     drivers = driver_index(rows, include_reset=include_reset)
     counts = occurrence_counts(rows)
     mc_zones = build_mc_zones(rows)
@@ -413,7 +574,7 @@ def build_trace(
     refresh_areas = load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
     unit_io_areas = load_unit_io_areas(Path(f"{comm_prefix}_units.csv"))
 
-    target = normalize_device(target_device)
+    target = normalize_trace_device(target_device)
     queue: deque[tuple[str, int, str]] = deque([(target, 0, "")])
     visited: set[str] = set()
     devices: list[dict[str, Any]] = []
@@ -441,8 +602,10 @@ def build_trace(
             off_terms: list[dict[str, Any]] = []
             for driver_row in rows_for_device:
                 zones = active_zones(mc_zones, driver_row.lddb, driver_row.pos)
-                for output in output_elements_for(driver_row, device):
-                    output_logic = apply_zone_conditions(enable_logic_for_output(driver_row, output), zones)
+                for output in trace_output_elements_for(driver_row, device, labels):
+                    output_logic = apply_zone_conditions(
+                        enable_logic_for_output(driver_row, output, labels), zones
+                    )
                     if output.role in OFF_DRIVER_ROLES:
                         off_terms.append(output_logic)
                     else:
@@ -502,7 +665,11 @@ def build_trace(
             enable_logic_text = ""
             enable_logic_stats: dict[str, int] = {}
             if strict_logic:
-                enable_logic = apply_zone_conditions(enable_logic_for_device(row, device), row_zones)
+                outputs = trace_output_elements_for(row, device, labels)
+                enable_logic = apply_zone_conditions(
+                    or_logic([enable_logic_for_output(row, output, labels) for output in outputs]),
+                    row_zones,
+                )
                 enable_logic_text = logic_to_text(enable_logic)
                 enable_logic_stats = logic_stats(enable_logic)
                 condition_records = [
@@ -535,6 +702,8 @@ def build_trace(
                 "logic_stats": enable_logic_stats,
                 "mc_zones": [zone.summary() for zone in row_zones],
                 "cj_upstream": [site.summary() for site in row_jumps],
+                "execution_guards": execution_guards(row_jumps),
+                "temporal_predicates": temporal_predicates(output_occs, condition_records),
                 "same_row_outputs": [simple_occ_record(occ, comments) for occ in row_driver_occurrences(row)],
                 "instruction_refs": [simple_occ_record(occ, comments) for occ in row_instruction_refs(row)],
             }
@@ -577,24 +746,38 @@ def build_trace(
                 queue.append((cond["device"], depth + 1, device))
 
     edge_counter = Counter(edge["condition_device"] for edge in edges)
-    # Both kinds of incompleteness, kept apart. A row the decoder could not
-    # read and a row whose condition would not fit are equally incomplete and
-    # have different remedies, so they are counted separately and reported as
-    # different stages.
     partial_driver_rows = [row for row in driver_rows if row.get("parse_status") != "exact"]
-    # A device that appears nowhere in the program is a different answer from a
-    # device that appears and nothing writes. The first is usually a typo or
-    # the wrong project, and both came back as "devices=1, driver_rows=0,
-    # truncated=False" -- an empty answer wearing the clothes of a complete
-    # one. `xref where-used` has always said "no occurrences" for this.
     absent = not counts.get(target)
-
     capped_driver_rows = [
         row
         for row in driver_rows
         if row.get("parse_status") == "exact"
         and int((row.get("logic_stats") or {}).get("too_large", 0)) > 0
     ]
+    unresolved_labels = relevant_unresolved_labels(driver_rows)
+    label_gaps = label_resolution_gaps(labels, unresolved_labels)
+    if absent and not label_gaps:
+        analysis_state = AnalysisState(
+            NOT_EVALUATED,
+            reason=f"{target} does not appear anywhere in this project",
+            next_step=(
+                "check the device name and the project; "
+                f"gx3-cli xref where-used {target} lists occurrences"
+            ),
+            stage=DISCOVERY,
+        )
+    else:
+        analysis_state = trace_state(
+            truncated,
+            sorted(truncated_reasons),
+            partial_driver_rows,
+            capped_driver_rows,
+            semantic_gaps(driver_rows),
+            label_gaps=label_gaps,
+        )
+    analysis = analysis_state.as_dict()
+    structural_shape = "partial" if partial_driver_rows else "exact"
+
     return {
         "target": {
             "device": target,
@@ -607,31 +790,27 @@ def build_trace(
         "strict_logic": strict_logic,
         "truncated": truncated,
         "truncated_reasons": sorted(truncated_reasons),
-        "analysis": (
-            AnalysisState(
-                NOT_EVALUATED,
-                reason=f"{target} does not appear anywhere in this project",
-                next_step=(
-                    "check the device name and the project; "
-                    f"gx3-cli xref where-used {target} lists occurrences"
-                ),
-                stage=DISCOVERY,
-            )
-            if absent
-            else trace_state(
-                truncated,
-                sorted(truncated_reasons),
-                partial_driver_rows,
-                capped_driver_rows,
-                semantic_gaps(driver_rows),
-            )
-        ).as_dict(),
+        "analysis": analysis,
+        "label_resolution": {
+            "status": labels.status,
+            "reason": labels.reason,
+            "unresolved_tokens": unresolved_labels,
+            "unresolved_count": len(unresolved_labels),
+        },
+        "verification": {
+            "structural_shape": structural_shape,
+            "semantic_scope_state": analysis.get("state", ""),
+            "independent_gx_works3_validation": False,
+            "note": (
+                "structural_shape=exact means operation/element shape matched; it is not "
+                "proof that label identity, execution semantics, timing, state or control flow "
+                "was independently validated against GX Works3"
+            ),
+        },
         "stats": {
             "devices_traced": len(devices),
             "driver_rows": len(driver_rows),
             "partial_driver_rows": len(partial_driver_rows),
-            # Counted beside it so the numbers agree with the verdict: a
-            # trace can be partial with no unreadable row at all.
             "capped_driver_rows": len(capped_driver_rows),
             "dependency_edges": len(edges),
             "terminal_conditions": sum(1 for edge in edges if not edge["has_driver"]),
@@ -764,7 +943,8 @@ def format_text(trace: dict[str, Any]) -> str:
         "Stats: "
         f"devices={trace['stats']['devices_traced']}, "
         f"driver_rows={trace['stats']['driver_rows']}, "
-        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
+        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "
+        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
         f"edges={trace['stats']['dependency_edges']}, "
         f"terminal={trace['stats']['terminal_conditions']}, "
         f"self_refs={trace['stats']['self_references']}, "
@@ -774,8 +954,6 @@ def format_text(trace: dict[str, Any]) -> str:
     )
     analysis = trace["analysis"]
     if analysis["state"] != "checked":
-        # Above the answer, not inside a stats line: what follows is not the
-        # whole condition, and the reader has to know that before reading it.
         lines.append("")
         lines.append(f"Result: {analysis['label']} -- {analysis.get('reason', '')}")
         if analysis.get("next_step"):
@@ -821,6 +999,11 @@ def format_text(trace: dict[str, Any]) -> str:
             lines.append(f"{indent}    effect: {effects}; roles={','.join(row['driver_roles'])}")
             if row.get("enable_logic_text"):
                 lines.append(f"{indent}    enable_logic: {row['enable_logic_text']}")
+            for predicate in row.get("temporal_predicates", []):
+                lines.append(
+                    f"{indent}    temporal: {predicate.get('kind')} "
+                    f"device={predicate.get('device', '')} runtime_state_required"
+                )
             for zone in row.get("mc_zones", []):
                 end = zone.get("end_pos")
                 lines.append(
@@ -945,12 +1128,7 @@ def format_row_summary(row: dict[str, Any]) -> str:
 
 
 def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
-    """Say what the trace is worth, before the conditions are read.
-
-    A trace that stopped at a limit has not shown where a condition comes from;
-    it has shown where looking stopped. "truncated=True" inside a stats line is
-    not where a reader looks for that.
-    """
+    """Say what the trace is worth, before the conditions are read."""
     analysis = trace.get("analysis") or {}
     if not analysis or analysis.get("state") == "checked":
         return []
@@ -965,8 +1143,6 @@ def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
         out.append(f"  {nxt}: {analysis['next_step']}")
     also = (analysis.get("detail") or {}).get("also") or []
     if also:
-        # Every constraint, not only the one that decided the state: fixing the
-        # first still leaves the rest.
         out.append("  " + ("ほかにも:" if ja else "also:"))
         for item in also:
             out.append(f"    - [{item.get('stage', '')}] {item.get('reason', '')}")
@@ -990,7 +1166,8 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
         f"{label['stats']}: "
         f"devices={trace['stats']['devices_traced']}, "
         f"driver_rows={trace['stats']['driver_rows']}, "
-        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
+        f"partial_driver_rows={trace['stats'].get('partial_driver_rows', 0)}, "
+        f"capped_driver_rows={trace['stats'].get('capped_driver_rows', 0)}, "
         f"edges={trace['stats']['dependency_edges']}, "
         f"truncated={trace['truncated']}"
     )
@@ -1040,12 +1217,14 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
             lines.append(f"  - {format_row_summary(row)}")
             row_logic = row.get("enable_logic_text")
             if row_logic and on_logic and row_logic == on_logic:
-                # Avoid reprinting a formula identical to the ON logic already shown
-                # above (common single-driver-row case; can be 800+ chars).
                 same_msg = "(= 上記ON条件と同一)" if ja else "(= same as ON logic above)"
                 lines.append(f"    logic: {same_msg}")
             else:
                 lines.append(f"    logic: {row_logic}")
+            for predicate in row.get("temporal_predicates", []):
+                lines.append(
+                    f"    temporal: {predicate.get('kind')} device={predicate.get('device', '')}"
+                )
             for zone in row.get("mc_zones", []):
                 label_mc = "MCゾーン内" if ja else "inside MC zone"
                 lines.append(f"    {label_mc}: N{zone.get('nesting')} relay={zone.get('relay') or '?'} condition={zone.get('condition_text')}")
@@ -1138,7 +1317,7 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Trace ladder dependencies from one device.")
-    parser.add_argument("device", help="target device")
+    parser.add_argument("device", help="target device or resolved symbolic label name")
     parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder")
     parser.add_argument("--max-depth", type=int, default=4, help="maximum upstream device depth")
     parser.add_argument("--max-devices", type=int, default=300, help="maximum devices to trace before truncating")
