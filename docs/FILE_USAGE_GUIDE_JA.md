@@ -88,6 +88,7 @@
 | `USER_MANUAL_JA.md` | 人間向けの基本操作、MCP 設定、主要コマンド。 |
 | `USER_MANUAL_EN.md` | 英語圏利用者向けのインストール、最初の3コマンド、主要ワークフロー。 |
 | `AGENT_USAGE_JA.md` | Codex/Claude Code/Cursor 向けの SQLite-first 運用手順。 |
+| `LADDER_PRACTICAL_TIPS_JA.md` | ラダー変更・レビュー時の実務的な作法と、AI解析で誤解しやすいポイントを簡潔にまとめる。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
@@ -197,7 +198,7 @@
 | `test_gx3_guide.py` | プロジェクトに無いものを勧めないこと、および `--help` に全コマンドが出ることを検査する。 |
 | `gx3_metrics.py` | プログラムごとの規模と、論理が集中している回路を出す。未知のプロジェクトをどこから読むかの入口。 |
 | `test_gx3_metrics.py` | 回路の分岐数を経路数として数え、読めなかった回路を黙って除外しないことを検査する。 |
-| `gx3_rung_text.py` | プログラムを 1 回路 1 行 (条件 -> 駆動デバイス) で出力する。`ladder-print` の罫線出力に対し、読解と MCP 経由のエージェント利用向けの圧縮表現。 |
+| `gx3_rung_text.py` | プログラムを 1 回路 1行 (条件 -> 駆動デバイス) で出力する。`ladder-print` の罫線出力に対し、読解と MCP 経由のエージェント利用向けの圧縮表現。 |
 | `test_gx3_rung_text.py` | 回路が「条件 -> 出力」として読め、印刷レイアウトより桁違いに小さいことを検査する。 |
 | `gx3_roundtrip.py` | 各回路を読んで AST 化し再生成して、元と一致するか検査する。デコーダの自己申告 (`parse_status`) に頼らない唯一の外部検証。 |
 | `test_gx3_roundtrip.py` | 合成プロジェクトの全回路が再生成で一致することを検査する。読み取りが変質したら落ちる。 |
