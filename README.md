@@ -150,6 +150,10 @@ decrypted; export the folder from GX Works3 instead.
 Agent skills: [existing project audit](skills/gx3-existing-project-audit/SKILL.md)
 · [failure corpus](skills/gx3-failure-corpus/SKILL.md)
 
+## Analysis contract migration
+
+Current query-by-query status and remaining acceptance work for #153: [解析契約の移行台帳](docs/ANALYSIS_CONTRACT_MIGRATION_JA.md).
+
 ## License
 
 **Source-available, not open source.** Full terms in
