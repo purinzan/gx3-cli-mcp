@@ -1,15 +1,24 @@
 from __future__ import annotations
 
-"""Semantic (rung-level) diff between two GX Works3 projects.
+"""Semantic diff between two GX Works3 projects.
 
-Rows are matched by their stable ``_guid/...`` block id, so moving a circuit
-does not show as a change. A changed row is classified as:
+Ladder rows are matched by their stable ``_guid/...`` block id, so moving a
+circuit does not show as a change. A changed row is classified as:
 - logic          operands, wiring, execution metadata, or other row data differ
 - layout-only    only the outer canvas size differs (hidden by default)
 
 Comparison is conservative: moving elements or rerouting wires is reported
 even when it might preserve the Boolean function. Coordinates encode wiring,
 so they cannot be discarded as cosmetic without proving equivalence.
+
+The command also compares configuration through the existing project readers:
+- project-config CPU and unit extraction
+- exec-config CPU.PRM execution order extraction
+- module-params intelligent-function-module setting decoder
+- dm-probe initial/retained device-memory decoder
+
+Configuration availability is explicit. ``missing``, ``unreadable`` and
+``unsupported`` are never collapsed into ``same``.
 
 Also reports POUs (LDDB files) added/removed and device-comment changes.
 
@@ -18,6 +27,7 @@ Inputs may be extracted folders or ``.gx3`` files (extracted to a temp dir).
 
 import argparse
 import csv
+import json
 import re
 import sqlite3
 import sys
@@ -31,6 +41,20 @@ from gx3cli.gx3_operand_parse import CONST_VALUE_RE
 from gx3cli.gx3_intermediate_tool import decode_data
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.review_gx3_project import extract_title, load_comments_for_root
+from gx3cli.gx3_project_config import cpu_section, units_section
+from gx3cli.gx3_exec_config import program_file_names
+from gx3cli.gx3_module_params import MODULE_DB_RE, read_module
+from gx3cli.gx3_dm_probe import decode_memory_db, load_comment_map
+
+
+CONFIG_SECTION_ORDER = (
+    "project-config.cpu",
+    "project-config.units",
+    "project-config.execution",
+    "module-params",
+    "device-memory",
+)
+CONFIG_UNAVAILABLE_PRIORITY = {"ok": 0, "missing": 1, "unsupported": 2, "unreadable": 3}
 
 
 def ensure_root(path_text: str, tmp: list[tempfile.TemporaryDirectory]) -> Path:
@@ -126,6 +150,289 @@ def comment_map(root: Path) -> dict[str, str]:
     return out
 
 
+def _config_payload(state: str, data: object | None = None, detail: str = "") -> dict[str, object]:
+    return {"state": state, "data": {} if data is None else data, "detail": detail}
+
+
+def _normalize_units(units: object) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for unit in units if isinstance(units, list) else []:
+        if not isinstance(unit, dict):
+            continue
+        rows.append(
+            {
+                "unit_name": unit.get("unit_name", ""),
+                "base": unit.get("base", ""),
+                "slot": unit.get("slot", ""),
+                "head_io": unit.get("head_io", ""),
+                "head_io_hex": unit.get("head_io_hex", ""),
+                "station": unit.get("station", ""),
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: tuple(
+            str(row[key]) for key in ("base", "slot", "unit_name", "head_io_hex", "station")
+        ),
+    )
+
+
+def _collect_project_config(root: Path) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+
+    config_xml = root / "Config.xml"
+    if not config_xml.exists():
+        out["project-config.cpu"] = _config_payload("missing", detail="Config.xml is absent")
+    else:
+        try:
+            section = cpu_section(root)
+            model = str(section.data.get("cpu_model", ""))
+            if model:
+                out["project-config.cpu"] = _config_payload("ok", {"cpu_model": model})
+            else:
+                out["project-config.cpu"] = _config_payload(
+                    "unsupported",
+                    {"cpu_model": ""},
+                    "Config.xml exists but its CPU Unit field was not decoded",
+                )
+        except (OSError, sqlite3.Error, UnicodeError, ValueError) as exc:
+            out["project-config.cpu"] = _config_payload("unreadable", detail=str(exc))
+
+    unit_config = root / "UnitConfig.dat"
+    if not unit_config.exists():
+        out["project-config.units"] = _config_payload("missing", detail="UnitConfig.dat is absent")
+    else:
+        try:
+            section = units_section(root)
+            out["project-config.units"] = _config_payload(
+                "ok", {"units": _normalize_units(section.data.get("units", []))}
+            )
+        except (OSError, sqlite3.Error, UnicodeError, ValueError) as exc:
+            out["project-config.units"] = _config_payload("unreadable", detail=str(exc))
+
+    cpu_prm = root / "CPU.PRM"
+    if not cpu_prm.exists():
+        out["project-config.execution"] = _config_payload("missing", detail="CPU.PRM is absent")
+    else:
+        try:
+            # Order is semantic here: CPU.PRM stores execution-setting order.
+            out["project-config.execution"] = _config_payload(
+                "ok", {"program_files": program_file_names(root)}
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            out["project-config.execution"] = _config_payload("unreadable", detail=str(exc))
+
+    return out
+
+
+def _collect_module_params(root: Path) -> dict[str, object]:
+    candidates = [path for path in sorted(root.glob("*.db")) if MODULE_DB_RE.match(path.name)]
+    if not candidates:
+        return _config_payload("missing", detail="no numeric module parameter database is present")
+
+    modules = []
+    try:
+        for path in candidates:
+            module = read_module(path)
+            if module.model or module.settings or module.note:
+                modules.append(module)
+    except (OSError, sqlite3.Error, UnicodeError, ValueError) as exc:
+        return _config_payload("unreadable", detail=str(exc))
+
+    if not modules:
+        return _config_payload(
+            "unsupported",
+            detail="numeric databases exist but none matched the module-parameter schema",
+        )
+    notes = [f"{module.path.name}: {module.note}" for module in modules if module.note]
+    if notes:
+        return _config_payload("unreadable", detail="; ".join(notes))
+
+    values: dict[str, object] = {}
+    for module in modules:
+        base = module.identity.get("_BaseNo", "")
+        slot = module.identity.get("_SlotNo", "")
+        module_key = f"base={base}|slot={slot}|model={module.model}|head_io={module.head_io}"
+        # Preserve a module with no non-default settings as semantic presence.
+        values[f"{module_key}|@module"] = "present"
+        for setting in module.settings:
+            key = (
+                f"{module_key}|table={setting.table}|label={setting.label}|index={setting.index}"
+            )
+            values[key] = setting.value
+    return _config_payload("ok", dict(sorted(values.items())))
+
+
+def _collect_device_memory(root: Path) -> dict[str, object]:
+    dbs = sorted(root.glob("*_DM.db"))
+    if not dbs:
+        return _config_payload("missing", detail="no *_DM.db device-memory file is present")
+
+    try:
+        comments = load_comment_map(root)
+        topology_buckets: dict[str, list[dict[str, object]]] = {}
+        value_buckets: dict[str, list[object]] = {}
+        unsupported_codes: set[int] = set()
+        for db in dbs:
+            summaries, rows = decode_memory_db(db, root, comments, sys.maxsize)
+            for summary in summaries:
+                dev_code = int(summary.get("dev_code", -1))
+                device_type = str(summary.get("device_type", ""))
+                if device_type.startswith("DEV"):
+                    unsupported_codes.add(dev_code)
+                key = (
+                    f"code={dev_code}|type={device_type}|mode={summary.get('decode_mode', '')}"
+                    f"|first={summary.get('first_device', '')}|last={summary.get('last_device', '')}"
+                )
+                topology_buckets.setdefault(key, []).append(
+                    {
+                        "blocks": summary.get("blocks", 0),
+                        "storage_words": summary.get("storage_words", 0),
+                    }
+                )
+            for row in rows:
+                key = f"code={row.get('dev_code', '')}|device={row.get('device', '')}"
+                value_buckets.setdefault(key, []).append(row.get("value_unsigned", 0))
+    except (OSError, sqlite3.Error, UnicodeError, ValueError, struct_error()) as exc:
+        return _config_payload("unreadable", detail=str(exc))
+
+    topology = {
+        key: sorted(values, key=lambda value: json.dumps(value, sort_keys=True, ensure_ascii=False))
+        for key, values in sorted(topology_buckets.items())
+    }
+    values: dict[str, object] = {}
+    for key, bucket in sorted(value_buckets.items()):
+        ordered = sorted(bucket, key=lambda value: str(value))
+        values[key] = ordered[0] if len(ordered) == 1 else ordered
+    data = {"topology": topology, "nonzero_values": values}
+    if unsupported_codes:
+        return _config_payload(
+            "unsupported",
+            data,
+            "unknown device code(s): " + ", ".join(str(code) for code in sorted(unsupported_codes)),
+        )
+    return _config_payload("ok", data)
+
+
+def struct_error() -> type[Exception]:
+    """Avoid importing struct only for its exception type at module import time."""
+    import struct
+
+    return struct.error
+
+
+def collect_configuration(root: Path) -> dict[str, dict[str, object]]:
+    out = _collect_project_config(root)
+    out["module-params"] = _collect_module_params(root)
+    out["device-memory"] = _collect_device_memory(root)
+    return out
+
+
+def _flatten(value: object, prefix: str = "") -> dict[str, object]:
+    if isinstance(value, dict):
+        out: dict[str, object] = {}
+        for key in sorted(value, key=lambda item: str(item)):
+            child = f"{prefix}.{key}" if prefix else str(key)
+            out.update(_flatten(value[key], child))
+        return out
+    if isinstance(value, list):
+        out = {}
+        for index, item in enumerate(value):
+            child = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            out.update(_flatten(item, child))
+        return out
+    return {prefix or "value": value}
+
+
+def _format_config_value(value: object) -> str:
+    if value is _CONFIG_MISSING_VALUE:
+        return "<missing>"
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+_CONFIG_MISSING_VALUE = object()
+
+
+def _unavailable_state(old_state: str, new_state: str) -> str:
+    return max(
+        (old_state, new_state),
+        key=lambda state: CONFIG_UNAVAILABLE_PRIORITY.get(state, 99),
+    )
+
+
+def compare_configuration(
+    old_root: Path, new_root: Path
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    old = collect_configuration(old_root)
+    new = collect_configuration(new_root)
+    results: list[dict[str, object]] = []
+    detail: list[dict[str, object]] = []
+
+    for name in CONFIG_SECTION_ORDER:
+        old_payload = old[name]
+        new_payload = new[name]
+        old_state = str(old_payload.get("state", "unsupported"))
+        new_state = str(new_payload.get("state", "unsupported"))
+        old_data = old_payload.get("data", {})
+        new_data = new_payload.get("data", {})
+        availability_changed = old_state != new_state
+
+        if old_state != "ok" or new_state != "ok":
+            state = old_state if old_state == new_state else _unavailable_state(old_state, new_state)
+            changed = availability_changed or old_data != new_data
+            if changed:
+                detail.append(
+                    {
+                        "pou": name,
+                        "kind": f"config-{state}",
+                        "pos": "",
+                        "title": name,
+                        "summary": (
+                            f"old={old_state} ({old_payload.get('detail', '')}) -> "
+                            f"new={new_state} ({new_payload.get('detail', '')})"
+                        ),
+                    }
+                )
+            results.append(
+                {
+                    "name": name,
+                    "state": state,
+                    "old_state": old_state,
+                    "new_state": new_state,
+                    "changes": 1 if changed else 0,
+                }
+            )
+            continue
+
+        old_flat = _flatten(old_data)
+        new_flat = _flatten(new_data)
+        keys = sorted(old_flat.keys() | new_flat.keys())
+        changed_keys = [key for key in keys if old_flat.get(key, _CONFIG_MISSING_VALUE) != new_flat.get(key, _CONFIG_MISSING_VALUE)]
+        state = "changed" if changed_keys else "same"
+        for key in changed_keys:
+            before = old_flat.get(key, _CONFIG_MISSING_VALUE)
+            after = new_flat.get(key, _CONFIG_MISSING_VALUE)
+            detail.append(
+                {
+                    "pou": name,
+                    "kind": "config-changed",
+                    "pos": "",
+                    "title": key,
+                    "summary": f"{_format_config_value(before)} -> {_format_config_value(after)}",
+                }
+            )
+        results.append(
+            {
+                "name": name,
+                "state": state,
+                "old_state": old_state,
+                "new_state": new_state,
+                "changes": len(changed_keys),
+            }
+        )
+    return results, detail
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -134,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", default=None, help="detail CSV path")
     parser.add_argument("--show-layout-only", action="store_true")
     parser.add_argument("--skip-comments", action="store_true")
+    parser.add_argument("--skip-config", action="store_true", help="skip project/module/device-memory configuration diff")
     parser.add_argument("--limit", type=int, default=60, help="console lines per section")
     args = parser.parse_args(argv)
 
@@ -218,12 +526,30 @@ def main(argv: list[str] | None = None) -> int:
             if len(comment_changes) > 20:
                 print(f"  ... {len(comment_changes) - 20} more (see CSV)")
 
+        config_changes: list[dict[str, object]] = []
+        if not args.skip_config:
+            config_results, config_changes = compare_configuration(old_root, new_root)
+            print("\nconfiguration:")
+            for result in config_results:
+                suffix = f" changes={result['changes']}" if int(result["changes"]) else ""
+                print(
+                    f"  {str(result['name']):<28} {str(result['state']):<11}"
+                    f" old={result['old_state']} new={result['new_state']}{suffix}"
+                )
+            print(f"configuration changed items: {len(config_changes)}")
+            for d in config_changes[: args.limit]:
+                print(f"  [{d['kind']}] {d['pou']} {d['title']}")
+                if d["summary"]:
+                    print(f"      {d['summary']}")
+            if len(config_changes) > args.limit:
+                print(f"  ... {len(config_changes) - args.limit} more configuration items (see CSV)")
+
         out = Path(args.output or "outputs/semantic_diff.csv")
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(f, fieldnames=["kind", "pou", "pos", "title", "summary"])
             w.writeheader()
-            for d in detail + comment_changes:
+            for d in detail + comment_changes + config_changes:
                 w.writerow(d)
         print(f"\ncsv: {out}")
         return 0
