@@ -51,6 +51,9 @@
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
 | `docs/REVIEW_QUESTIONS_JA.md` | 変更を出す前にコードへ問う8つの質問。実際にバグを出した問いだけを載せ、それぞれに再現例を添える。テストではなくコード自身の契約と突き合わせるための手順で、AGENTS.md と CONTRIBUTING.md から必読として参照される。 |
 | `docs/ANALYSIS_CONTRACT_MIGRATION_JA.md` | #153の問い合わせ別移行台帳。正本・保存・reader・検証箇所と未完項目を区別し、部分修正を親Issue全体の完了と誤認しないための記録。 |
+| `docs/ANALYSIS_BENCHMARK_JA.md` | #153の固定合成検体によるcold/warm/trace比較。測定値、環境、計測の限界、後続変更の調査予算。 |
+| `benchmark_analysis_contract.py` | 別checkoutを固定検体で測る開発用script。SQL数、loader回数、wall時間、Python peakを別processで計測する。 |
+| `test_analysis_benchmark.py` | 検体の再現性、実CLI/traceを通した測定値、warmの再復号なし・traceの各loader1回を検査する。 |
 | `test_gx3_covered_lookup.py` | 同一の検体を xref と index-lite の両方に通し、範囲に覆われたデバイスがどちらでも見つかること、覆われたデバイスを「独立した occurrence」として水増ししないこと、範囲外は従来どおり未検出であることを検査する。 |
 | `test_gx3_health_scoring.py` | Doctor の点数が「調べていない」を「問題なし」として出さないことを検査する。検査が1つも評価されなければ全次元が `--` かつ `NOT ASSESSED`、その次元を担う検査が欠けていれば数字を出さない。評価数が少ない実行が多い実行より高い点にならないこと、link-range（補助検査）の欠如では次元を空にしないことも併せて検査する。 |
 | `test_gx3_topology_conditions.py` | 並列接点が OR として報告されること（`&` にしない）、直列＋分岐の形が保たれること、b接点が保たれること、出力ごとに条件が分かれること、配線を読めない場合は「接点の一覧であり配線は未読」と明示すること、timing-chart も同じ経路を通ることを検査する。 |
