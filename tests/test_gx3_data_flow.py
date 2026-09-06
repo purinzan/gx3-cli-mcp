@@ -6,9 +6,15 @@ from gx3cli.gx3_arg_decode import ArgOcc
 from gx3cli.gx3_data_flow import records_for_operation, transfer_count
 
 
-def occ(device: str, arg_index: int, access: str, device_type: str = "D") -> ArgOcc:
+def occ(
+    device: str,
+    arg_index: int,
+    access: str,
+    device_type: str = "D",
+    range_len: int = 1,
+) -> ArgOcc:
     number = int(device[len(device_type) :])
-    return ArgOcc(device, device_type, number, access, arg_index)
+    return ArgOcc(device, device_type, number, access, arg_index, range_len=range_len)
 
 
 def test_mov_creates_one_source_to_destination_edge() -> None:
@@ -33,7 +39,7 @@ def test_bmov_preserves_count_and_ranges() -> None:
     records = records_for_operation(
         "BMOV",
         3,
-        [occ("D100", 0, "read"), occ("D200", 1, "write")],
+        [occ("D100", 0, "read", range_len=2), occ("D200", 1, "write", range_len=2)],
         const_args="2",
     )
     assert len(records) == 1
@@ -49,7 +55,7 @@ def test_block_transfer_uses_the_positional_count_operand() -> None:
     records = records_for_operation(
         "FMOV",
         3,
-        [occ("D200", 1, "write")],
+        [occ("D200", 1, "write", range_len=10)],
         const_args="0,10",
         constant_values={0: "0", 2: "10"},
     )
@@ -64,7 +70,7 @@ def test_dmov_reports_two_word_ranges() -> None:
     records = records_for_operation(
         "DMOV",
         2,
-        [occ("D100", 0, "read"), occ("D200", 1, "write")],
+        [occ("D100", 0, "read", range_len=2), occ("D200", 1, "write", range_len=2)],
     )
     assert len(records) == 1
     edge = records[0]
@@ -72,6 +78,71 @@ def test_dmov_reports_two_word_ranges() -> None:
     assert edge.destination_word_width == 2
     assert edge.source_range == "D100..D101"
     assert edge.destination_range == "D200..D201"
+
+
+def test_counted_operations_use_the_decoded_physical_span() -> None:
+    """A numeric n is metadata; range_len is the physical-device answer."""
+    cases = [
+        (
+            "DFMOV",
+            3,
+            [occ("D100", 0, "read", range_len=2), occ("D200", 1, "write", range_len=10)],
+            {2: "5"},
+            {("D100..D101", "D200..D209")},
+        ),
+        (
+            "WTOB",
+            3,
+            [occ("D100", 0, "read", range_len=3), occ("D200", 1, "write", range_len=5)],
+            {2: "5"},
+            {("D100..D102", "D200..D204")},
+        ),
+        (
+            "BTOW",
+            3,
+            [occ("D100", 0, "read", range_len=5), occ("D200", 1, "write", range_len=3)],
+            {2: "5"},
+            {("D100..D104", "D200..D202")},
+        ),
+        (
+            "BK+",
+            4,
+            [
+                occ("D100", 0, "read", range_len=5),
+                occ("D200", 1, "read", range_len=5),
+                occ("D300", 2, "write", range_len=5),
+            ],
+            {3: "5"},
+            {
+                ("D100..D104", "D300..D304"),
+                ("D200..D204", "D300..D304"),
+            },
+        ),
+    ]
+    for opcode, argc, operands, constants, expected in cases:
+        records = records_for_operation(
+            opcode,
+            argc,
+            operands,
+            const_args="5",
+            constant_values=constants,
+        )
+        actual = {(record.source_range, record.destination_range) for record in records}
+        assert actual == expected, (opcode, actual)
+
+
+def test_a_fill_does_not_expand_the_source_like_the_destination() -> None:
+    records = records_for_operation(
+        "FMOV",
+        3,
+        [occ("D100", 0, "read"), occ("D200", 1, "write", range_len=5)],
+        const_args="5",
+        constant_values={2: "5"},
+    )
+    assert len(records) == 1
+    edge = records[0]
+    assert edge.source_range == "D100", edge
+    assert edge.destination_range == "D200..D204", edge
 
 
 def test_two_operand_arithmetic_keeps_read_modify_write_edge() -> None:
