@@ -3,6 +3,7 @@ from __future__ import annotations
 """Regression test for timing-chart detection using synthetic SQLite fixtures."""
 
 import sqlite3
+from contextlib import closing
 import sys
 import tempfile
 from pathlib import Path
@@ -89,7 +90,7 @@ def create_link_db(path: Path, xref_a: Path, xref_b: Path) -> None:
     projects = []
     for label, xref in (("LINE_A", xref_a), ("LINE_B", xref_b)):
         root = create_demo_line_project(path.parent / label, overwrite=True)
-        with sqlite3.connect(xref) as stamped:
+        with closing(sqlite3.connect(xref)) as stamped, stamped:
             stamp_decoder(stamped, root)
         projects.append((label, str(root), str(xref)))
     con = sqlite3.connect(path)
