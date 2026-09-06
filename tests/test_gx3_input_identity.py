@@ -17,6 +17,7 @@ import sqlite3
 import os
 import tempfile
 import shutil
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_input_identity import fingerprint, input_files
@@ -132,7 +133,7 @@ def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:
         project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
         built = prepare(project)
         for artifact, opener in ((built.xref, open_xref_db), (built.index, open_existing)):
-            with sqlite3.connect(artifact.path) as con:
+            with closing(sqlite3.connect(artifact.path)) as con, con:
                 saved = con.execute("select value from meta where key='input_sha256'").fetchone()[0]
                 con.execute("delete from meta where key='input_sha256'")
             try:
@@ -142,7 +143,7 @@ def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:
             else:
                 raise AssertionError("missing identity accepted")
             assert not getattr(locate(project), artifact.kind).usable
-            with sqlite3.connect(artifact.path) as con:
+            with closing(sqlite3.connect(artifact.path)) as con, con:
                 con.execute("insert into meta values ('input_sha256', ?)", (saved,))
         for path in input_files(project):
             path.unlink()
@@ -172,7 +173,7 @@ def test_rejected_xref_disables_only_optional_trace_pruning() -> None:
         try:
             os.chdir(tmp)
             for key in ("input_sha256", "decoder"):
-                with sqlite3.connect(built.xref.path) as con:
+                with closing(sqlite3.connect(built.xref.path)) as con, con:
                     original = con.execute("select value from meta where key=?", (key,)).fetchone()[0]
                     con.execute("delete from meta where key=?", (key,))
                 context = load_trace_constant_context(project, [], [])
@@ -181,7 +182,7 @@ def test_rejected_xref_disables_only_optional_trace_pruning() -> None:
                 trace = build_trace(project, "Y0", max_depth=2, max_devices=20,
                                     include_reset=True, strict_logic=True)
                 assert trace["target"]["device"] == "Y0", trace
-                with sqlite3.connect(built.xref.path) as con:
+                with closing(sqlite3.connect(built.xref.path)) as con, con:
                     con.execute("insert into meta values (?, ?)", (key, original))
         finally:
             os.chdir(previous)
