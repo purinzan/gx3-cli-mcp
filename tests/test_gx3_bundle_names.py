@@ -20,6 +20,7 @@ content -- and a size can be identifying on its own. The claim is narrower:
 path components are not passed through as text.
 """
 
+import json
 import sys
 import tempfile
 import zipfile
@@ -42,6 +43,9 @@ def a_project(work: Path) -> Path:
     (root / "BatteryLine5" / "supplierModuleX.dat").write_bytes(b"x")
     (root / "ProjectFalcon.w3pa").write_bytes(b"y")
     (root / "UnitConfig.dat").write_bytes(b"z")
+    (root / "SourceInfo.CAB").write_bytes(b"cab")
+    (root / "CPU.PRM").write_bytes(b"cpu")
+    (root / "001_LDDB.db").write_bytes(b"db")
     return root
 
 
@@ -53,6 +57,12 @@ def bundle_text(work: Path, root: Path) -> tuple[list[str], str]:
             archive.read(name).decode("utf-8", "replace") for name in entries
         )
     return entries, payload
+
+
+def bundle_inventory(work: Path, root: Path) -> list[dict[str, object]]:
+    out = build_bundle(root, work / "bundle.zip")
+    with zipfile.ZipFile(out) as archive:
+        return json.loads(archive.read("project_inventory_redacted.json").decode("utf-8"))
 
 
 def test_no_project_name_reaches_the_bundle() -> None:
@@ -75,16 +85,28 @@ def test_a_suffix_is_not_a_licence_to_keep_the_name() -> None:
         assert "ProjectFalcon" not in payload
 
 
-def test_the_diagnostic_content_survives() -> None:
+def test_the_diagnostic_content_survives_the_built_archive() -> None:
+    # The inventory is already structurally pseudonymized. Passing it through
+    # the generic text redactor again used to rewrite CPU.PRM, 001_LDDB.db and
+    # even DIR_0001/FILE_0001, contradicting the README and losing parser clues.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        rows = project_inventory(a_project(work))
+        rows = bundle_inventory(work, a_project(work))
         assert rows
         for row in rows:
             assert "suffix" in row and "size" in row and "depth" in row, row
-        # Names the format itself defines are kept: a project with no
-        # UnitConfig.dat is the diagnosis, and a stand-in would hide it.
-        assert any(row["path"] == "UnitConfig.dat" for row in rows), rows
+
+        paths = {str(row["path"]) for row in rows}
+        for fixed in ("UnitConfig.dat", "SourceInfo.CAB", "CPU.PRM", "001_LDDB.db"):
+            assert fixed in paths, (fixed, sorted(paths))
+
+        # The unknown nested path stays structurally anonymous, and its
+        # stand-ins survive exactly as stand-ins rather than PROJECT aliases.
+        assert any(
+            path.startswith("DIR_") and "/FILE_" in path
+            for path in paths
+        ), sorted(paths)
+        assert not any("PROJECT_" in path for path in paths), sorted(paths)
 
 
 def test_two_files_in_one_folder_still_read_as_one_folder() -> None:
@@ -116,7 +138,7 @@ def test_the_alias_table_is_not_in_the_bundle() -> None:
 def main() -> int:
     test_no_project_name_reaches_the_bundle()
     test_a_suffix_is_not_a_licence_to_keep_the_name()
-    test_the_diagnostic_content_survives()
+    test_the_diagnostic_content_survives_the_built_archive()
     test_two_files_in_one_folder_still_read_as_one_folder()
     test_the_alias_table_is_not_in_the_bundle()
     print("bundle name checks passed")
