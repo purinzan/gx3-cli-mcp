@@ -90,6 +90,106 @@ def test_a_stateful_driver_is_not_a_finished_answer() -> None:
     assert not state.conclusive
 
 
+def test_edge_triggered_value_write_survives_the_trace_output_boundary() -> None:
+    """#95: MOVP is a writer and an edge event, not an ordinary level write."""
+    from gx3cli.gx3_analysis_state import SEMANTICS
+    from gx3cli.review_gx3_project import DeviceOcc, LadderRow
+    from gx3cli.trace_gx3_device_dependencies import (
+        driver_effect,
+        row_write_occurrences,
+        semantic_gaps,
+        temporal_predicates,
+    )
+
+    occurrence = DeviceOcc(
+        device="D200",
+        device_type="D",
+        number=200,
+        role="MOVP",
+        lddb="SYNTH_LDDB.db",
+        pos=10,
+        block_id="b",
+        title="",
+        parse_status="exact",
+        access="write",
+    )
+    row = LadderRow("SYNTH_LDDB.db", 10, "b", "", 0, 1, "", "", [], "exact", [occurrence])
+    assert row_write_occurrences(row) == [occurrence]
+
+    predicates = temporal_predicates([occurrence], [])
+    assert predicates == [{
+        "kind": "edge_triggered_write",
+        "device": "D200",
+        "opcode": "MOVP",
+        "execution_condition": "rising",
+        "source": "instruction_execution_condition",
+        "requires_runtime_state": True,
+    }], predicates
+    assert driver_effect("MOVP") == "write/edge-triggered"
+
+    gaps = semantic_gaps([{
+        "driver_roles": ["MOVP"],
+        "conditions": [],
+        "strict_logic": True,
+        "mc_zones": [],
+        "cj_upstream": [],
+    }])
+    assert any("edge-triggered value writes" in gap and "MOVP" in gap for gap in gaps), gaps
+    state = trace_state(False, [], [], [], gaps)
+    assert state.state == PARTIAL and state.stage == SEMANTICS, state
+
+
+def test_level_value_write_does_not_gain_edge_semantics() -> None:
+    """Ordinary MOV remains a level execution write; not every value write is partial."""
+    from gx3cli.review_gx3_project import DeviceOcc
+    from gx3cli.trace_gx3_device_dependencies import driver_effect, semantic_gaps, temporal_predicates
+
+    occurrence = DeviceOcc(
+        device="D200",
+        device_type="D",
+        number=200,
+        role="MOV",
+        lddb="SYNTH_LDDB.db",
+        pos=10,
+        block_id="b",
+        title="",
+        parse_status="exact",
+        access="write",
+    )
+    assert temporal_predicates([occurrence], []) == []
+    assert driver_effect("MOV") == "write/value"
+    assert semantic_gaps([{
+        "driver_roles": ["MOV"],
+        "conditions": [],
+        "strict_logic": True,
+        "mc_zones": [],
+        "cj_upstream": [],
+    }]) == []
+
+
+def test_unsigned_pulse_value_write_uses_manual_semantics_not_name_suffix() -> None:
+    """+P_U ends in _U, so a suffix heuristic would miss its rising edge."""
+    from gx3cli.review_gx3_project import DeviceOcc
+    from gx3cli.trace_gx3_device_dependencies import temporal_predicates
+
+    occurrence = DeviceOcc(
+        device="D300",
+        device_type="D",
+        number=300,
+        role="+P_U",
+        lddb="SYNTH_LDDB.db",
+        pos=20,
+        block_id="b",
+        title="",
+        parse_status="exact",
+        access="write",
+    )
+    predicates = temporal_predicates([occurrence], [])
+    assert len(predicates) == 1, predicates
+    assert predicates[0]["kind"] == "edge_triggered_write", predicates
+    assert predicates[0]["execution_condition"] == "rising", predicates
+
+
 def test_a_jump_above_a_driver_row_is_reported() -> None:
     from gx3cli.trace_gx3_device_dependencies import semantic_gaps
 
