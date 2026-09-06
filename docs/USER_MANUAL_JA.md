@@ -208,6 +208,8 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+`xref` / `index-lite` の照会で `--root` を指定した場合、DB側の入力指紋が未記録、またはrootに解析入力がない場合は照合不能として拒否します。古いDBは入力を復元したうえで再構築してください。rootを指定しないDB単独照会は互換性のため残しますが、特定プロジェクトとの一致は保証しません。
+
 xrefのデータフロー索引は、読出し側・書込み側の物理範囲を別々に保存します。
 命令の件数`range_count`を範囲長として再利用しません。動的件数やインデックス修飾で
 終端が不明な場合は、`source_range_len` / `destination_range_len`の0で不明を保持します。

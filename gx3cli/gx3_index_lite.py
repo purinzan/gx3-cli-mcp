@@ -422,12 +422,8 @@ def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
         return
     row = con.execute("select value from meta where key='input_sha256'").fetchone()
     stored = row["value"] if row is not None else ""
-    if not stored:
-        # Built before inputs were stamped. The naming check already refuses
-        # the ones that would answer differently.
-        return
     actual = fingerprint(Path(root))
-    if not actual or actual == stored:
+    if stored and actual and actual == stored:
         return
     con.close()
     raise SystemExit(
@@ -453,14 +449,18 @@ def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
     con = connect(path)
-    row = con.execute("select value from meta where key='device_naming'").fetchone()
-    if row is None or row["value"] != DEVICE_NAMING:
-        raise SystemExit(
-            f"index db was built by an older version and spells devices differently: {path}\n"
-            "X, Y, B and W devices are now numbered in hexadecimal, matching GX Works3.\n"
-            "Rebuild it: gx3-cli index-lite build --root <project>"
-        )
-    check_input(path, con, root)
+    try:
+        row = con.execute("select value from meta where key='device_naming'").fetchone()
+        if row is None or row["value"] != DEVICE_NAMING:
+            raise SystemExit(
+                f"index db was built by an older version and spells devices differently: {path}\n"
+                "X, Y, B and W devices are now numbered in hexadecimal, matching GX Works3.\n"
+                "Rebuild it: gx3-cli index-lite build --root <project>"
+            )
+        check_input(path, con, root)
+    except BaseException:
+        con.close()
+        raise
     return con
 
 

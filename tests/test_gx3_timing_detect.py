@@ -81,6 +81,17 @@ def create_xref(path: Path, rows: list[tuple[str, str, str, dict]]) -> None:
 
 
 def create_link_db(path: Path, xref_a: Path, xref_b: Path) -> None:
+    # Signal-selection fixtures use hand-written occurrences; project identity
+    # must still be real. Decoder-to-index regressions live in input_identity.
+    from gx3cli.gx3_synthetic_project import create_demo_line_project
+    from gx3cli.gx3_xref import stamp_decoder
+
+    projects = []
+    for label, xref in (("LINE_A", xref_a), ("LINE_B", xref_b)):
+        root = create_demo_line_project(path.parent / label, overwrite=True)
+        with sqlite3.connect(xref) as stamped:
+            stamp_decoder(stamped, root)
+        projects.append((label, str(root), str(xref)))
     con = sqlite3.connect(path)
     con.executescript(
         """
@@ -102,10 +113,7 @@ def create_link_db(path: Path, xref_a: Path, xref_b: Path) -> None:
     )
     con.executemany(
         "insert into project(label, root, xref_db) values (?, ?, ?)",
-        [
-            ("LINE_A", "synthetic-a", str(xref_a)),
-            ("LINE_B", "synthetic-b", str(xref_b)),
-        ],
+        projects,
     )
     rows = [
         ("LINE_B", "B200", "LINE_A", "M1000", "comment-role", "", "LINE_B_to_LINE_A", "high", "ready", "synthetic"),

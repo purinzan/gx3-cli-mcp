@@ -100,9 +100,8 @@ def test_a_database_built_from_another_project_is_refused() -> None:
         raise AssertionError("a database from another project was accepted")
 
 
-def test_a_database_with_no_input_recorded_still_opens() -> None:
-    # Built before inputs were stamped. The decoder check already refuses those
-    # that matter; this must not add a second failure for the same thing.
+def test_a_database_with_no_input_recorded_requires_rebuild_for_root() -> None:
+    # Decoder compatibility is not proof of project identity.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         project = create_demo_line_project(work / "line", overwrite=True)
@@ -112,8 +111,51 @@ def test_a_database_with_no_input_recorded_still_opens() -> None:
         stamp_decoder(con)  # no root: no input recorded
         con.commit()
         con.close()
-        con = open_xref_db(db, root=project)
+        try:
+            open_xref_db(db, root=project)
+        except SystemExit as exc:
+            assert "cannot be verified" in str(exc), exc
+        else:
+            raise AssertionError("unstamped database accepted for project")
+        # Standalone inspection without a claimed project remains supported.
+        con = open_xref_db(db)
         con.close()
+
+
+def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:
+    from gx3cli.gx3_workspace import prepare, locate
+    from gx3cli.gx3_index_lite import open_existing
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
+        built = prepare(project)
+        for artifact, opener in ((built.xref, open_xref_db), (built.index, open_existing)):
+            with sqlite3.connect(artifact.path) as con:
+                saved = con.execute("select value from meta where key='input_sha256'").fetchone()[0]
+                con.execute("delete from meta where key='input_sha256'")
+            try:
+                opener(artifact.path, root=project)
+            except SystemExit as exc:
+                assert "cannot be verified" in str(exc), exc
+            else:
+                raise AssertionError("missing identity accepted")
+            assert not getattr(locate(project), artifact.kind).usable
+            with sqlite3.connect(artifact.path) as con:
+                con.execute("insert into meta values ('input_sha256', ?)", (saved,))
+        for path in input_files(project):
+            path.unlink()
+        assert not locate(project).ready
+        for artifact, opener in ((built.xref, open_xref_db), (built.index, open_existing)):
+            try:
+                opener(artifact.path, root=project)
+            except SystemExit as exc:
+                assert "cannot be verified" in str(exc), exc
+            else:
+                raise AssertionError("removed input accepted")
+            # Failed validation must not retain a Windows file lock.
+            moved = artifact.path.with_suffix(".moved")
+            artifact.path.rename(moved)
+            moved.rename(artifact.path)
 
 
 def main() -> int:
@@ -121,7 +163,8 @@ def main() -> int:
     test_the_same_project_hashes_the_same_and_a_changed_one_does_not()
     test_the_ladder_the_comments_and_the_parameters_all_count()
     test_a_database_built_from_another_project_is_refused()
-    test_a_database_with_no_input_recorded_still_opens()
+    test_a_database_with_no_input_recorded_requires_rebuild_for_root()
+    test_real_indexes_reject_missing_identity_and_removed_inputs()
     print("input identity checks passed")
     return 0
 

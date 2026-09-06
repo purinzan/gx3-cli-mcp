@@ -121,10 +121,8 @@ def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
         return
     row = con.execute("select value from meta where key='input_sha256'").fetchone()
     stored = (row["value"] if isinstance(row, sqlite3.Row) else row[0]) if row else ""
-    if not stored:
-        return
     actual = fingerprint(Path(root))
-    if not actual or actual == stored:
+    if stored and actual and actual == stored:
         return
     con.close()
     raise SystemExit(
@@ -139,8 +137,12 @@ def open_xref_db(
     uri = f"file:{path}?mode=ro" if read_only else str(path)
     con = sqlite3.connect(uri, uri=read_only)
     con.row_factory = sqlite3.Row
-    check_decoder(path, con)
-    check_input(path, con, root)
+    try:
+        check_decoder(path, con)
+        check_input(path, con, root)
+    except BaseException:
+        con.close()
+        raise
     return con
 
 
