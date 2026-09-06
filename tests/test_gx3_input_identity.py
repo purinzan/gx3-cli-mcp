@@ -118,9 +118,14 @@ def test_a_database_with_no_input_recorded_requires_rebuild_for_root() -> None:
             assert "cannot be verified" in str(exc), exc
         else:
             raise AssertionError("unstamped database accepted for project")
-        # Standalone inspection without a claimed project remains supported.
-        con = open_xref_db(db)
-        con.close()
+        # Omitting root is not a bypass for missing construction evidence.
+        try:
+            con = open_xref_db(db)
+        except SystemExit as exc:
+            assert "build contract" in str(exc), exc
+        else:
+            con.close()
+            raise AssertionError("legacy construction accepted without root")
 
 
 def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:

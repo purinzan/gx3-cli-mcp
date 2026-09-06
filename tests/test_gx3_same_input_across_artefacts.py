@@ -348,6 +348,48 @@ def test_atomic_build_keeps_new_failures_absent_and_respects_active_wal() -> Non
                 assert "project input" in str(exc) and "WAL" in str(exc), exc
 
 
+def test_unverified_build_contract_is_rejected_and_only_that_index_rebuilt() -> None:
+    from gx3cli.gx3_workspace import prepare, locate, OLD_BUILD
+    from gx3cli.gx3_index_build import BUILD_CONTRACT
+    from gx3cli.gx3_xref import open_xref_db
+    from gx3cli.gx3_index_lite import open_existing
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_intermediate_tool import generate_rung
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("_guid/off", generate_rung(
+            {"device": "SM401"}, {"type": "coil", "device": "M100"})[0])])
+        built = prepare(root)
+        for kind in ("xref", "index"):
+            target = getattr(built, kind).path
+            other = getattr(built, "index" if kind == "xref" else "xref").path
+            for value in (None, "older-contract"):
+                with closing(sqlite3.connect(target)) as con, con:
+                    if value is None:
+                        con.execute("delete from meta where key='build_contract'")
+                    else:
+                        con.execute("update meta set value=? where key='build_contract'", (value,))
+                before, other_before = target.read_bytes(), other.read_bytes()
+                for query_root in (None, root):
+                    try:
+                        if kind == "xref":
+                            opened = open_xref_db(target, read_only=True, root=query_root)
+                        else:
+                            opened = open_existing(target, root=query_root)
+                    except SystemExit as exc:
+                        assert "build contract" in str(exc), exc
+                    else:
+                        opened.close()
+                        raise AssertionError("legacy build was silently accepted")
+                assert target.read_bytes() == before and other.read_bytes() == other_before
+                assert getattr(locate(root), kind).state == OLD_BUILD
+                built = prepare(root)
+                assert other.read_bytes() == other_before
+                with closing(sqlite3.connect(target)) as con:
+                    assert con.execute("select value from meta where key='build_contract'").fetchone()[0] == BUILD_CONTRACT
+
+
 def main() -> int:
     test_lint_and_health_reject_foreign_lite_and_close_open_xref()
     test_three_artefacts_of_one_project_agree_on_the_input()
@@ -355,6 +397,7 @@ def main() -> int:
     test_scan_order_rejects_a_foreign_xref_before_syncing_it()
     test_builds_preserve_existing_index_when_inputs_change_or_population_fails()
     test_atomic_build_keeps_new_failures_absent_and_respects_active_wal()
+    test_unverified_build_contract_is_rejected_and_only_that_index_rebuilt()
     print("same input across artefacts checks passed")
     return 0
 

@@ -237,10 +237,15 @@ def add_index_device(con: sqlite3.Connection, device: str, device_type: str, num
 
 
 def make_lite_index(path: Path) -> sqlite3.Connection:
+    # Projection-only interval/formatting fixtures, not build certification.
+    # Real builder/legacy rejection is covered by same_input_across_artefacts.
+    from gx3cli.gx3_index_build import BUILD_CONTRACT
+
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     create_schema(con)
     con.execute("insert into meta(key, value) values ('device_naming', ?)", (DEVICE_NAMING,))
+    con.execute("insert into meta(key, value) values ('build_contract', ?)", (BUILD_CONTRACT,))
     return con
 
 

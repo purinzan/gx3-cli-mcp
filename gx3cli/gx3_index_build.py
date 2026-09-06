@@ -12,6 +12,19 @@ import tempfile
 from gx3cli.gx3_input_identity import ANALYSIS_INPUTS, fingerprint, input_files
 
 
+BUILD_CONTRACT = "stable-project-input-build-1"
+
+
+def require_build_contract(con: sqlite3.Connection, path: Path) -> None:
+    """A matching content stamp alone cannot certify a pre-guard build."""
+    row = con.execute("select value from meta where key='build_contract'").fetchone()
+    if row is None or row[0] != BUILD_CONTRACT:
+        raise SystemExit(
+            f"index construction cannot be verified against the stable-input build contract: {path}\n"
+            "Rebuild this project's xref/index-lite with the current build command."
+        )
+
+
 def _stats(root: Path) -> tuple:
     result = []
     for path in input_files(root):
@@ -63,6 +76,7 @@ def atomic_index_build(root: Path, output: Path, *, connect=None):
         stored = con.execute("select value from meta where key='input_sha256'").fetchone()
         if initial != final or stored is None or stored[0] != initial[0]:
             raise SystemExit("project inputs changed during index construction; previous index preserved; retry the build")
+        con.execute("insert or replace into meta(key, value) values ('build_contract', ?)", (BUILD_CONTRACT,))
         con.commit()
         con.close()
         con = None
