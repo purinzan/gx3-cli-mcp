@@ -228,6 +228,19 @@ def build(args: argparse.Namespace) -> int:
     labels = load_label_resolver(root)
     if labels:
         print(f"resolved {len(labels)} label references from LabelData.db")
+    elif labels.fatal:
+        # Every label-named operand in this project would come out unresolved,
+        # and the occurrences built from it would be missing devices without
+        # anything in the result saying so.
+        raise SystemExit(
+            f"LabelData.db is present and could not be read: {labels.reason}. "
+            "Every label-named operand would be missing from this "
+            "cross-reference, and nothing in it would say so. "
+            "Fix or remove the file and build again."
+        )
+    elif not labels.usable:
+        # Not fatal, and not nothing: the run continues and says what it lost.
+        print(f"warning: label names are unavailable -- {labels.reason}")
     comments = load_comments_for_root(root)
     print("parsing ladder rows ...")
     rows_by_db = read_ladder_rows(root)

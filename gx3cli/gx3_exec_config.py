@@ -23,7 +23,7 @@ from pathlib import Path
 
 from gx3cli.gx3_program_map import load_program_map, parse_cpu_prm_program_names
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
-from gx3cli.gx3_xref import default_db_path
+from gx3cli.gx3_xref import default_db_path, open_xref_db
 
 
 def read_units(root: Path) -> list[dict[str, object]]:
@@ -85,7 +85,9 @@ def pou_row_counts(args: argparse.Namespace) -> dict[str, int]:
     path = Path(args.db or default_db_path(Path(args.root)))
     if not path.exists():
         return {}
-    con = sqlite3.connect(path)
+    # Checked against this project: row counts from another one's
+    # cross-reference sat beside this one's program list and looked fine.
+    con = open_xref_db(path, read_only=True, root=Path(args.root) if args.root else None)
     counts = {
         pou: n
         for pou, n in con.execute(

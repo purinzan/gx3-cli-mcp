@@ -358,6 +358,26 @@ def root_from_index_dbs(base: Path | None = None) -> Path | None:
     return None
 
 
+def candidate_roots(base: Path | None = None) -> list[Path]:
+    """Every project the auto-detection would be choosing between.
+
+    `default_project_root` picks the newest, which is a guess dressed as an
+    answer: two extracted projects side by side and every command silently
+    reports on whichever was touched last. The caller can ask what the choice
+    was between and refuse to make it silently.
+
+    Duplicates are removed after resolving, so the same directory reached by
+    two paths is one candidate rather than an ambiguity.
+    """
+    seen: dict[Path, None] = {}
+    for path in find_extracted_gx3_roots(base):
+        try:
+            seen.setdefault(path.resolve(), None)
+        except OSError:
+            seen.setdefault(path, None)
+    return list(seen)
+
+
 def default_project_root(base: Path | None = None) -> Path:
     env_root = first_env(ROOT_ENV, LEGACY_ROOT_ENV)
     if env_root:
