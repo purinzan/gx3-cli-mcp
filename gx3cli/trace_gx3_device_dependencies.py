@@ -81,7 +81,7 @@ format_compact = base.format_compact
 build_parser = base.build_parser
 
 
-# ``gx3_trace_state`` binds condition_refs_from_logic as a module global.  Keep
+# ``gx3_trace_state`` binds condition_refs_from_logic as a module global. Keep
 # one dispatcher installed there and use ContextVar rather than temporary
 # monkeypatching: concurrent MCP trace calls then carry independent pruning
 # facts without changing each other's behaviour. Calls outside this facade see
@@ -122,14 +122,22 @@ def _load_constant_context(root: Path):
     rows = base.load_rows(root, comments)
     base.resolve_label_occurrences(rows, labels)
     comm_prefix = base.default_comm_prefix()
-    refresh_areas = base.load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
+    refresh_path = Path("outputs") / f"{comm_prefix}_refresh_areas.csv"
+    # Keep compatibility with older/manual workflows that wrote the generated
+    # CSV in cwd, but prefer the same outputs/ location as comm-refresh and
+    # dead-logic. Missing evidence disables only this exclusion; it never
+    # invents a refresh range.
+    legacy_refresh_path = Path(f"{comm_prefix}_refresh_areas.csv")
+    if not refresh_path.exists() and legacy_refresh_path.exists():
+        refresh_path = legacy_refresh_path
+    refresh_areas = base.load_refresh_areas(refresh_path)
     return load_trace_constant_context(root, rows, refresh_areas)
 
 
 def __getattr__(name: str) -> Any:
     """Delegate legacy/internal attributes to the canonical trace engine.
 
-    The former public module accumulated a few shared helpers over time.  The
+    The former public module accumulated a few shared helpers over time. The
     facade must not break an internal consumer merely because that helper was
     not explicitly re-exported above.
     """
@@ -149,6 +157,14 @@ def _condition_key(value: dict[str, Any]) -> tuple[str, str, str]:
         str(value.get("device") or value.get("condition_device") or ""),
         str(value.get("role") or ""),
         str(value.get("required_state") or ""),
+    )
+
+
+def _row_device_key(value: dict[str, Any]) -> tuple[str, str]:
+    """A physical row may have different enable logic for different outputs."""
+    return (
+        str(value.get("row_id") or ""),
+        str(value.get("device") or value.get("from_device") or ""),
     )
 
 
@@ -241,17 +257,21 @@ def prune_trace_result(
         _simplify_device_logic(device, "on_cause_logic", facts)
         _simplify_device_logic(device, "off_cause_logic", facts)
 
-    allowed_by_row: dict[str, set[tuple[str, str, str]]] = {}
+    # row_id alone is not unique for the trace semantics: one physical row may
+    # drive multiple outputs, and each output can have different enable logic.
+    # Keep the selected output in the key so one record cannot overwrite the
+    # condition set for another output on the same row.
+    allowed_by_row_device: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
     for row in trace.get("driver_rows", []):
         pruned_conditions += _filter_row_conditions(row, facts)
-        allowed_by_row[str(row.get("row_id") or "")] = {
+        allowed_by_row_device[_row_device_key(row)] = {
             _condition_key(cond) for cond in row.get("conditions", [])
         }
 
     filtered_edges = [
         edge
         for edge in old_edges
-        if _condition_key(edge) in allowed_by_row.get(str(edge.get("row_id") or ""), set())
+        if _condition_key(edge) in allowed_by_row_device.get(_row_device_key(edge), set())
     ]
     reachable = _reachable_devices(trace, filtered_edges)
 
