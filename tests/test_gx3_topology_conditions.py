@@ -126,9 +126,6 @@ def test_a_normally_closed_contact_stays_closed() -> None:
 
 
 def test_each_output_gets_its_own_condition() -> None:
-    # Two outputs in one project with different dependencies. The consumer
-    # asks topology for the selected output rather than flattening the row's
-    # device list into one condition.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         root, db = project(
@@ -150,7 +147,6 @@ def test_each_output_gets_its_own_condition() -> None:
 
 
 def test_alarm_self_contact_on_a_live_path_is_self_hold() -> None:
-    # A real seal-in branch: start condition OR the alarm's own contact.
     row = generated_row({"or": [{"device": "M500"}, {"device": "F5"}]}, "F5")
     con = commentless_xref()
     try:
@@ -163,9 +159,6 @@ def test_alarm_self_contact_on_a_live_path_is_self_hold() -> None:
 
 
 def test_alarm_self_contact_on_a_dead_branch_is_not_self_hold() -> None:
-    # The lower branch contains F5 but a driver sink above it prevents power
-    # from reaching that branch. Same-row co-occurrence used to be enough to
-    # call this self-hold; topology must not.
     contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=500:vt=nn}]}:pos=0,0}"
     blocking_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=900:vt=nn}]}:pos=1,0}"
     wire = "e{s=wire:pos=1,1}"
@@ -187,8 +180,6 @@ def test_alarm_self_contact_on_a_dead_branch_is_not_self_hold() -> None:
 
 
 def test_without_the_rung_the_answer_says_it_is_a_contact_list() -> None:
-    # The fallback is still there -- a rung that cannot be read should not stop
-    # the command -- but it no longer looks like a condition.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         root, db = project(work, [({"or": [{"device": "M100"}, {"device": "M101"}]}, "F0")])
@@ -223,16 +214,158 @@ def test_timing_chart_reads_the_same_way() -> None:
         assert "wiring not read" in flat, flat
 
 
+# #139: constants proved elsewhere in the project also simplify normal coil
+# tracing. These regressions are about which upstream conditions still matter
+# to the ON question, not about declaring live PLC state.
+def _contact(device: str, role: str = "a", position: str = "0,0") -> dict:
+    return {
+        "op": "contact",
+        "role": role,
+        "state": "ON" if role == "a" else "OFF",
+        "device": device,
+        "raw_device": device,
+        "device_type": device.rstrip("0123456789"),
+        "position": position,
+    }
+
+
+def _fact(device: str, value: bool):
+    from gx3cli.gx3_dead_logic import ConstantFact
+
+    return ConstantFact(
+        device=device,
+        value=value,
+        where="SYNTH st1",
+        chain=(f"{device}={'ON' if value else 'OFF'}",),
+        roots=("synthetic",),
+        depth=1,
+    )
+
+
+def test_constant_false_in_and_prunes_the_whole_upstream_branch() -> None:
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic
+    from gx3cli.gx3_topology_conditions import simplify_logic_for_trace
+
+    logic = {
+        "op": "and",
+        "args": [_contact("X0", position="0,0"), _contact("M100", position="1,0"), _contact("M200", "b", "2,0")],
+    }
+    result = simplify_logic_for_trace(logic, {"M100": _fact("M100", False)})
+    assert result.logic_text == "FALSE", result
+    assert condition_refs_from_logic(result.logic) == []
+    assert {ref["device"] for ref in result.pruned_conditions} == {"X0", "M100", "M200"}
+
+
+def test_false_or_branch_is_removed_but_other_on_path_is_still_traced() -> None:
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic, logic_to_text
+    from gx3cli.gx3_topology_conditions import simplify_logic_for_trace
+
+    logic = {
+        "op": "or",
+        "args": [
+            {"op": "and", "args": [_contact("M100", position="0,0"), _contact("X0", position="1,0")]},
+            {"op": "and", "args": [_contact("X1", position="0,1"), _contact("M300", position="1,1")]},
+        ],
+    }
+    result = simplify_logic_for_trace(logic, {"M100": _fact("M100", False)})
+    refs = condition_refs_from_logic(result.logic)
+    assert {ref["device"] for ref in refs} == {"X1", "M300"}, (logic_to_text(result.logic), refs)
+    assert "X0" not in {ref["device"] for ref in refs}
+
+
+def test_true_or_branch_short_circuits_the_other_upstream_conditions() -> None:
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic
+    from gx3cli.gx3_topology_conditions import simplify_logic_for_trace
+
+    logic = {"op": "or", "args": [_contact("M200"), _contact("M400", position="1,0")]}
+    result = simplify_logic_for_trace(logic, {"M200": _fact("M200", True)})
+    assert result.logic_text == "TRUE"
+    assert condition_refs_from_logic(result.logic) == []
+
+
+def test_b_contact_inverts_the_proven_coil_state_before_pruning() -> None:
+    from gx3cli.gx3_topology_conditions import simplify_logic_for_trace
+
+    assert simplify_logic_for_trace(_contact("M200", "b"), {"M200": _fact("M200", True)}).logic_text == "FALSE"
+    assert simplify_logic_for_trace(_contact("M100", "b"), {"M100": _fact("M100", False)}).logic_text == "TRUE"
+
+
+def test_public_trace_row_filter_keeps_only_conditions_left_after_simplification() -> None:
+    from gx3cli.trace_gx3_device_dependencies import _filter_row_conditions
+
+    logic = {
+        "op": "or",
+        "args": [
+            {"op": "and", "args": [_contact("M100"), _contact("X0", position="1,0")]},
+            _contact("X1", position="0,1"),
+        ],
+    }
+    row = {
+        "enable_logic": logic,
+        "enable_logic_text": "raw",
+        "conditions": [
+            {"device": "M100", "role": "a", "required_state": "ON"},
+            {"device": "X0", "role": "a", "required_state": "ON"},
+            {"device": "X1", "role": "a", "required_state": "ON"},
+        ],
+    }
+    removed = _filter_row_conditions(row, {"M100": _fact("M100", False)})
+    assert removed == 2, row
+    assert [condition["device"] for condition in row["conditions"]] == ["X1"], row
+    assert row["enable_logic_text"] == "[X1]", row
+    assert row["raw_enable_logic_text"] == "raw"
+
+
+def test_public_trace_dispatch_prunes_refs_before_canonical_bfs_queue() -> None:
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.trace_gx3_device_dependencies import (
+        _ACTIVE_CONSTANT_FACTS,
+        _ACTIVE_PRUNE_STATS,
+        _condition_refs_dispatch,
+    )
+
+    logic = {
+        "op": "or",
+        "args": [
+            {"op": "and", "args": [_contact("M100"), _contact("X0", position="1,0")]},
+            _contact("X1", position="0,1"),
+        ],
+    }
+    assert base.condition_refs_from_logic is _condition_refs_dispatch
+    stats: dict[str, int] = {}
+    facts_token = _ACTIVE_CONSTANT_FACTS.set({"M100": _fact("M100", False)})
+    stats_token = _ACTIVE_PRUNE_STATS.set(stats)
+    try:
+        refs = base.condition_refs_from_logic(logic)
+    finally:
+        _ACTIVE_PRUNE_STATS.reset(stats_token)
+        _ACTIVE_CONSTANT_FACTS.reset(facts_token)
+
+    assert [ref["device"] for ref in refs] == ["X1"], refs
+    assert stats["raw_refs"] == 3, stats
+    assert stats["kept_refs"] == 1, stats
+    assert stats["raw_refs"] - stats["kept_refs"] == 2, stats
+
+
+def test_postfilter_row_key_includes_the_driven_device() -> None:
+    from gx3cli.trace_gx3_device_dependencies import _row_device_key
+
+    y0_row = {"row_id": "P1:10", "device": "Y0"}
+    y1_row = {"row_id": "P1:10", "device": "Y1"}
+    assert _row_device_key(y0_row) != _row_device_key(y1_row)
+    assert _row_device_key({"row_id": "P1:10", "from_device": "Y0"}) == _row_device_key(y0_row)
+    assert _row_device_key({"row_id": "P1:10", "from_device": "Y1"}) == _row_device_key(y1_row)
+
+
 def main() -> int:
-    test_two_parallel_contacts_are_an_or()
-    test_a_series_contact_before_a_branch_keeps_its_shape()
-    test_a_normally_closed_contact_stays_closed()
-    test_each_output_gets_its_own_condition()
-    test_alarm_self_contact_on_a_live_path_is_self_hold()
-    test_alarm_self_contact_on_a_dead_branch_is_not_self_hold()
-    test_without_the_rung_the_answer_says_it_is_a_contact_list()
-    test_timing_chart_reads_the_same_way()
-    print("topology condition checks passed")
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for _name, test in tests:
+        test()
+    print(f"{len(tests)} topology condition checks passed")
     return 0
 
 
