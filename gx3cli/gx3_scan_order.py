@@ -168,8 +168,8 @@ def build_pou_order(root: Path) -> dict[str, PouOrder]:
     return orders
 
 
-def sync_pou_order(db_path: Path, orders: dict[str, PouOrder]) -> None:
-    con = sqlite3.connect(db_path)
+def sync_pou_order(con: sqlite3.Connection, orders: dict[str, PouOrder]) -> None:
+    """Persist POU order through a connection whose project identity was checked."""
     con.executescript(
         """
         create table if not exists pou_order(
@@ -218,15 +218,20 @@ def sync_pou_order(db_path: Path, orders: dict[str, PouOrder]) -> None:
         (",".join(f"{key}:{conf[key]}" for key in sorted(conf)),),
     )
     con.commit()
-    con.close()
 
 
-def open_xref(db_path: Path, root: Path | None = None) -> sqlite3.Connection:
+def open_xref(
+    db_path: Path,
+    root: Path | None = None,
+    *,
+    read_only: bool = True,
+) -> sqlite3.Connection:
     if not db_path.exists():
         raise SystemExit(f"xref db not found: {db_path} (run: gx3_cli.py xref build)")
-    # Checked against the project asked about: stale-read findings from
-    # another project's cross-reference are not findings about this one.
-    con = open_xref_db(db_path, read_only=True, root=root)
+    # Validation happens while opening this exact connection. When scan-order
+    # also syncs pou_order, the same validated connection is kept writable and
+    # used for that mutation; a mismatched project can never be altered first.
+    con = open_xref_db(db_path, read_only=read_only, root=root)
     con.row_factory = sqlite3.Row
     return con
 
@@ -735,10 +740,10 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root)
     db_path = Path(args.db or default_db_path(root))
     orders = build_pou_order(root)
-    if not args.no_sync_db:
-        sync_pou_order(db_path, orders)
-    con = open_xref(db_path, Path(args.root) if getattr(args, 'root', '') else None)
+    con = open_xref(db_path, root, read_only=args.no_sync_db)
     try:
+        if not args.no_sync_db:
+            sync_pou_order(con, orders)
         if args.all:
             return command_all(args, con, orders)
         return command_one(args, con, orders)

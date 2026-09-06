@@ -16,6 +16,7 @@ other is a transfer from the HMI, and the finding could not say which. It names
 the source where an edge knows it, and reads exactly as before where none does.
 """
 
+import argparse
 import contextlib
 import io
 import sqlite3
@@ -100,6 +101,34 @@ def test_without_a_cross_reference_it_says_nothing_rather_than_guessing() -> Non
         flow = flow_for(root, "D300", None)
         assert flow["stats"]["value_edges"] == 0, flow["stats"]
         assert [device["device"] for device in flow["devices"]] == ["D300"], flow["devices"]
+
+
+def test_flow_xref_is_checked_against_the_selected_project() -> None:
+    """A foreign data_flow table must not be mixed into this project's ladder."""
+    from gx3cli.gx3_flow_db import flow_xref_db
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        (work / "a").mkdir()
+        (work / "b").mkdir()
+        root_a = a_project(work / "a")
+        root_b = a_project(work / "b")
+
+        # Make A a distinct valid input while keeping the same project shape.
+        con = sqlite3.connect(root_a / "001_LDDB.db")
+        con.execute("update LadderBlocks set data=? where id='g1'", (mov(101, 200),))
+        con.commit()
+        con.close()
+
+        db_b = work / "b_xref.sqlite"
+        build(root_b, db_b)
+        args = argparse.Namespace(xref_db=str(db_b))
+        try:
+            flow_xref_db(args, root_a)
+        except SystemExit as stopped:
+            assert "xref db was built from a different input" in str(stopped), str(stopped)
+        else:
+            raise AssertionError("flow helper accepted another project's cross-reference")
 
 
 def run_multi_writer(root: Path, db: Path) -> list[dict]:
@@ -227,6 +256,7 @@ def test_without_refresh_areas_the_check_does_not_run() -> None:
 def main() -> int:
     test_graph_follows_a_value_back_to_where_it_came_from()
     test_without_a_cross_reference_it_says_nothing_rather_than_guessing()
+    test_flow_xref_is_checked_against_the_selected_project()
     test_lint_names_the_source_of_a_write_it_knows()
     test_lint_reads_as_before_when_there_are_no_edges()
     test_a_value_from_a_word_nothing_writes_is_named_as_a_boundary()

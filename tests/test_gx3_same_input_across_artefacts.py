@@ -27,13 +27,17 @@ from gx3cli.gx3_synthetic_project import create_demo_line_project
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(module: str, args: list[str], cwd: Path) -> str:
+def env_for_repo() -> dict[str, str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def run(module: str, args: list[str], cwd: Path) -> str:
     completed = subprocess.run(
         [sys.executable, "-m", module, *args],
-        cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace",
+        cwd=cwd, env=env_for_repo(), text=True, encoding="utf-8", errors="replace",
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
     )
     assert completed.returncode == 0, f"{module}: {completed.stdout}"
@@ -91,9 +95,68 @@ def test_an_artefact_from_a_changed_project_no_longer_agrees() -> None:
         assert xref_input != comm["input_sha256"], "an edit between builds went unnoticed"
 
 
+def test_scan_order_rejects_a_foreign_xref_before_syncing_it() -> None:
+    """A failed identity check must leave the foreign database untouched.
+
+    scan-order used to write Project A's POU order into Project B's xref and
+    only then call the fingerprint validator. The command failed, but the
+    unrelated database had already been changed.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project_a = create_demo_line_project(work / "a", overwrite=True)
+        project_b = create_demo_line_project(work / "b", overwrite=True)
+
+        # Make A a genuinely different input while preserving a valid project.
+        comment_db = next(project_a.glob("*_DC.db"))
+        con = sqlite3.connect(comment_db)
+        con.execute("update COMMENT_DATA set CmtData = CmtData || ' project-a'")
+        con.commit()
+        con.close()
+
+        db = work / "b_xref.sqlite"
+        run("gx3cli.gx3_xref", ["--root", str(project_b), "--db", str(db), "build"], work)
+
+        con = sqlite3.connect(db)
+        con.execute(
+            "insert or replace into meta(key, value) values ('pou_order_rows', 'foreign-sentinel')"
+        )
+        con.commit()
+        con.close()
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "gx3cli.gx3_scan_order",
+                "M100",
+                "--root",
+                str(project_a),
+                "--db",
+                str(db),
+            ],
+            cwd=work,
+            env=env_for_repo(),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert completed.returncode != 0, completed.stdout
+        assert "xref db was built from a different input" in completed.stdout, completed.stdout
+
+        con = sqlite3.connect(db)
+        after = dict(con.execute("select key, value from meta")).get("pou_order_rows")
+        con.close()
+        assert after == "foreign-sentinel", "scan-order mutated the foreign xref before rejecting it"
+
+
 def main() -> int:
     test_three_artefacts_of_one_project_agree_on_the_input()
     test_an_artefact_from_a_changed_project_no_longer_agrees()
+    test_scan_order_rejects_a_foreign_xref_before_syncing_it()
     print("same input across artefacts checks passed")
     return 0
 

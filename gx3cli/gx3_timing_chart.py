@@ -124,6 +124,13 @@ def project_xref_paths(link_con: sqlite3.Connection) -> dict[str, Path]:
     }
 
 
+def project_roots(link_con: sqlite3.Connection) -> dict[str, Path]:
+    return {
+        str(row["label"]): Path(str(row["root"]))
+        for row in link_con.execute("select label, root from project")
+    }
+
+
 def project_rows(link_con: sqlite3.Connection) -> dict[str, RowIndex]:
     """A row index per project, so a condition can be read from the wiring.
 
@@ -137,10 +144,10 @@ def project_rows(link_con: sqlite3.Connection) -> dict[str, RowIndex]:
     }
 
 
-def open_xref(path: Path) -> sqlite3.Connection:
+def open_xref(path: Path, root: Path) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"xref db not found: {path}")
-    return open_xref_db(path)
+    return open_xref_db(path, read_only=True, root=root)
 
 
 def first_comment(con: sqlite3.Connection, device: str) -> str:
@@ -321,12 +328,17 @@ def orient_link(row: sqlite3.Row, project_a: str, project_b: str) -> tuple[str, 
 
 def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[DetectedSignal], list[DataGroup]]:
     link_con = open_link_map(link_db)
-    xref_paths = project_xref_paths(link_con)
-    xrefs = {project: open_xref(path) for project, path in xref_paths.items()}
-    # Per project, and built lazily: a run that never needs a condition never
-    # reads a ladder.
-    rows = project_rows(link_con)
+    xrefs: dict[str, sqlite3.Connection] = {}
     try:
+        xref_paths = project_xref_paths(link_con)
+        roots = project_roots(link_con)
+        # Open inside the protected region one-by-one. If validation rejects a
+        # later xref, every earlier one plus the link-map DB still gets closed.
+        for project, path in xref_paths.items():
+            xrefs[project] = open_xref(path, roots[project])
+        # Per project, and built lazily: a run that never needs a condition never
+        # reads a ladder.
+        rows = project_rows(link_con)
         links = link_rows_between(link_con, project_a, project_b)
         detected: list[DetectedSignal] = []
         for row in links:
