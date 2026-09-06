@@ -65,12 +65,9 @@ class Reach:
 
 
 def has_value_edges(con: sqlite3.Connection) -> bool:
-    return bool(
-        con.execute(
-            "select count(*) from sqlite_master where type=? and name=?",
-            ("table", "data_flow"),
-        ).fetchone()[0]
-    )
+    # Legacy flow tables lack independent extents: do not guess them from n.
+    columns = {row[1] for row in con.execute("pragma table_info(data_flow)")}
+    return {"source_range_len", "destination_range_len", "source_device_type", "source_number"} <= columns
 
 
 # Roles that count as a contact, and roles that count as driving an output.
@@ -133,10 +130,12 @@ def successors(
             """
             select f.destination_device as device, f.destination_comment as comment,
                    f.pou as pou, f.step as step, f.opcode as role,
-                   '' as device_type, 0 as number, f.range_count as range_len
-            from data_flow f where f.source_device = ?
+                   '' as device_type, 0 as number, f.destination_range_len as range_len
+            from data_flow f where f.source_device = ? or
+                (f.source_device_type = ? and f.source_range_len > 1
+                 and f.source_number <= ? and ? < f.source_number + f.source_range_len)
             """,
-            (device,),
+            (device, parsed[0] if parsed else "", parsed[1] if parsed else 0, parsed[1] if parsed else 0),
         ):
             flow.setdefault(str(row["device"]), row)
 
