@@ -231,7 +231,35 @@ def normalize_finding(finding: dict[str, object]) -> dict[str, object]:
     return item
 
 
-def health_scores(findings: list[dict[str, object]]) -> dict[str, int]:
+def scored_dimensions(inconclusive: set[str]) -> set[str]:
+    """Dimensions at least one evaluated check speaks for.
+
+    A score is a claim about the project. Deducting from 100 for findings makes
+    "no findings" and "nothing ran" produce the same number, and the second one
+    then scores higher than a project that was actually examined: with one of
+    eight checks evaluated every dimension came out 100/100, above the 96 of a
+    project where seven ran and found something.
+
+    Not looking must not read as a better result than looking.
+    """
+    # Every check that speaks for a dimension has to have run. One of three
+    # is a floor, not a score, and printing it as a score is how "nothing was
+    # examined" came out as 100/100.
+    #
+    # Supplemental checks are exempt by the same decision that lets them not
+    # block the verdict: link-range needs a separately built cross-project map,
+    # and its absence should not blank a single-project diagnosis.
+    blocked: set[str] = set()
+    for check, dimensions in CHECK_DIMENSIONS.items():
+        if check in inconclusive and check not in SUPPLEMENTAL_DOCTOR_CHECKS:
+            blocked.update(dimensions)
+    return {dimension for dimension in DIMENSIONS if dimension not in blocked}
+
+
+def health_scores(
+    findings: list[dict[str, object]], inconclusive: set[str] | None = None
+) -> dict[str, int | None]:
+    """Points per dimension, or None where nothing was evaluated for it."""
     by_check: dict[str, list[dict[str, object]]] = defaultdict(list)
     for finding in findings:
         by_check[str(finding.get("check") or "")].append(finding)
@@ -241,11 +269,24 @@ def health_scores(findings: list[dict[str, object]]) -> dict[str, int]:
         check_penalty = min(raw, 35)
         for dimension in CHECK_DIMENSIONS.get(check, ("Maintainability",)):
             penalty[dimension] += check_penalty
-    return {dimension: max(0, 100 - min(penalty.get(dimension, 0), 100)) for dimension in DIMENSIONS}
+    scored = scored_dimensions(inconclusive or set())
+    return {
+        dimension: (
+            max(0, 100 - min(penalty.get(dimension, 0), 100))
+            if dimension in scored
+            else None
+        )
+        for dimension in DIMENSIONS
+    }
 
 
-def health_label(scores: dict[str, int]) -> str:
-    value = min(scores.values()) if scores else 0
+def health_label(scores: dict[str, int | None]) -> str:
+    values = [value for value in scores.values() if value is not None]
+    if not values:
+        # Nothing was evaluated, so there is no label to give. "GOOD" here was
+        # a verdict on an examination that did not happen.
+        return "NOT ASSESSED"
+    value = min(values)
     if value >= 85:
         return "GOOD"
     if value >= 70:
@@ -263,7 +304,6 @@ def build_health_report(
 ) -> dict[str, object]:
     findings = [normalize_finding(item) for items in findings_by_check.values() for item in items]
     findings.sort(key=lambda item: (-int(item["priority"]), str(item.get("check") or ""), str(item.get("device") or "")))
-    scores = health_scores(findings)
     checks: dict[str, object] = {}
     inconclusive: list[str] = []
     for name, items in findings_by_check.items():
@@ -277,6 +317,7 @@ def build_health_report(
             "by_severity": {severity: sum(1 for item in items if str(item.get("severity") or "info") == severity) for severity in severities},
             **state_dict,
         }
+    scores = health_scores(findings, set(inconclusive))
     core_inconclusive = [name for name in inconclusive if name not in SUPPLEMENTAL_DOCTOR_CHECKS]
     supplemental_inconclusive = [name for name in inconclusive if name in SUPPLEMENTAL_DOCTOR_CHECKS]
     provisional_health = health_label(scores)
@@ -351,11 +392,20 @@ def collect_project_health(
 
 def print_project_health(report: dict[str, object]) -> None:
     print(f"PROJECT HEALTH: {report['health']}  (heuristic maintainability view)")
-    if report.get("provisional_health"):
-        print(f"Provisional from evaluated core checks: {report['provisional_health']}")
+    provisional = report.get("provisional_health")
+    if provisional and provisional != "NOT ASSESSED":
+        print(f"Provisional from evaluated core checks: {provisional}")
+    elif provisional == "NOT ASSESSED":
+        print("No core check could be evaluated, so there is no health to report.")
     print("")
     for name in DIMENSIONS:
-        print(f"{name:<20} {int(report['scores'][name]):>3}/100")
+        value = report["scores"][name]
+        if value is None:
+            # No check that speaks for this dimension was evaluated. A number
+            # here would be a verdict on an examination that did not happen.
+            print(f"{name:<20}   -- (no check evaluated for this)")
+        else:
+            print(f"{name:<20} {int(value):>3}/100")
     analysis = report["analysis"]
     coverage = f"\nAnalysis coverage: {analysis['evaluated']}/{analysis['total_checks']} checks evaluated"
     if analysis["core_inconclusive"]:
