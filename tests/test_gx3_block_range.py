@@ -127,10 +127,19 @@ def test_a_search_finds_the_device_the_run_writes_without_naming() -> None:
         con.close()
 
 
+def decoder_generation(stamp: str) -> int:
+    """The number at the end of "arg-decode-N"."""
+    return int(stamp.rsplit("-", 1)[1])
+
+
 def test_the_stamp_moved_with_the_change() -> None:
     # Existing databases have no range_len, so they answer the old way; the
     # decoder version is what stops them being read as if they did.
-    assert XREF_DECODER == "arg-decode-3", XREF_DECODER
+    #
+    # Asserted as "at least", not as a literal: every later coverage change
+    # moves this stamp too, and a test that pins the exact string turns each
+    # of those into a failure that says nothing.
+    assert decoder_generation(XREF_DECODER) >= 3, XREF_DECODER
 
 
 def main() -> int:
