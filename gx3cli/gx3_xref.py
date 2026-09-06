@@ -662,16 +662,27 @@ def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sq
 
 
 def device_counts(con: sqlite3.Connection, device: str) -> dict[str, int]:
+    counts, _total = device_count_summary(con, device)
+    return counts
+
+
+def device_count_summary(con: sqlite3.Connection, device: str) -> tuple[dict[str, int], int]:
+    """Access totals overlap for `both`; raw occurrences are counted once."""
     predicate, params = device_filter(device)
     counts = {"writers": 0, "readers": 0, "refs": 0}
+    total = 0
     for row in con.execute(
         f"select access, count(*) as n from xref where {predicate} group by access", params
     ):
-        group = "writers" if row["access"] in {"write", "both"} else (
-            "readers" if row["access"] == "read" else "refs"
-        )
-        counts[group] += int(row["n"])
-    return counts
+        n = int(row["n"])
+        total += n
+        if row["access"] in {"write", "both"}:
+            counts["writers"] += n
+        if row["access"] in {"read", "both"}:
+            counts["readers"] += n
+        if row["access"] not in {"read", "write", "both"}:
+            counts["refs"] += n
+    return counts, total
 
 
 def st_symbol_rows(con: sqlite3.Connection, symbol: str) -> list[sqlite3.Row]:
@@ -752,14 +763,13 @@ def where_used(args: argparse.Namespace) -> int:
     con = open_db(args)
     try:
         rows = rows_for_device(con, device, args.limit)
-        counts = device_counts(con, device)
+        counts, total = device_count_summary(con, device)
         note = indexed_note(con, device).strip()
         st_note = st_coverage_note(con)
         symbol_rows = st_symbol_rows(con, device) if _split_device(device) is None else []
         st_info = st_coverage(con)
     finally:
         con.close()
-    total = sum(counts.values())
     truncated = len(rows) < total
     warnings = [warning for warning in (note, st_note) if warning]
     if truncated:
@@ -767,7 +777,7 @@ def where_used(args: argparse.Namespace) -> int:
                         "writers/readers may be omitted. Increase --limit or use --limit -1 for all occurrences.")
     comment = next((r["comment"] for r in rows if r["comment"]), "")
     writers = [r for r in rows if r["access"] in {"write", "both"}]
-    readers = [r for r in rows if r["access"] == "read"]
+    readers = [r for r in rows if r["access"] in {"read", "both"}]
     refs = [r for r in rows if r["access"] == "ref"]
     symbol_counts = {
         "writers": sum(1 for r in symbol_rows if r["access"] == "write"),
