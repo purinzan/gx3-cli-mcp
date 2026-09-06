@@ -8,7 +8,12 @@ import tempfile
 from pathlib import Path
 
 from gx3cli.gx3_analysis_state import not_evaluated
-from gx3cli.gx3_audit import build_health_report, collect_io_comment_gaps, finding_priority
+from gx3cli.gx3_audit import (
+    build_health_report,
+    collect_constant_chains,
+    collect_io_comment_gaps,
+    finding_priority,
+)
 from gx3cli.gx3_doctor import _project_health_args, main as doctor_main
 from gx3cli.gx3_lint import LintContext
 from gx3cli.gx3_synthetic_project import create_synthetic_project
@@ -149,6 +154,44 @@ def test_io_comment_gap_only_flags_uncommented_physical_io() -> None:
     con.close()
 
 
+def test_constant_chain_reaches_doctor_as_ranked_causal_evidence() -> None:
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli.review_gx3_project import load_comments_for_root, load_rows
+    from test_gx3_shared_reach import build_xref, write_program
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "p"
+        rungs = [
+            ("_guid/off", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("_guid/on", generate_rung({"not": {"device": "M100"}}, {"type": "coil", "device": "Y0"})[0]),
+        ]
+        write_program(root, rungs)
+        db = build_xref(root, work / "xref.sqlite")
+        comments = load_comments_for_root(root)
+        rows = load_rows(root, comments)
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            ctx = LintContext(root=root, rows=rows, comments=comments, xref=con)
+            findings = collect_constant_chains(ctx, index_db=work / "missing-lite.sqlite")
+        finally:
+            con.close()
+
+        by_device = {str(item["device"]): item for item in findings}
+        assert by_device["M100"]["constant_state"] == "ALWAYS_OFF", by_device
+        assert by_device["Y0"]["constant_state"] == "ALWAYS_ON", by_device
+        assert by_device["Y0"]["severity"] == "high", by_device["Y0"]
+        assert "SM401" in str(by_device["Y0"]["chain"]), by_device["Y0"]
+        assert "M100" in str(by_device["Y0"]["chain"]), by_device["Y0"]
+
+        report = build_health_report(root, {"constant-chain": findings}, {}, top=10)
+        y0 = next(item for item in report["top_risks"] if item["device"] == "Y0")
+        assert y0["check"] == "constant-chain", y0
+        assert y0["priority"] > finding_priority(by_device["M100"])
+        assert report["scores"]["Change safety"] < 100, report
+
+
 def test_project_health_mode_reports_incomplete_when_core_evidence_is_missing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -197,6 +240,7 @@ def main() -> None:
     test_project_health_report_ranks_and_scores_dimensions()
     test_missing_link_map_is_supplemental_not_core_incomplete()
     test_io_comment_gap_only_flags_uncommented_physical_io()
+    test_constant_chain_reaches_doctor_as_ranked_causal_evidence()
     test_project_health_mode_reports_incomplete_when_core_evidence_is_missing()
     test_project_health_mode_flag_is_removed_before_forwarding()
     print("doctor next-step and project-health checks passed")
