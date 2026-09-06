@@ -9,7 +9,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_device_name import canonical_device as _canonical_device, format_device as _format_device
+from gx3cli.gx3_device_name import (
+    canonical_device as _canonical_device,
+    format_device,
+    format_device as _format_device,
+    split_device,
+)
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_version import package_version
@@ -494,11 +499,70 @@ def expanded_terms(text: str) -> list[str]:
     return sorted(terms)
 
 
+def covering_ranges(con: sqlite3.Connection, device: str) -> list[sqlite3.Row]:
+    """Runs that reach this device without the ladder naming it.
+
+    `covered_ranges` has recorded them since block instructions were decoded,
+    and this query started from `devices`, which holds only the names the
+    ladder spells. So `query-device D402` answered "device not found" about a
+    device a BMOV four addresses earlier writes every scan -- the index knew
+    and the question could not reach it.
+    """
+    parsed = split_device(device)
+    if parsed is None:
+        return []
+    dev_type, number = parsed
+    return con.execute(
+        """
+        select device_type, start, length, access, opcode, lddb, pos
+        from covered_ranges
+        where device_type = ? and start <= ? and ? < start + length
+        order by start, pos
+        """,
+        (dev_type, number, number),
+    ).fetchall()
+
+
+def covered_summary(rows: list[sqlite3.Row]) -> list[dict[str, object]]:
+    """One entry per run, named by the run rather than by this device.
+
+    Deliberately not turned into occurrences of the device asked about: four
+    covered devices are not four occurrences, and inventing rows here would
+    make the count wrong in the other direction.
+    """
+    return [
+        {
+            "covered_by": format_device(str(row["device_type"]), int(row["start"])),
+            "run_length": int(row["length"]),
+            "access": str(row["access"] or ""),
+            "opcode": str(row["opcode"] or ""),
+            "lddb": str(row["lddb"] or ""),
+            "pos": row["pos"],
+        }
+        for row in rows
+    ]
+
+
 def query_device(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_existing(Path(args.db or default_db_path()), root_of(args))
     rec = con.execute("select * from devices where device=?", (device,)).fetchone()
+    covered = covered_summary(covering_ranges(con, device))
     if not rec:
+        if covered:
+            # Named nowhere, and reached by a run. "Not found" would be the
+            # answer for a device nothing touches, and this is not that.
+            if args.json:
+                print_json("query-device", args.root, [{"device": device, "covered_by": covered}])
+            else:
+                print(f"{device}: not named by any rung, and covered by:")
+                for item in covered:
+                    print(
+                        f"  {item['covered_by']} +{item['run_length']} {item['access']}"
+                        f" {item['opcode']} {item['lddb']}:{item['pos']}"
+                    )
+            con.close()
+            return 0
         if args.json:
             print_json("query-device", args.root, [])
         else:
@@ -529,6 +593,7 @@ def query_device(args: argparse.Namespace) -> int:
                     "condition_uses": rec["condition_uses"],
                     "roles": rec["roles"],
                     "external": row_dict(ext) if ext else None,
+                    "covered_by": covered,
                     "drivers": [row_dict(row) for row in rows],
                     "conditions": [
                         row_dict(row)
