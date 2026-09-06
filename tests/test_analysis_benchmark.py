@@ -24,7 +24,8 @@ def main() -> int:
     assert len(report["samples"]) == len(CASES), report
     for sample in report["samples"]:
         assert sample["trace_truncated"] is False, sample
-        for phase in ("cold_build", "warm_query", "trace"):
+        assert sample["dependency_flow_truncated"] is False, sample
+        for phase in ("cold_build", "warm_query", "trace", "dependency_flow"):
             values = sample[phase]
             assert values["sql_statements"] > 0 and values["sqlite_opens"] > 0, values
             assert values["wall_seconds"] > 0 and values["python_peak_bytes"] > 0, values
@@ -36,6 +37,8 @@ def main() -> int:
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample
+        assert sample["dependency_flow"]["load_rows"] == 1, sample
+        assert sample["dependency_flow"]["load_comments"] == 1, sample
     print("synthetic benchmark determinism and instrumentation checks passed")
     return 0
 

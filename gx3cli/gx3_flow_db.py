@@ -18,12 +18,10 @@ from gx3cli.gx3_xref import open_xref_db
 
 
 def validated_xref(path: Path, root: Path) -> Path:
-    """Return an existing xref only after proving which project built it.
+    """Legacy one-time probe, not a guarantee that the path stays unchanged.
 
-    The flow readers themselves intentionally know only SQLite/data_flow. The
-    project-aware boundary is here, where both the chosen root and xref path are
-    available. A stale or swapped xref must be rejected before those readers can
-    combine its value edges with another project's ladder.
+    Internal consumers validate on the transaction that reads their facts.
+    Keep this helper for callers that explicitly need a probe.
     """
     if not path.exists():
         return path
@@ -33,13 +31,14 @@ def validated_xref(path: Path, root: Path) -> Path:
 
 
 def flow_xref_db(args: argparse.Namespace, root: Path) -> Path | None:
+    """Select a path only; the reader validates and pins its actual connection."""
     named = getattr(args, "xref_db", "") or ""
     if named:
-        return validated_xref(Path(named), root)
+        return Path(named)
     try:
         from gx3cli.gx3_workspace import locate
 
         artefact = locate(root).xref
     except Exception:
         return None
-    return validated_xref(artefact.path, root) if artefact.usable else None
+    return artefact.path if artefact.path.exists() else None

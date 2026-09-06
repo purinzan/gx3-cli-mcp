@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+dependency-flow / graphの値フローは、実際に使うSQLite読取りトランザクション内で
+入力・版・基本構造を照合します。パスを選んだ時点の検証結果を再利用しません。
+`value_flow_analysis`は保存LD値フローの評価範囲を表し、未取得/必要表欠損を未評価、
+STや動的範囲を一部解析として残します。未確定範囲のedgeは`span_uncertain`を持ち、
+図にも`range unresolved`を表示します。これは解析中の全projectファイルの変更を
+防ぐ仕組みや、値フロー以外の解析全体の完全性を保証するものではありません。
+
 root付きのxref/lite照会は、版と入力指紋に加えて用途に必要な表・列も検証します。
 欠損時は再構築を案内し、workspaceのprepareは壊れた側の索引だけを再構築します。
 xrefの基本照会に値フロー表は必須ではありません。外部境界のみを読む処理も、その表の

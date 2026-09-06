@@ -140,6 +140,8 @@ def sample(checkout: Path, case: str, warm_queries: int) -> dict:
     from gx3cli import gx3_input_identity, gx3_trace_state, gx3_xref
     from gx3cli.gx3_workspace import prepare
     from gx3cli.trace_gx3_device_dependencies import build_trace
+    from gx3cli.gx3_dependency_flow import build_flow
+    from gx3cli.gx3_flow_db import flow_xref_db
 
     codes = {
         gx3_trace_state.load_rows.__code__: "load_rows",
@@ -174,9 +176,19 @@ def sample(checkout: Path, case: str, warm_queries: int) -> dict:
                 include_reset=True, strict_logic=True), codes)
             if trace.get("target", {}).get("device") != target:
                 raise RuntimeError("benchmark trace returned a different target")
+            def dependency_flow():
+                selected = flow_xref_db(argparse.Namespace(xref_db=str(workspace.xref.path)), root)
+                return build_flow(root, target, max_devices=WIDTH + 8, include_reset=True,
+                                  expand_bit_groups=False, xref_db=selected)
+
+            flow, flow_stats = measure(dependency_flow, codes)
+            if flow.get("target", {}).get("device") != target:
+                raise RuntimeError("benchmark value flow returned a different target")
             return {"case": case, "fixture_sha256": fixture_sha, "warm_queries": warm_queries,
                     "trace_truncated": trace.get("truncated"),
-                    "cold_build": cold, "warm_query": query_stats, "trace": trace_stats}
+                    "dependency_flow_truncated": flow.get("truncated"),
+                    "cold_build": cold, "warm_query": query_stats, "trace": trace_stats,
+                    "dependency_flow": flow_stats}
         finally:
             os.chdir(previous)
 
@@ -206,7 +218,7 @@ def main() -> int:
             ], text=True, encoding="utf-8", capture_output=True, check=True)
             samples.append(json.loads(process.stdout))
     revision = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
-    print(json.dumps({"schema": "gx3-analysis-benchmark-v1", "revision": revision,
+    print(json.dumps({"schema": "gx3-analysis-benchmark-v2", "revision": revision,
                       "python": platform.python_version(), "platform": platform.platform(),
                       "fixture_version": 1, "width": WIDTH, "span": SPAN,
                       "memory_scope": "Python peak per phase; process peak RSS cumulative since worker start on macOS/Linux, null elsewhere",

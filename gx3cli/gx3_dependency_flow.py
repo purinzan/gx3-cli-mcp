@@ -28,6 +28,7 @@ from gx3cli.gx3_ladder_logic import (
     row_logic_analysis,
 )
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_analysis_state import AnalysisState, PARTIAL, SEMANTICS, checked, not_evaluated, worst
 
 
 def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) -> str:
@@ -137,7 +138,12 @@ def dependency_refs_for_output(row: LadderRow, output: FlowElement) -> list[tupl
     return refs
 
 
-def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
+def value_sources(xref_db: Path | None, root: Path | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Compatibility projection; build_flow also exposes the capability state."""
+    return _value_sources_with_state(xref_db, root)[0]
+
+
+def _value_sources_with_state(xref_db: Path | None, root: Path | None) -> tuple[dict[str, list[dict[str, Any]]], AnalysisState]:
     """Which device a value came from, keyed by where it arrived.
 
     The walk below follows contacts and coils: what turns this bit on. A word
@@ -148,20 +154,26 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
     reason this argument exists.
     """
     if xref_db is None or not Path(xref_db).exists():
-        return {}
+        return {}, not_evaluated("value-flow xref not supplied or not found", "build xref for this project")
     try:
-        con = sqlite3.connect(f"file:{xref_db}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-    except sqlite3.Error:
-        return {}
+        if root is not None:
+            from gx3cli.gx3_xref import open_xref_db
+
+            con = open_xref_db(Path(xref_db), read_only=True, root=root, snapshot=True)
+        else:
+            con = sqlite3.connect(f"file:{xref_db}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+    except sqlite3.Error as exc:
+        return {}, not_evaluated(f"value-flow xref cannot be opened: {exc}", "rebuild xref for this project")
     try:
         rows = con.execute(
             "select source_device, destination_device, opcode, pou, step, range_count, "
             "source_range_len, destination_range_len, source_detail, destination_detail, "
             "read_modify_write from data_flow"
         ).fetchall()
-    except sqlite3.Error:
-        return {}
+        st_present = bool(con.execute("select count(*) from st_sources").fetchone()[0]) if root is not None else False
+    except sqlite3.Error as exc:
+        return {}, not_evaluated(f"stored value-flow capability unavailable: {exc}", "rebuild xref for this project")
     finally:
         con.close()
 
@@ -177,6 +189,8 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
             "destination_range_len": int(row["destination_range_len"]),
             "source_detail": row["source_detail"],
             "destination_detail": row["destination_detail"],
+            "destination_base": row["destination_device"],
+            "span_uncertain": int(row["source_range_len"]) <= 0 or int(row["destination_range_len"]) <= 0,
             "read_modify_write": bool(row["read_modify_write"]),
         }
         destination = str(row["destination_device"])
@@ -189,7 +203,18 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
         # the BMOV above it fills every scan.
         for member in _run_members(destination, record["destination_range_len"]):
             found.setdefault(member, []).append(record)
-    return found
+    states = [checked({"scope": "stored LD value edges", "project_verified": root is not None})]
+    if st_present:
+        states.append(AnalysisState(PARTIAL, stage=SEMANTICS,
+            reason="ST references are indexed, but ST value flow is not inferred",
+            next_step="inspect the ST source in GX Works3"))
+    if any(int(row["source_range_len"]) <= 0 or int(row["destination_range_len"]) <= 0 for row in rows):
+        states.append(AnalysisState(PARTIAL, stage=SEMANTICS,
+            reason="dynamic or indexed value-flow spans have unknown endpoints",
+            next_step="inspect runtime count/index values before concluding reachability"))
+    state = worst(states)
+    state.detail = {**state.detail, "scope": "stored LD value edges", "project_verified": root is not None}
+    return found, state
 
 
 def _run_members(device: str, length: int) -> list[str]:
@@ -215,7 +240,7 @@ def build_flow(
     drivers = driver_index(rows, include_reset=include_reset)
     target = normalize_device(target_device)
 
-    sources = value_sources(xref_db)
+    sources, value_state = _value_sources_with_state(xref_db, root)
     queue: deque[tuple[str, int]] = deque([(target, 0)])
     visited: set[str] = set()
     truncated = False
@@ -256,8 +281,12 @@ def build_flow(
                     "from": source["device"],
                     "to": device,
                     "kind": "value",
-                    "label": source["opcode"],
+                    "label": source["opcode"] + (" (range unresolved)" if source["span_uncertain"] else ""),
                     "opcode": source["opcode"],
+                    "source_range_len": source["source_range_len"],
+                    "destination_range_len": source["destination_range_len"],
+                    "destination_base": source["destination_base"],
+                    "span_uncertain": source["span_uncertain"],
                     "position": f"{source['pou']}:{source['step']}",
                 }
             )
@@ -362,6 +391,7 @@ def build_flow(
         "max_devices": max_devices,
         "truncated": truncated,
         "truncated_reasons": sorted(truncated_reasons),
+        "value_flow_analysis": value_state.as_dict(),
         "stats": {
             "devices": len(devices),
             "traced_devices": len(visited),
@@ -417,6 +447,11 @@ def row_node_label(row: dict[str, Any], label_width: int) -> str:
 
 def format_mermaid(flow: dict[str, Any], label_width: int = 48) -> str:
     lines = ["flowchart TD"]
+    value_state = flow.get("value_flow_analysis", {})
+    if value_state and value_state.get("state") != "checked":
+        label = mermaid_label(f"Value flow: {value_state.get('state', 'not_evaluated')}")
+        lines.extend([f'  VF_SCOPE["{label}"]',
+                      "  style VF_SCOPE fill:#fff8e1,stroke:#b8860b"])
     target_device = flow["target"]["device"]
     device_ids: dict[str, str] = {}
     row_ids: dict[str, str] = {}
@@ -479,6 +514,8 @@ def format_markdown(flow: dict[str, Any], label_width: int = 48) -> str:
         "- Device -> row: the device is used as a condition or instruction operand on the path to that row output.",
         "- Row -> device: the row drives that coil/output.",
         "- Dashed-looking gray terminal nodes have no upstream coil driver in the parsed ladder data.",
+        f"- Value-flow scope: {flow.get('value_flow_analysis', {}).get('state', 'not reported')} — "
+        f"{flow.get('value_flow_analysis', {}).get('reason', 'stored LD value edges only')}",
         "",
         "```mermaid",
         format_mermaid(flow, label_width=label_width),
