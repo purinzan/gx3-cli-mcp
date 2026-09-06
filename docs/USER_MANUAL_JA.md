@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+dead-logicの`unwritten-contact`は「索引に物理writerが見つからない」という観測です。
+旧`const-off-contact` / `always-on-contact`のようにA/B接点の値を断定しません。
+CSVの`contact_role`はa/b、`analysis_state`はpartial、定数値は空欄です。
+初期値・保持値・未解析領域・外部書込みを確認する必要があり、sidecarの
+`unwritten_contact_analysis`にその制約を残します。範囲内writerも共通readerで数えます。
+これは通常OUTからの定数伝播の証明条件すべてを解決する変更ではありません。
+
 root付きのxref/lite照会は、版と入力指紋に加えて用途に必要な表・列も検証します。
 欠損時は再構築を案内し、workspaceのprepareは壊れた側の索引だけを再構築します。
 xrefの基本照会に値フロー表は必須ではありません。外部境界のみを読む処理も、その表の

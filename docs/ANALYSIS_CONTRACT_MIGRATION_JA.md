@@ -33,6 +33,11 @@
 
 ## 共通基盤の変更と残り
 
+dead-logicのwriter未検出接点は、物理memberを含むcounts_forで照会し、
+値不明のunwritten-contactとして表示する。未書込みからA/Bの常時値を推定しない。
+外部境界が確認済みでも初期値・保持値・未解析writerの不存在証明にはならない。
+通常OUT定数伝播における未解析writer/実行保証の受入は引き続き残る。
+
 - #155（統合済み）: covered writer、bothのread/write集計。完全な実行時定数の証明ではない。
 - #157（統合済み）: source/destination別span保存、xref decoder更新。全要素の一対一対応は主張しない。
 - #158（台帳作成中に統合済み）: STDB/DM/module/config等の入力指紋依存、manifest版更新。
