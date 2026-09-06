@@ -376,6 +376,49 @@ def test_the_walk_matches_a_device_inside_a_recorded_run() -> None:
         assert "D888" not in past_end, "a device past the end of the run was matched"
 
 
+def query_count_for_chain(length: int) -> tuple[int, int]:
+    """Return SELECT count and expanded-device count for a simple reach chain."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        rungs: list[tuple[str, str]] = []
+        source = 1
+        for index in range(length):
+            destination = 100 + index
+            rungs.append((f"_guid/query-budget-{index}", coil("a", source, destination)))
+            source = destination
+
+        write_program(work / "p", rungs)
+        db = build_xref(work / "p", work / "x.sqlite")
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        selects: list[str] = []
+        con.set_trace_callback(
+            lambda sql: selects.append(sql)
+            if sql.lstrip().upper().startswith("SELECT")
+            else None
+        )
+        try:
+            walked = reach(con, "M1", max_depth=length + 2, max_nodes=length + 2)
+        finally:
+            con.set_trace_callback(None)
+            con.close()
+
+        assert len(walked.steps) == length, (length, len(walked.steps))
+        assert not walked.truncated, walked.stopped
+        return len(selects), len(walked.steps) + 1
+
+
+def test_shared_reach_query_count_scales_linearly() -> None:
+    """Four times the graph must not become a quadratic SQL rescan."""
+    small_queries, small_expanded = query_count_for_chain(8)
+    large_queries, large_expanded = query_count_for_chain(32)
+
+    assert large_expanded == small_expanded * 4 - 3, (small_expanded, large_expanded)
+    assert small_queries <= 4 * small_expanded + 4, (small_queries, small_expanded)
+    assert large_queries <= 4 * large_expanded + 4, (large_queries, large_expanded)
+    assert large_queries <= small_queries * 5, (small_queries, large_queries)
+
+
 def main() -> int:
     test_a_block_write_is_followed_through_the_middle_of_its_run()
     test_a_reordered_pair_of_rungs_is_a_change()
@@ -389,6 +432,7 @@ def main() -> int:
     test_a_fill_does_not_get_its_source_expanded()
     test_a_write_covering_a_run_is_followed_across_the_whole_run()
     test_the_walk_matches_a_device_inside_a_recorded_run()
+    test_shared_reach_query_count_scales_linearly()
     print("shared reach checks passed")
     return 0
 
