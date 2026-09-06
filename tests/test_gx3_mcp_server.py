@@ -41,6 +41,17 @@ def test_ladder_and_device_tools_restate_the_rules() -> None:
     assert "comment" in by_name["gx3_trace_device"]
 
 
+def test_alarm_tool_does_not_invent_a_power_cycle_requirement() -> None:
+    tools = handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    assert tools is not None
+    by_name = {tool["name"]: tool["description"] for tool in tools["result"]["tools"]}
+    description = by_name["gx3_alarm_map"]
+    assert "plain OUT clears when its enable logic goes false" in description
+    assert "SET-latched alarms require a reset path" in description
+    assert "Do not infer a power-cycle requirement" in description
+    assert "cannot be cleared without a power cycle" not in description
+
+
 def test_mcp_rejects_mutating_command() -> None:
     response = handle(
         {
@@ -75,6 +86,7 @@ def main() -> int:
     test_mcp_initialize_and_tool_list()
     test_initialize_carries_the_answer_rules()
     test_ladder_and_device_tools_restate_the_rules()
+    test_alarm_tool_does_not_invent_a_power_cycle_requirement()
     test_mcp_rejects_mutating_command()
     test_mcp_rejects_local_state_command()
     print("MCP server checks passed")
