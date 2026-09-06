@@ -54,7 +54,7 @@ CHECK_BOOST = {
     "link-range": 28,
     "alarm-quality": 14,
     "io-comment-gap": 12,
-    "constant-chain": 20,
+    "constant-chain": 30,
     "comment-conflict": 6,
     "unused-device": 0,
 }
@@ -76,7 +76,7 @@ WHY = {
     "comment-conflict": "duplicate or conflicting comment text can lead a maintainer to the wrong device",
     "link-range": "a communication receive/link device is also written locally, obscuring the true value owner",
     "io-comment-gap": "a physical I/O address has no project comment, so its field meaning is not recoverable from the project alone",
-    "constant-chain": "a control device or physical output is provably stuck ON/OFF through ordinary ladder logic, so downstream branches may never behave as a maintainer expects",
+    "constant-chain": "a physical output is statically forced to one state through a cross-rung constant chain; this may be intentional disablement or legacy logic, but it changes what can ever operate",
 }
 NEXT_REVIEW = {
     "duplicate-coil": "review every writer and execution order before changing this output",
@@ -86,7 +86,7 @@ NEXT_REVIEW = {
     "comment-conflict": "compare each cited rung and repair comments only after device identity is confirmed",
     "link-range": "verify partner PLC/link-refresh ownership before changing the local writer",
     "io-comment-gap": "identify the field signal from drawings/I/O lists and add a project comment before modification",
-    "constant-chain": "review the full causal chain and every affected A/B contact before changing or deleting the cited logic",
+    "constant-chain": "review the root constant and every rung in the causal chain; verify that the permanent output state is intentional before modification",
 }
 
 
@@ -131,22 +131,37 @@ def collect_constant_chains(
     index_db: Path,
     refresh_csv: str = "",
 ) -> list[dict[str, object]]:
-    """Turn dead-logic's proven constants into ranked Doctor evidence.
+    """Promote proven physical-output constant chains into Doctor Top risks.
 
-    One Doctor finding represents one proven constant device/output. Contact
-    consequences are summarized onto that finding instead of emitting a row for
-    every A/B use, which keeps Top risks actionable on large projects.
+    Detailed internal M/L/B device and contact findings stay in dead-logic. The
+    Doctor view stays selective and ranks the project-wide consequence: a
+    physical Y that the saved project can prove will always be ON or OFF.
     """
     if ctx.xref is None:
-        ctx.cannot_evaluate(
+        return ctx.cannot_evaluate(
             "constant-chain",
             "no cross-reference database",
             "gx3-cli xref build --root <project>",
         )
-        return []
+    if ctx.lite is None or not index_db.exists():
+        return ctx.cannot_evaluate(
+            "constant-chain",
+            "external/HMI/communication boundary evidence is unavailable from index-lite",
+            "gx3-cli index-lite build --root <project>",
+        )
 
     externals = load_external_devices(index_db)
-    refresh_areas = load_refresh_areas(Path(refresh_csv)) if refresh_csv else []
+    refresh_areas: list = []
+    if refresh_csv:
+        refresh_path = Path(refresh_csv)
+        if not refresh_path.exists():
+            return ctx.cannot_evaluate(
+                "constant-chain",
+                f"communication refresh-area evidence is unavailable: {refresh_path}",
+                "rebuild the communication map or pass the correct --refresh-csv",
+            )
+        refresh_areas = load_refresh_areas(refresh_path)
+
     _facts, propagated = propagate_constant_devices(
         ctx.rows,
         ctx.xref,
@@ -154,46 +169,28 @@ def collect_constant_chains(
         refresh_areas=refresh_areas,
     )
 
-    contact_effects: dict[str, dict[str, int]] = defaultdict(lambda: {"dead": 0, "redundant": 0})
-    for item in propagated:
-        category = str(item.get("category") or "")
-        device = str(item.get("device") or "")
-        if not device:
-            continue
-        if category == "dead-contact":
-            contact_effects[device]["dead"] += 1
-        elif category == "redundant-contact":
-            contact_effects[device]["redundant"] += 1
-
     findings: list[dict[str, object]] = []
     for item in propagated:
-        category = str(item.get("category") or "")
-        if category not in {"constant-output", "constant-device"}:
+        if str(item.get("category") or "") != "constant-output":
             continue
         device = str(item.get("device") or "")
-        effects = contact_effects.get(device, {"dead": 0, "redundant": 0})
+        if not device.startswith("Y"):
+            continue
         state = str(item.get("constant_state") or "")
-        depth = int(item.get("chain_depth") or 0)
-        severity = "high" if category == "constant-output" else ("medium" if depth >= 2 else "low")
-        effect_text = (
-            f"; downstream contacts: {effects['dead']} always-false, "
-            f"{effects['redundant']} always-true"
-        )
+        chain = str(item.get("chain") or "")
         findings.append(
             {
                 "check": "constant-chain",
-                "severity": severity,
+                "severity": "high",
                 "device": device,
                 "comment": str(item.get("comment") or ""),
-                "count": 1 + effects["dead"] + effects["redundant"],
+                "count": 1,
                 "locations": str(item.get("where") or ""),
-                "detail": f"{device} is proven {state}{effect_text}",
+                "detail": f"{device} is proven {state} through a static constant chain",
                 "constant_state": state,
-                "chain": str(item.get("chain") or ""),
-                "chain_depth": depth,
+                "chain": chain,
+                "chain_depth": int(item.get("chain_depth") or 0),
                 "roots": str(item.get("roots") or ""),
-                "dead_contacts": effects["dead"],
-                "redundant_contacts": effects["redundant"],
                 "review_note": NEXT_REVIEW["constant-chain"],
             }
         )
