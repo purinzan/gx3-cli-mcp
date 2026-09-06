@@ -6,10 +6,10 @@ import argparse
 import io
 import json
 import platform
+import re
 import subprocess
 import sys
 import time
-import re
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -56,16 +56,16 @@ def run_cli_text(args: list[str], root: Path) -> str:
 
 
 # File names this format fixes. They say nothing about the customer, and
-# keeping them is what makes the inventory useful: a missing UnitConfig.dat
-# or a project with no *_LDDB.db is the diagnosis.
+# keeping them is what makes the inventory useful: a missing UnitConfig.dat,
+# SourceInfo.CAB or *_LDDB.db is itself diagnostic evidence.
 #
-# Only whole names, never a suffix with anything in front of it. A `.w3pa`
+# Only whole names, never a suffix with something in front of it. A `.w3pa`
 # is a format-defined kind of file and `ProjectFalcon.w3pa` is a customer's
 # project name -- the first version of this kept the second because it
 # matched on the extension, and the name went straight into the bundle.
 FORMAT_NAMES = re.compile(
     r"^(UnitConfig\.dat|LabelData\.db|CPU\.PRM|UNIT\.PRM|SYSTEM\.PRM"
-    r"|ConvertData|SourceInfo|_Project\.txc"
+    r"|ConvertData|SourceInfo|SourceInfo\.CAB|_Project\.txc"
     r"|[0-9A-Fa-f]+_(LDDB|DC|MilDB|StepInfo|DM|FBDDB|STDB)\.db"
     r"|[0-9]+\.db)$"
 )
@@ -142,10 +142,34 @@ def add_json(zf: zipfile.ZipFile, name: str, data: object, redact: Any) -> None:
     add_text(zf, name, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", redact)
 
 
+def add_structural_json(
+    zf: zipfile.ZipFile,
+    name: str,
+    data: object,
+    table: RedactionMap,
+) -> None:
+    """Write data that has already been structurally pseudonymized.
+
+    `project_inventory()` does not contain free-form project names: every
+    user-controlled path component has already become DIR_nnnn / FILE_nnnn.
+    Running that result through the generic text redactor a second time is not
+    safer; it rewrites the stand-ins and format-defined names such as CPU.PRM
+    or 001_LDDB.db, destroying the diagnostic information the structural pass
+    deliberately retained.
+
+    We still run the leak assertion. If a CJK/IP/known secret reaches this
+    boundary despite the structural rules, fail the bundle instead of silently
+    publishing it.
+    """
+    payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    assert_no_leaks(payload, table)
+    zf.writestr(name, payload.encode("utf-8"))
+
+
 def build_bundle(root: Path, out: Path) -> Path:
     root = resolve_project_root(root)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _table, redact = redactor(root)
+    table, redact = redactor(root)
     manifest = {
         "bundle_schema": 1,
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -158,7 +182,9 @@ def build_bundle(root: Path, out: Path) -> Path:
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         add_json(zf, "manifest.json", manifest, redact)
         add_text(zf, "doctor.txt", run_cli_text(["doctor", "--root", str(root), "--warn-only"], root), redact)
-        add_json(zf, "project_inventory_redacted.json", project_inventory(root), redact)
+        # The inventory has its own structural anonymization boundary. Do not
+        # feed it back through the generic token redactor afterwards.
+        add_structural_json(zf, "project_inventory_redacted.json", project_inventory(root), table)
         add_json(zf, "parse_gap_summary_redacted.json", parse_gap_summary(root), redact)
         add_text(
             zf,
