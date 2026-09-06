@@ -514,33 +514,51 @@ def covering_ranges(con: sqlite3.Connection, device: str) -> list[sqlite3.Row]:
     dev_type, number = parsed
     return con.execute(
         """
-        select device_type, start, length, access, opcode, lddb, pos
+        select device_type, start, length, (? - start) as run_offset,
+               access, opcode, lddb, pos
         from covered_ranges
         where device_type = ? and start <= ? and ? < start + length
         order by start, pos
         """,
-        (dev_type, number, number),
+        (number, dev_type, number, number),
     ).fetchall()
 
 
 def covered_summary(rows: list[sqlite3.Row]) -> list[dict[str, object]]:
-    """One entry per run, named by the run rather than by this device.
+    """One entry per run, preserving where the queried member sits in it.
 
     Deliberately not turned into occurrences of the device asked about: four
     covered devices are not four occurrences, and inventing rows here would
-    make the count wrong in the other direction.
+    make the count wrong in the other direction. `run_offset` keeps the same
+    named-versus-covered distinction as xref_members: zero is the operand the
+    ladder names, a positive offset is a member reached by that run.
     """
-    return [
-        {
-            "covered_by": format_device(str(row["device_type"]), int(row["start"])),
-            "run_length": int(row["length"]),
-            "access": str(row["access"] or ""),
-            "opcode": str(row["opcode"] or ""),
-            "lddb": str(row["lddb"] or ""),
-            "pos": row["pos"],
-        }
-        for row in rows
-    ]
+    out: list[dict[str, object]] = []
+    for row in rows:
+        run_offset = int(row["run_offset"])
+        out.append(
+            {
+                "covered_by": format_device(str(row["device_type"]), int(row["start"])),
+                "run_offset": run_offset,
+                "run_length": int(row["length"]),
+                "match_kind": "named" if run_offset == 0 else "covered",
+                "access": str(row["access"] or ""),
+                "opcode": str(row["opcode"] or ""),
+                "lddb": str(row["lddb"] or ""),
+                "pos": row["pos"],
+            }
+        )
+    return out
+
+
+def print_covered_ranges(covered: list[dict[str, object]]) -> None:
+    print("Covered ranges:")
+    for item in covered:
+        print(
+            f"  {item['covered_by']} offset={item['run_offset']} length={item['run_length']}"
+            f" {item['match_kind']} {item['access']} {item['opcode']}"
+            f" {item['lddb']}:{item['pos']}"
+        )
 
 
 def query_device(args: argparse.Namespace) -> int:
@@ -555,12 +573,8 @@ def query_device(args: argparse.Namespace) -> int:
             if args.json:
                 print_json("query-device", args.root, [{"device": device, "covered_by": covered}])
             else:
-                print(f"{device}: not named by any rung, and covered by:")
-                for item in covered:
-                    print(
-                        f"  {item['covered_by']} +{item['run_length']} {item['access']}"
-                        f" {item['opcode']} {item['lddb']}:{item['pos']}"
-                    )
+                print(f"{device}: not named by any rung")
+                print_covered_ranges(covered)
             con.close()
             return 0
         if args.json:
@@ -621,6 +635,9 @@ def query_device(args: argparse.Namespace) -> int:
             f"{ext['source_kind']} / {ext['semantic_group']} / {ext['source_detail']} "
             f"{ext['refresh_device_range'] or ext['source_unit_area']}"
         )
+    if covered:
+        print("")
+        print_covered_ranges(covered)
     print("")
     print("Driver rows:")
     print_rows(rows, ["role", "lddb", "pos", "title", "row_conditions"])
