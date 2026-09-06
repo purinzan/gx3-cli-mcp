@@ -1,32 +1,26 @@
 from __future__ import annotations
 
-"""MC/MCR master-control zone reconstruction and conditional-jump indexing.
+"""Project-level ladder execution context: MC/MCR, jumps, and CALL scopes.
 
-GX Works3 executes rungs between ``MC N M`` and ``MCR N`` only while the MC
-input condition is true. ``enable_logic_for_output`` models a single rung, so
-without this module every coil inside an MC zone reports an ON condition that
-is missing the master condition entirely.
+``enable_logic_for_output`` answers one rung's local topology. This module adds
+execution context that lives outside that rung:
 
-``build_mc_zones`` scans each LDDB in pos order, reconstructs the open/close
-ranges per nesting level, and stores the MC instruction's own enable logic as
-the zone condition. Rows inside a zone must AND that condition (all nesting
-levels stack, so a row inside nested zones gets every active zone condition).
+- MC/MCR zones: rows execute only while every active master condition is true.
+- CJ/SCJ/GOEND: targets are still unresolved, so affected rows are surfaced as
+  execution-uncertain instead of pretending the local rung is the whole answer.
+- CALL: a statically resolved same-program P pointer runs from P through RET.
+  The call-site enable predicate is therefore part of every write in that
+  subroutine. Multiple call sites are OR alternatives; nested CALLs compose the
+  caller invocation with the nested call-site condition.
 
-``build_jump_index`` records CJ/SCJ/GOEND sites. Their jump targets (pointer
-P labels) are not resolved, so rows after a conditional jump only receive a
-warning that execution is not guaranteed - the jump condition is NOT folded
-into enable logic.
-
-Known limits:
-- The first argument of MC/MCR is the nesting number N; the intermediate
-  decoder mis-types it with the row's default device type, so the nesting is
-  read positionally from the raw argument and the relay is the last device.
-- An MCR with an unreadable N closes every open zone (conservative for the
-  common single-level case; nested projects should verify manually).
+ECALL deliberately stays conservative until its program-file operand can be
+mapped to the exact program/LDDB from project evidence. Duplicate pointers,
+missing RET, ECALL targets and recursive/cyclic invocation are likewise kept as
+explicit unresolved execution context rather than guessed.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
@@ -43,15 +37,18 @@ from gx3cli.gx3_ladder_logic import (
     and_logic,
     enable_logic_for_output,
     logic_to_text,
+    or_logic,
     parse_pos,
     positioned_elements,
 )
+from gx3cli.gx3_ladder_print import parse_pointers, parse_rung
 from gx3cli.review_gx3_project import LadderRow
 
 
 MC_OPS = {"MC"}
 MCR_OPS = {"MCR"}
 JUMP_OPS = {"CJ", "SCJ", "GOEND"}
+CALL_OPS = {"CALL", "ECALL"}
 CONTROL_OPS = MC_OPS | MCR_OPS | JUMP_OPS
 
 
@@ -64,18 +61,25 @@ class McZone:
     condition: dict[str, Any]
     condition_text: str
     end_pos: int | None = None
+    kind: str = "mc"
+    pointer: int | None = None
 
     def contains(self, pos: int) -> bool:
         return self.start_pos < pos and (self.end_pos is None or pos < self.end_pos)
 
     def summary(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "nesting": self.nesting,
             "relay": self.relay,
             "start_pos": self.start_pos,
             "end_pos": self.end_pos,
             "condition_text": self.condition_text,
         }
+        if self.kind != "mc":
+            out["kind"] = self.kind
+        if self.pointer is not None:
+            out["pointer"] = self.pointer
+        return out
 
 
 @dataclass
@@ -84,20 +88,71 @@ class JumpSite:
     pos: int
     opcode: str
     condition_text: str
+    start_pos: int | None = None
+    end_pos: int | None = None
+    reason: str = ""
+
+    def applies(self, pos: int) -> bool:
+        if self.start_pos is not None:
+            return self.start_pos <= pos and (self.end_pos is None or pos < self.end_pos)
+        return self.pos < pos
 
     def summary(self) -> dict[str, Any]:
-        return {"pos": self.pos, "opcode": self.opcode, "condition_text": self.condition_text}
+        out: dict[str, Any] = {
+            "pos": self.pos,
+            "opcode": self.opcode,
+            "condition_text": self.condition_text,
+        }
+        if self.reason:
+            out["reason"] = self.reason
+        if self.start_pos is not None:
+            out["scope_start_pos"] = self.start_pos
+            out["scope_end_pos"] = self.end_pos
+        return out
+
+
+@dataclass(frozen=True)
+class SubroutineScope:
+    lddb: str
+    pointer: int
+    start_pos: int
+    end_pos: int
+    complete: bool = True
+    reason: str = ""
+
+    @property
+    def key(self) -> tuple[str, int, int]:
+        return (self.lddb, self.pointer, self.start_pos)
+
+    def contains(self, pos: int) -> bool:
+        return self.start_pos <= pos < self.end_pos
+
+
+@dataclass
+class CallSite:
+    lddb: str
+    pos: int
+    opcode: str
+    pointer: int | None
+    condition: dict[str, Any]
+    condition_text: str
+    target_keys: list[tuple[str, int, int]] = field(default_factory=list)
+
+
+@dataclass
+class CallContext:
+    zones: dict[str, list[McZone]] = field(default_factory=dict)
+    unresolved: dict[str, list[JumpSite]] = field(default_factory=dict)
 
 
 def inferred_label_resolver(rows: list[LadderRow]) -> LabelResolver | None:
     """Recover label names already resolved on the row occurrence boundary.
 
-    `trace-device` resolves LABEL occurrences before it asks this module to
-    reconstruct MC/CJ execution context. Older callers pass only rows, while
-    newer callers may pass the resolver explicitly. Re-reading LabelData here
-    would duplicate project discovery and a module-global resolver would leak
-    across MCP analyses, so the fallback uses only evidence already attached to
-    the rows.
+    `trace-device` resolves LABEL occurrences before it asks this module for
+    control-flow context. Older callers pass only rows, while newer callers may
+    pass the resolver explicitly. Re-reading LabelData here would duplicate
+    project discovery and a module-global resolver would leak across MCP
+    analyses, so the fallback uses only evidence already attached to the rows.
 
     Header label tokens and decoded LABEL occurrences are produced by the same
     canonical operation walk and therefore keep the same order. A still-raw
@@ -120,14 +175,7 @@ def inferred_label_resolver(rows: list[LadderRow]) -> LabelResolver | None:
 def control_elements(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> list[tuple[FlowElement, str]]:
-    """(FlowElement, raw element text) pairs for MC/MCR/jump ops in one row.
-
-    Raw text is needed because the nesting argument N is not decodable as a
-    device: it is read positionally with DEVICE_ARG_RE. The same label resolver
-    used by the project-level trace is passed into the canonical topology walk;
-    otherwise a label contact controlling MC/CJ would quietly fall back to its
-    raw ``_lid/...`` token while ordinary driver rows used the label name.
-    """
+    """(FlowElement, raw element text) pairs for MC/MCR/jump ops in one row."""
     header_ops = parse_header_ops(row.data)
     if not any(hop.op in CONTROL_OPS for hop in header_ops):
         return []
@@ -162,10 +210,9 @@ def mc_relay_device(element: FlowElement) -> str:
     return ""
 
 
-def build_mc_zones(
-    rows: list[LadderRow], labels: LabelResolver | None = None
+def _build_master_zones(
+    rows: list[LadderRow], labels: LabelResolver | None
 ) -> dict[str, list[McZone]]:
-    labels = labels or inferred_label_resolver(rows)
     by_lddb: dict[str, list[LadderRow]] = defaultdict(list)
     for row in rows:
         by_lddb[row.lddb].append(row)
@@ -216,6 +263,284 @@ def apply_zone_conditions(logic: dict[str, Any], zones: list[McZone]) -> dict[st
     return and_logic([*zone_condition_terms(zones), logic])
 
 
+def _pointer_definitions(rows: list[LadderRow]) -> dict[tuple[str, int], list[int]]:
+    found: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for row in rows:
+        for pointer, _grid_y in parse_pointers(row.data):
+            found[(row.lddb, pointer)].append(row.pos)
+    for positions in found.values():
+        positions.sort()
+    return dict(found)
+
+
+def _ret_positions(rows: list[LadderRow]) -> dict[str, list[int]]:
+    found: dict[str, list[int]] = defaultdict(list)
+    for row in rows:
+        if any(hop.op == "RET" for hop in parse_header_ops(row.data)):
+            found[row.lddb].append(row.pos)
+    for positions in found.values():
+        positions.sort()
+    return dict(found)
+
+
+def _scope_for_start(
+    lddb: str,
+    pointer: int,
+    start_pos: int,
+    ret_positions: dict[str, list[int]],
+    max_pos: dict[str, int],
+) -> SubroutineScope:
+    end = next((pos for pos in ret_positions.get(lddb, []) if pos > start_pos), None)
+    if end is None:
+        # Keep a bounded affected range even when RET is missing. This is not a
+        # claim that the subroutine extends to the file end; it is precisely the
+        # range in which project-level execution cannot be completed statically.
+        return SubroutineScope(
+            lddb,
+            pointer,
+            start_pos,
+            max_pos.get(lddb, start_pos) + 1,
+            complete=False,
+            reason=f"CALL P{pointer} target has no following RET in {lddb}",
+        )
+    return SubroutineScope(lddb, pointer, start_pos, end)
+
+
+def _call_sites(
+    rows: list[LadderRow],
+    labels: LabelResolver | None,
+    master_zones: dict[str, list[McZone]],
+) -> list[CallSite]:
+    sites: list[CallSite] = []
+    for row in rows:
+        printed, _verticals, _wires = parse_rung(row, labels)
+        flows = [element for element in positioned_elements(row, labels) if not element.is_wire]
+        for op in printed:
+            if op.role not in CALL_OPS:
+                continue
+            pointer_values: list[int] = []
+            for operand in op.operands:
+                if not operand.startswith("#P"):
+                    continue
+                try:
+                    pointer_values.append(int(operand[2:]))
+                except ValueError:
+                    pass
+            pointer = pointer_values[0] if len(pointer_values) == 1 else None
+            element = next(
+                (
+                    candidate
+                    for candidate in flows
+                    if candidate.x == op.x and candidate.y == op.y and candidate.role == op.role
+                ),
+                None,
+            )
+            if element is None:
+                condition: dict[str, Any] = {
+                    "op": "unknown",
+                    "kind": "call_site_topology",
+                    "opcode": op.role,
+                }
+            else:
+                condition = enable_logic_for_output(row, element, labels)
+                condition = apply_zone_conditions(
+                    condition, active_zones(master_zones, row.lddb, row.pos)
+                )
+            sites.append(
+                CallSite(
+                    lddb=row.lddb,
+                    pos=row.pos,
+                    opcode=op.role,
+                    pointer=pointer,
+                    condition=condition,
+                    condition_text=logic_to_text(condition),
+                )
+            )
+    return sites
+
+
+def _call_context(
+    rows: list[LadderRow],
+    labels: LabelResolver | None,
+    master_zones: dict[str, list[McZone]],
+) -> CallContext:
+    sites = _call_sites(rows, labels, master_zones)
+    if not sites:
+        return CallContext()
+
+    pointer_defs = _pointer_definitions(rows)
+    ret_positions = _ret_positions(rows)
+    max_pos: dict[str, int] = {}
+    for row in rows:
+        max_pos[row.lddb] = max(max_pos.get(row.lddb, row.pos), row.pos)
+
+    # Only pointers actually named by CALL/ECALL are candidate subroutine
+    # entries. A P label used only by CJ is a jump destination, not evidence of
+    # a callable P..RET scope.
+    wanted: set[tuple[str, int]] = set()
+    ecalls_by_pointer: dict[int, list[CallSite]] = defaultdict(list)
+    for site in sites:
+        if site.pointer is None:
+            continue
+        if site.opcode == "CALL":
+            wanted.add((site.lddb, site.pointer))
+        else:
+            ecalls_by_pointer[site.pointer].append(site)
+            for lddb, pointer in pointer_defs:
+                if pointer == site.pointer:
+                    wanted.add((lddb, pointer))
+
+    scopes: list[SubroutineScope] = []
+    for target in sorted(wanted):
+        lddb, pointer = target
+        for start in pointer_defs.get(target, []):
+            scopes.append(_scope_for_start(lddb, pointer, start, ret_positions, max_pos))
+
+    scopes_by_target: dict[tuple[str, int], list[SubroutineScope]] = defaultdict(list)
+    scopes_by_pointer: dict[int, list[SubroutineScope]] = defaultdict(list)
+    scope_by_key: dict[tuple[str, int, int], SubroutineScope] = {}
+    for scope in scopes:
+        scopes_by_target[(scope.lddb, scope.pointer)].append(scope)
+        scopes_by_pointer[scope.pointer].append(scope)
+        scope_by_key[scope.key] = scope
+
+    unresolved_reason: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    incoming: dict[tuple[str, int, int], list[CallSite]] = defaultdict(list)
+
+    for site in sites:
+        if site.pointer is None:
+            continue
+        if site.opcode == "ECALL":
+            # ECALL chooses a program file as well as P. Until that program
+            # operand is mapped to an exact LDDB, every same-numbered P scope is
+            # only a candidate. Keep all candidates partial rather than choosing
+            # the convenient one.
+            candidates = scopes_by_pointer.get(site.pointer, [])
+            for scope in candidates:
+                unresolved_reason[scope.key].add(
+                    f"ECALL P{site.pointer} program target is not resolved to one LDDB"
+                )
+            site.target_keys = [scope.key for scope in candidates]
+            continue
+
+        candidates = scopes_by_target.get((site.lddb, site.pointer), [])
+        site.target_keys = [scope.key for scope in candidates]
+        if len(candidates) == 1:
+            incoming[candidates[0].key].append(site)
+        elif len(candidates) > 1:
+            for scope in candidates:
+                unresolved_reason[scope.key].add(
+                    f"CALL P{site.pointer} has {len(candidates)} pointer definitions in {site.lddb}"
+                )
+
+    for scope in scopes:
+        if not scope.complete:
+            unresolved_reason[scope.key].add(scope.reason)
+
+    def containing_scope(lddb: str, pos: int) -> SubroutineScope | None:
+        candidates = [scope for scope in scopes if scope.lddb == lddb and scope.contains(pos)]
+        if not candidates:
+            return None
+        # The latest entry is the innermost/most specific scope if data is
+        # unusual enough to overlap.
+        return max(candidates, key=lambda scope: scope.start_pos)
+
+    cache: dict[tuple[str, int, int], dict[str, Any] | None] = {}
+    visiting: list[tuple[str, int, int]] = []
+
+    def invocation(scope: SubroutineScope) -> dict[str, Any] | None:
+        if scope.key in cache:
+            return cache[scope.key]
+        if scope.key in visiting:
+            cycle = visiting[visiting.index(scope.key) :] + [scope.key]
+            text = " -> ".join(f"{key[0]}:P{key[1]}" for key in cycle)
+            for key in cycle:
+                unresolved_reason[key].add(f"recursive/cyclic CALL invocation: {text}")
+            return None
+
+        visiting.append(scope.key)
+        terms: list[dict[str, Any]] = []
+        sites_here = incoming.get(scope.key, [])
+        for site in sites_here:
+            parent = containing_scope(site.lddb, site.pos)
+            if parent is None or parent.key == scope.key and site.pos < scope.start_pos:
+                terms.append(site.condition)
+                continue
+            parent_logic = invocation(parent)
+            if parent_logic is None:
+                unresolved_reason[scope.key].add(
+                    f"caller execution context for CALL P{scope.pointer} is unresolved"
+                )
+                continue
+            terms.append(and_logic([parent_logic, site.condition]))
+        visiting.pop()
+
+        if not terms:
+            unresolved_reason[scope.key].add(
+                f"P{scope.pointer} has no statically resolved CALL entry condition"
+            )
+            cache[scope.key] = None
+            return None
+        cache[scope.key] = or_logic(terms)
+        return cache[scope.key]
+
+    context = CallContext()
+    for scope in scopes:
+        logic = invocation(scope)
+        if logic is not None:
+            # McZone.contains is start-exclusive for real MC. Shift the
+            # synthetic start one position so the rung carrying P itself is
+            # included in its invocation context.
+            context.zones.setdefault(scope.lddb, []).append(
+                McZone(
+                    lddb=scope.lddb,
+                    start_pos=scope.start_pos - 1,
+                    end_pos=scope.end_pos,
+                    nesting=0,
+                    relay=f"CALL P{scope.pointer}",
+                    condition=logic,
+                    condition_text=logic_to_text(logic),
+                    kind="call_invocation",
+                    pointer=scope.pointer,
+                )
+            )
+
+        reasons = sorted(unresolved_reason.get(scope.key, set()))
+        if reasons:
+            reason = "; ".join(reasons)
+            context.unresolved.setdefault(scope.lddb, []).append(
+                JumpSite(
+                    lddb=scope.lddb,
+                    pos=scope.start_pos - 1,
+                    opcode="CALL_CONTEXT",
+                    condition_text=reason,
+                    start_pos=scope.start_pos,
+                    end_pos=scope.end_pos,
+                    reason=reason,
+                )
+            )
+
+    for zones in context.zones.values():
+        zones.sort(key=lambda zone: (zone.start_pos, zone.end_pos or 2**63))
+    for sites_for_lddb in context.unresolved.values():
+        sites_for_lddb.sort(key=lambda site: (site.start_pos or site.pos, site.pos))
+    return context
+
+
+def build_mc_zones(
+    rows: list[LadderRow], labels: LabelResolver | None = None
+) -> dict[str, list[McZone]]:
+    labels = labels or inferred_label_resolver(rows)
+    master = _build_master_zones(rows, labels)
+    calls = _call_context(rows, labels, master)
+    merged: dict[str, list[McZone]] = {lddb: list(zones) for lddb, zones in master.items()}
+    for lddb, zones in calls.zones.items():
+        merged.setdefault(lddb, []).extend(zones)
+    for zones in merged.values():
+        zones.sort(key=lambda zone: (zone.start_pos, zone.end_pos or 2**63, zone.kind))
+    return merged
+
+
 def build_jump_index(
     rows: list[LadderRow], labels: LabelResolver | None = None
 ) -> dict[str, list[JumpSite]]:
@@ -234,10 +559,16 @@ def build_jump_index(
                     condition_text=logic_to_text(condition),
                 )
             )
+
+    master = _build_master_zones(rows, labels)
+    call_context = _call_context(rows, labels, master)
+    for lddb, sites in call_context.unresolved.items():
+        by_lddb[lddb].extend(sites)
+
     for sites in by_lddb.values():
         sites.sort(key=lambda site: site.pos)
     return dict(by_lddb)
 
 
 def jumps_before(jump_index: dict[str, list[JumpSite]], lddb: str, pos: int) -> list[JumpSite]:
-    return [site for site in jump_index.get(lddb, []) if site.pos < pos]
+    return [site for site in jump_index.get(lddb, []) if site.applies(pos)]
