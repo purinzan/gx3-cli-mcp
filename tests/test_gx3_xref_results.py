@@ -87,7 +87,40 @@ def test_range_and_read_modify_write_counts(root: Path) -> None:
         code, data = result(root, device)
         assert code == 0 and data["total_count"] == 1, data
         assert data["total_counts"]["writers"] == 1, data
+        assert data["total_counts"]["readers"] == 1, data
+        assert len(data["readers"]) == 1, data
         assert len(data["writers"]) == 1 and not data["truncated"], data
+
+
+def test_real_read_modify_write_is_one_occurrence() -> None:
+    from gx3cli.gx3_xref_read import counts_for
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # Two-operand addition reads and writes its destination D600.
+        data = (
+            "V1:9:1:1:1:1:1:1:a:M:+:D:D:cb{fg=fg{dim=4x1:es=["
+            "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=1:vt=nn}]}:pos=0,0}:"
+            "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=A16}:as{vt=A16}]}:args=["
+            "d{s=#:a=500:vt=nn}:d{s=#:a=600:vt=nn}]}:pos=1,0}]}}"
+        )
+        with closing(sqlite3.connect(root / "001_LDDB.db")) as con:
+            con.execute("create table LadderBlocks(id text, pos real, blocktype integer, data text, rowsize integer, translated integer, ConvTarget integer)")
+            con.execute("insert into LadderBlocks values ('synthetic-plus', 0, 0, ?, 1, 0, 0)", (data,))
+            con.commit()
+        assert invoke(root, "build")[0] == 0
+        for limit in (0, 1, 2, -1):
+            code, report = result(root, "D600", "--limit", str(limit))
+            assert code == 0 and report["total_count"] == 1, report
+            assert report["total_counts"] == {"writers": 1, "readers": 1, "refs": 0}, report
+            assert report["truncated"] is (limit == 0), report
+            if limit != 0:
+                assert report["writers"][0]["id"] == report["readers"][0]["id"], report
+        with closing(sqlite3.connect(root / "xref.sqlite")) as con:
+            con.row_factory = sqlite3.Row
+            assert counts_for(con, ["D600"])["D600"] == {"read": 1, "write": 1}
+        code, text = invoke(root, "where-used", "D600")
+        assert code == 0 and "Writers (1)" in text and "Readers (1)" in text, text
 
 
 def test_partial_st_parser_contract() -> None:
@@ -201,6 +234,7 @@ def test_st_xref_bridge(root: Path) -> None:
 
 
 def main() -> int:
+    test_real_read_modify_write_is_one_occurrence()
     with tempfile.TemporaryDirectory(prefix="gx3_xref_results_") as tmp:
         root = Path(tmp)
         build_fixture(root)
