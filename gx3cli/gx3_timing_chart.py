@@ -132,12 +132,7 @@ def project_roots(link_con: sqlite3.Connection) -> dict[str, Path]:
 
 
 def project_rows(link_con: sqlite3.Connection) -> dict[str, RowIndex]:
-    """A row index per project, so a condition can be read from the wiring.
-
-    The link map records each project's root beside its cross-reference. Two
-    sides of a handshake live in different projects, so the index has to be per
-    project rather than one for the run.
-    """
+    """A row index per project, so a condition can be read from the wiring."""
     return {
         str(row["label"]): RowIndex(Path(str(row["root"])))
         for row in link_con.execute("select label, root from project")
@@ -184,10 +179,9 @@ def same_row_conditions(
 ) -> str:
     """What has to hold for this rung, as it is wired.
 
-    Reading the contacts out of the cross-reference and joining them with
-    " AND " turns two parallel branches into a series pair -- the reverse of
-    what the rung does. The wiring is in the rung, so the rung is read when it
-    can be, and the flat list says what it is when it cannot.
+    Reading contacts from xref and joining them with AND destroys branch
+    topology. Read the rung when available; the fallback labels itself as a
+    contact list so it cannot masquerade as topology-derived logic.
     """
     row = rows.get(lddb, pos) if rows is not None else None
     if row is not None and device:
@@ -226,42 +220,80 @@ def _flat_row_conditions(con: sqlite3.Connection, lddb: str, pos: int) -> str:
     return f"{joined}   (contacts on the rung; wiring not read)" if joined else joined
 
 
+def _device_condition_rows(
+    con: sqlite3.Connection,
+    device: str,
+    access_sql: str,
+    rows: "RowIndex | None" = None,
+) -> list[tuple[str, int, str]]:
+    """Every distinct rung that writes/reads one handshake device.
+
+    Timing-chart used to append `limit 1`, so a second writer or read site was
+    silently erased. A project may intentionally write the same handshake bit
+    from several modes, or read it in several state transitions. Those rows are
+    evidence alternatives; they are not one Boolean expression and must not be
+    collapsed into whichever row happens to sort first.
+    """
+    source, match = device_match(con)
+    found = con.execute(
+        f"""
+        select distinct x.lddb, x.pos
+        from {source}
+        where {match} and {access_sql}
+        order by x.lddb, x.pos
+        """,
+        (device,),
+    ).fetchall()
+    return [
+        (
+            str(row["lddb"]),
+            int(row["pos"]),
+            same_row_conditions(con, str(row["lddb"]), int(row["pos"]), rows, device),
+        )
+        for row in found
+    ]
+
+
+def _format_condition_alternatives(
+    conditions: list[tuple[str, int, str]], *, kind: str
+) -> str:
+    if not conditions:
+        return ""
+    if len(conditions) == 1:
+        return conditions[0][2]
+    entries = [
+        f"ALT {index} {lddb}:{pos}: {text or 'TRUE/unspecified'}"
+        for index, (lddb, pos, text) in enumerate(conditions, start=1)
+    ]
+    note = (
+        "multiple writer rows; alternatives shown separately; scan order/other writers may decide the final value"
+        if kind == "writer"
+        else "multiple reader rows; read-site conditions shown separately, not combined into one Boolean condition"
+    )
+    return " | ".join(entries) + f"   ({note})"
+
+
 def device_writer_condition(
     con: sqlite3.Connection, device: str, rows: "RowIndex | None" = None
 ) -> str:
-    source, match = device_match(con)
-    row = con.execute(
-        f"""
-        select x.lddb, x.pos
-        from {source}
-        where {match} and x.access in ('write', 'both')
-        order by x.pos
-        limit 1
-        """,
-        (device,),
-    ).fetchone()
-    if not row:
-        return ""
-    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]), rows, device)
+    return _format_condition_alternatives(
+        _device_condition_rows(
+            con,
+            device,
+            "x.access in ('write', 'both')",
+            rows,
+        ),
+        kind="writer",
+    )
 
 
 def device_reader_condition(
     con: sqlite3.Connection, device: str, rows: "RowIndex | None" = None
 ) -> str:
-    source, match = device_match(con)
-    row = con.execute(
-        f"""
-        select x.lddb, x.pos
-        from {source}
-        where {match} and x.access='read'
-        order by x.pos
-        limit 1
-        """,
-        (device,),
-    ).fetchone()
-    if not row:
-        return ""
-    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]), rows, device)
+    return _format_condition_alternatives(
+        _device_condition_rows(con, device, "x.access='read'", rows),
+        kind="reader",
+    )
 
 
 def const_numbers(text: str) -> list[int]:
@@ -332,12 +364,8 @@ def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[
     try:
         xref_paths = project_xref_paths(link_con)
         roots = project_roots(link_con)
-        # Open inside the protected region one-by-one. If validation rejects a
-        # later xref, every earlier one plus the link-map DB still gets closed.
         for project, path in xref_paths.items():
             xrefs[project] = open_xref(path, roots[project])
-        # Per project, and built lazily: a run that never needs a condition never
-        # reads a ladder.
         rows = project_rows(link_con)
         links = link_rows_between(link_con, project_a, project_b)
         detected: list[DetectedSignal] = []
@@ -374,9 +402,7 @@ def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[
                         else ""
                     ),
                     receiver_condition=(
-                        device_reader_condition(
-                            receiver_con, receiver_device, rows.get(receiver_project)
-                        )
+                        device_reader_condition(receiver_con, receiver_device, rows.get(receiver_project))
                         if receiver_con
                         else ""
                     ),
@@ -499,7 +525,7 @@ def detect_data_groups(
             if not sender_con:
                 continue
             sender_condition = device_writer_condition(
-                sender_con, candidate_device, (rows or {}).get(sender_project)
+                sender_con, candidate_device, (rows or {}).get(candidate_project)
             )
             if sender_condition:
                 sender_project = candidate_project
@@ -646,7 +672,7 @@ def render_detected_markdown(project_a: str, project_b: str, signals: list[Detec
         "## Draft Phases",
         markdown_table(["Step", "Event", project_a, project_b, "Condition / Evidence"], phase_rows),
         "",
-        "Note: condition cells are same-row contacts joined with AND. Parallel branches may still require manual review.",
+        "Note: condition cells use topology-derived rung logic when the ladder row is readable. A flat fallback is explicitly labeled `wiring not read`.",
         "",
         "## Detected Signals",
         markdown_table(
@@ -665,7 +691,8 @@ def render_detected_markdown(project_a: str, project_b: str, signals: list[Detec
         "",
         "## Notes",
         "- Word-device rows are grouped by receiver read row.",
-        "- Sender valid conditions are xref same-row contact lists, not topology-perfect ladder logic.",
+        "- Multiple writer/read rows are rendered as separate alternatives; they are not collapsed into the first row or one Boolean condition.",
+        "- Multiple writers can be scan-order dependent; the listed predicates describe write-execution candidates, not the final post-scan value.",
         "- This command does not prove final internal completion bits; use xref and trace-device for the listed devices.",
     ]
     return "\n".join(sections) + "\n"
