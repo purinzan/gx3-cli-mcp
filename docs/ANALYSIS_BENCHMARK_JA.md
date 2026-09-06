@@ -188,3 +188,13 @@ coldのSQLは全caseで+2（保存指紋を公開前に読む照会）。DB open
 前後確認による必要な追加I/O。Python peak中央値の増分は約22–23KiB。
 coldの時間・Python peak・累積RSSは既存予算内。大規模入力では追加hash I/Oの影響が
 増えうるため、一般的な高速化とは扱わない。固定検体のhash読込み予算を回帰テストに追加。
+
+## semantic-diff要約の重複解読
+
+`8edcee6b1e2aee714cb91a47b7710c4895c99276`→`a6644aeaae0d759dcb2b428352af46b7bf5036be`。
+既存branch_rung合成例のM100→M102変更をsummarize_changeで100回、各3反復。
+同じPython/macOSで前後を順次実行し、入力文字列hash一致を確認。
+デコーダ実呼出しは400→200（1要約4→2）、中央値57.57→29.64ms、Python peak
+中央値8696→8865bytes。各版の命令と引数で同じ解読結果を再利用する。
+これは要約関数だけの小測定で、project読込み・SQL・ファイルI/Oや全CLIの速度を
+測ったものではない。未解析時の注記は別の実CLI/CSV回帰で確認する。

@@ -9,6 +9,7 @@ import sys
 import tempfile
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from gx3cli.gx3_intermediate_tool import generate_rung
 from gx3cli.gx3_ladder_logic import enable_logic_for_device, logic_to_text
@@ -185,8 +186,9 @@ def test_cli_reports_changes_in_default_output() -> None:
             old.replace("v{pos=1,1}", ""),
             old.replace("ct=a", "ct=p", 1),
             old.replace("dim=2x2", "dim=20x20", 1),
+            old.replace("s=ce{", "s=uninterpreted{", 1),
         ]
-        for name, data_rows in (("old", [old] * 3), ("new", variants)):
+        for name, data_rows in (("old", [old] * 4), ("new", variants)):
             folder = root / name
             folder.mkdir()
             with closing(sqlite3.connect(folder / "001_LDDB.db")) as con:
@@ -204,13 +206,15 @@ def test_cli_reports_changes_in_default_output() -> None:
             cwd=root, env=env, text=True, encoding="utf-8", capture_output=True,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "logic-changed=2 layout-only=1" in result.stdout, result.stdout
+        assert "logic-changed=3 layout-only=1" in result.stdout, result.stdout
+        assert "old=exact, new=partial" in result.stdout, result.stdout
         assert "project-config.cpu" in result.stdout and "missing" in result.stdout, result.stdout
         with output.open(encoding="utf-8-sig", newline="") as stream:
             rows = list(csv.DictReader(stream))
         # Both projects omit the same configuration sources, so unavailable
         # state is surfaced in stdout but is not itself a semantic difference.
-        assert [row["kind"] for row in rows] == ["logic", "logic"], rows
+        assert [row["kind"] for row in rows] == ["logic", "logic", "logic"], rows
+        assert "old=exact, new=partial" in rows[-1]["summary"], rows
         assert all("argument order changed" != row["summary"] for row in rows), rows
 
 
@@ -239,6 +243,16 @@ def test_cli_reports_config_change_without_ladder_change() -> None:
         assert "BasePrm6" in rows[0]["title"], rows
 
 
+def test_summary_decodes_each_side_once() -> None:
+    from gx3cli import gx3_semantic_diff as diff
+
+    old = branch_rung()
+    with patch.object(diff, "parse_row_operations", wraps=diff.parse_row_operations) as decode:
+        summary = diff.summarize_change(old, old.replace("a=100", "a=102", 1))
+    assert decode.call_count == 2, decode.call_count
+    assert "M102" in summary, summary
+
+
 def main() -> int:
     test_disconnected_branch_changes_logic()
     test_edge_contact_is_not_layout_only()
@@ -251,7 +265,8 @@ def main() -> int:
     test_missing_and_unreadable_are_not_same()
     test_cli_reports_changes_in_default_output()
     test_cli_reports_config_change_without_ladder_change()
-    print("11 semantic-diff regression checks passed")
+    test_summary_decodes_each_side_once()
+    print("12 semantic-diff regression checks passed")
     return 0
 
 
