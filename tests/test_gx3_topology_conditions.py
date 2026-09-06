@@ -33,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gx3cli.gx3_alarm_map import RowIndex, row_conditions
 from gx3cli.gx3_intermediate_tool import generate_rung
+from gx3cli.review_gx3_project import LadderRow
+from test_gx3_ladder_logic import manual_row
 from test_gx3_shared_reach import build_xref, write_program
 
 
@@ -54,6 +56,26 @@ def condition(con, root: Path, device: str, wired: bool = True) -> str:
         con, row["lddb"], row["pos"], device, RowIndex(root) if wired else None
     )
     return text
+
+
+def generated_row(logic: dict, device: str) -> LadderRow:
+    data, rowsize, _ = generate_rung(logic, {"type": "coil", "device": device})
+    return LadderRow("test", 0, "", "", 0, rowsize, data, "", [], "exact")
+
+
+class StaticRows:
+    def __init__(self, row: LadderRow) -> None:
+        self.row = row
+
+    def get(self, _lddb: str, _pos: int) -> LadderRow:
+        return self.row
+
+
+def commentless_xref() -> sqlite3.Connection:
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.execute("create table xref(device text, comment text)")
+    return con
 
 
 def test_two_parallel_contacts_are_an_or() -> None:
@@ -104,8 +126,9 @@ def test_a_normally_closed_contact_stays_closed() -> None:
 
 
 def test_each_output_gets_its_own_condition() -> None:
-    # Two outputs on one project with different dependencies. Reading the row
-    # rather than the row's device list is what keeps them apart.
+    # Two outputs in one project with different dependencies. The consumer
+    # asks topology for the selected output rather than flattening the row's
+    # device list into one condition.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         root, db = project(
@@ -124,6 +147,43 @@ def test_each_output_gets_its_own_condition() -> None:
             con.close()
         assert "M400" in first and "M401" not in first, first
         assert "OR" in second and "M400" not in second, second
+
+
+def test_alarm_self_contact_on_a_live_path_is_self_hold() -> None:
+    # A real seal-in branch: start condition OR the alarm's own contact.
+    row = generated_row({"or": [{"device": "M500"}, {"device": "F5"}]}, "F5")
+    con = commentless_xref()
+    try:
+        conds, self_hold, text = row_conditions(con, "test", 0, "F5", StaticRows(row))
+    finally:
+        con.close()
+    assert self_hold is True, (conds, text)
+    assert "M500" in text and "F5" in text, text
+    assert all("F5" not in item for item in conds), conds
+
+
+def test_alarm_self_contact_on_a_dead_branch_is_not_self_hold() -> None:
+    # The lower branch contains F5 but a driver sink above it prevents power
+    # from reaching that branch. Same-row co-occurrence used to be enough to
+    # call this self-hold; topology must not.
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=500:vt=nn}]}:pos=0,0}"
+    blocking_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=900:vt=nn}]}:pos=1,0}"
+    wire = "e{s=wire:pos=1,1}"
+    self_contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=2,1}"
+    alarm_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=3,1}"
+    row = manual_row(
+        f"{contact}:{blocking_coil}:{wire}:{self_contact}:{alarm_coil}",
+        dim="4x2",
+        header="V1:10:1:1:1:1:1:1:1:1:a:M:c:M:a:F:c:F",
+        verticals="v{pos=1,1}",
+    )
+    con = commentless_xref()
+    try:
+        conds, self_hold, text = row_conditions(con, "test", 0, "F5", StaticRows(row))
+    finally:
+        con.close()
+    assert self_hold is False, (conds, text)
+    assert text == "FALSE", text
 
 
 def test_without_the_rung_the_answer_says_it_is_a_contact_list() -> None:
@@ -168,6 +228,8 @@ def main() -> int:
     test_a_series_contact_before_a_branch_keeps_its_shape()
     test_a_normally_closed_contact_stays_closed()
     test_each_output_gets_its_own_condition()
+    test_alarm_self_contact_on_a_live_path_is_self_hold()
+    test_alarm_self_contact_on_a_dead_branch_is_not_self_hold()
     test_without_the_rung_the_answer_says_it_is_a_contact_list()
     test_timing_chart_reads_the_same_way()
     print("topology condition checks passed")
