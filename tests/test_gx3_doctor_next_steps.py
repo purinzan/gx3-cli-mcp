@@ -154,7 +154,7 @@ def test_io_comment_gap_only_flags_uncommented_physical_io() -> None:
     con.close()
 
 
-def test_constant_chain_reaches_doctor_as_ranked_causal_evidence() -> None:
+def test_constant_chain_reaches_doctor_as_non_risk_observation() -> None:
     from gx3cli.gx3_intermediate_tool import generate_rung
     from gx3cli.review_gx3_project import load_comments_for_root, load_rows
     from test_gx3_shared_reach import build_xref, write_program
@@ -189,16 +189,32 @@ def test_constant_chain_reaches_doctor_as_ranked_causal_evidence() -> None:
         by_device = {str(item["device"]): item for item in findings}
         assert "M100" not in by_device, by_device
         assert by_device["Y0"]["constant_state"] == "ALWAYS_ON", by_device
-        assert by_device["Y0"]["severity"] == "high", by_device["Y0"]
+        assert by_device["Y0"]["severity"] == "info", by_device["Y0"]
         assert "SM401" in str(by_device["Y0"]["chain"]), by_device["Y0"]
         assert "M100" in str(by_device["Y0"]["chain"]), by_device["Y0"]
 
         report = build_health_report(root, {"constant-chain": findings}, {}, top=10)
-        y0 = next(item for item in report["top_risks"] if item["device"] == "Y0")
-        assert y0["check"] == "constant-chain", y0
-        assert y0["severity"] == "high", y0
-        assert report["scores"]["Change safety"] < 100, report
-        assert report["scores"]["Troubleshootability"] < 100, report
+        assert report["top_risks"] == [], report
+        assert report["risk_findings"] == 0, report
+        assert report["observation_findings"] == 1, report
+        observation = report["observations"][0]
+        assert observation["device"] == "Y0", observation
+        assert observation["check"] == "constant-chain", observation
+        assert report["scores"]["Change safety"] == 100, report
+        assert report["scores"]["Troubleshootability"] == 100, report
+
+
+def test_constant_chain_requires_index_lite_boundary_evidence() -> None:
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    ctx = LintContext(root=Path("fixture"), rows=[], comments={}, xref=con, lite=None)
+    try:
+        findings = collect_constant_chains(ctx, index_db=Path("missing.sqlite"))
+    finally:
+        con.close()
+    assert findings == []
+    assert "constant-chain" in ctx.states
+    assert not ctx.states["constant-chain"].conclusive
 
 
 def test_project_health_mode_reports_incomplete_when_core_evidence_is_missing() -> None:
@@ -249,7 +265,8 @@ def main() -> None:
     test_project_health_report_ranks_and_scores_dimensions()
     test_missing_link_map_is_supplemental_not_core_incomplete()
     test_io_comment_gap_only_flags_uncommented_physical_io()
-    test_constant_chain_reaches_doctor_as_ranked_causal_evidence()
+    test_constant_chain_reaches_doctor_as_non_risk_observation()
+    test_constant_chain_requires_index_lite_boundary_evidence()
     test_project_health_mode_reports_incomplete_when_core_evidence_is_missing()
     test_project_health_mode_flag_is_removed_before_forwarding()
     print("doctor next-step and project-health checks passed")
