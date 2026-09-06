@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, propagate_constant_devices
-from gx3cli.gx3_index_lite import open_existing as open_lite_index
+from gx3cli.gx3_index_lite import (
+    DEVICE_NAMING,
+    check_input as check_lite_input,
+    connect as connect_lite_index,
+)
 from gx3cli.gx3_ladder_logic import (
     and_logic,
     condition_refs_from_logic,
@@ -70,29 +74,38 @@ def _load_external_boundaries(root: Path) -> tuple[dict[str, str] | None, str]:
     old-format, or malformed lite index must not be treated as "zero external
     writers". In those cases the caller disables pruning and keeps the normal
     trace instead.
+
+    This opens the DB locally instead of calling ``open_existing`` because that
+    legacy helper can raise before closing its connection on an old/malformed
+    index. Windows keeps that file locked, which turns a safe rejection into a
+    resource leak. Validation here is equivalent, with an unconditional close.
     """
     path = lite_db_path(root)
     if not path.exists():
         return None, f"index-lite database not found: {path}"
 
+    con = None
     try:
-        con = open_lite_index(path, root=root)
-    except (Exception, SystemExit) as exc:
-        return None, f"index-lite unavailable for constant pruning: {exc}"
-
-    try:
+        con = connect_lite_index(path)
+        row = con.execute("select value from meta where key='device_naming'").fetchone()
+        if row is None or row["value"] != DEVICE_NAMING:
+            return None, (
+                "index-lite unavailable for constant pruning: index was built by an "
+                "older/incompatible version; rebuild index-lite"
+            )
+        check_lite_input(path, con, root)
         rows = con.execute(
             "select device, source_kind, semantic_group from external_sources"
         ).fetchall()
-    except Exception as exc:
-        return None, f"index-lite external boundary evidence unavailable: {exc}"
+        return {
+            str(row["device"]): f"{row['source_kind']}/{row['semantic_group']}"
+            for row in rows
+        }, ""
+    except (Exception, SystemExit) as exc:
+        return None, f"index-lite unavailable for constant pruning: {exc}"
     finally:
-        con.close()
-
-    return {
-        str(row["device"]): f"{row['source_kind']}/{row['semantic_group']}"
-        for row in rows
-    }, ""
+        if con is not None:
+            con.close()
 
 
 def load_trace_constant_context(
