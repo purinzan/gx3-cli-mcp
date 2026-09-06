@@ -339,11 +339,6 @@ def normalize_positional_project_root(command: str, argv: list[str]) -> list[str
     return out
 
 
-# A failure that is about where a file is, not about what is inside it. These
-# used to be printed as "an unsupported GX Works3 format or a parser coverage
-# gap", pointing the user at the parser-gap issue form: audit's lint step died
-# on a directory that did not exist, and used-devices on a project root it had
-# not been given, and both asked to be reported as parser bugs.
 SETUP_FAILURE_PATTERNS = (
     "FileNotFoundError",
     "NotADirectoryError",
@@ -411,7 +406,7 @@ def print_help() -> None:
                 "",
                 "Usage:",
                 "  gx3-cli list",
-                "  gx3-cli context",
+                "  gx3-cli context [--root ROOT]",
                 "  gx3-cli quick-device DEVICE [extra trace args...]",
                 "  gx3-cli <command> [command args...]",
                 "  gx3-cli --no-color <command> [command args...]",
@@ -513,13 +508,6 @@ def project_label_from_root(root: Path) -> str:
 
 
 def survey_index_for_root(output_dir: Path, root: Path) -> Path:
-    """Return the survey index that matches the selected project root.
-
-    Falling back to the newest survey makes the context command look valid
-    while pointing at another PLC project. Return the expected per-root path
-    instead so missing context is obvious and the rebuild command uses the
-    correct prefix.
-    """
     label = project_label_from_root(root)
     return output_dir / f"{label}_survey_index.md"
 
@@ -537,8 +525,7 @@ def latest_comm_prefix(output_dir: Path) -> str:
     return default_comm_prefix()
 
 
-def print_context() -> None:
-    root = default_project_root(BASE_DIR)
+def print_context(root: Path) -> None:
     output_dir = BASE_DIR / "outputs"
     survey_index = survey_index_for_root(output_dir, root)
     survey_prefix = survey_prefix_from_index(survey_index)
@@ -575,6 +562,15 @@ def print_context() -> None:
     print("")
     print("Answer shape:")
     print("  active ON condition / hold condition / disabled branch / external boundary / uncertainty")
+
+
+def run_context(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="gx3-cli context")
+    parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder or .gx3")
+    args = parser.parse_args(argv)
+    root = Path(normalize_root_value(args.root))
+    print_context(root)
+    return 0
 
 
 def run_quick_device(argv: list[str]) -> int:
@@ -618,9 +614,6 @@ def run_index_query(subcommand: str, argv: list[str]) -> int:
     return run_python_script(COMMANDS["index-lite"].script, [subcommand, *argv])
 
 
-# Commands whose script defines --root/--db on the MAIN parser before the
-# subcommand. argparse rejects "build --root R" there, so gx3_cli reorders
-# the options to the front: "xref build --root R" -> "--root R build".
 GLOBAL_ROOT_BEFORE_SUBCOMMAND = {"xref", "alarm-map"}
 
 INDEX_QUERY_COMMANDS = {
@@ -649,7 +642,6 @@ TOOLS_COMMANDS = {
 
 
 def hoist_global_options(argv: list[str]) -> list[str]:
-    """Move --root/--db (given after the subcommand) before it."""
     out = list(argv)
     prefix: list[str] = []
     for option in ("--root", "--db"):
@@ -673,13 +665,6 @@ def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
         if root and "--root" not in stripped and not any(a.startswith("--root=") for a in stripped):
             stripped.extend(["--root", root])
         return run_python_script(spec.script, stripped, root=root)
-    # Pass --root through the environment as well. Scripts that build their
-    # root at import time (used-devices, hmi-build-info,
-    # extended-instructions) have no --root option and read
-    # default_project_root(), which honours the environment. Without this they
-    # ignored the requested project, auto-detected another one and reported
-    # success on it -- asking for one project and being answered about another,
-    # with no warning.
     requested_root, _ = pop_option(list(argv), "--root")
     return run_python_script(spec.script, argv, root=requested_root)
 
@@ -737,6 +722,8 @@ def print_command_help(args: list[str]) -> int:
     rest = args[1:]
     if command in INDEX_QUERY_COMMANDS:
         return run_python_script(COMMANDS["index-lite"].script, with_help_flag([INDEX_QUERY_COMMANDS[command], *rest]))
+    if command == "context":
+        return run_context(with_help_flag(rest))
     if command == "quick-device":
         print("Usage: gx3-cli quick-device DEVICE [extra trace args...]")
         print("Runs trace-device with --strict-logic --compact and a bounded default depth.")
@@ -759,22 +746,11 @@ def print_command_help(args: list[str]) -> int:
     return 2
 
 
-# Commands that never analyse a project, so they must not be made to pick one.
-NO_PROJECT_COMMANDS = {"list", "context", "version", "help", "doctor"}
+NO_PROJECT_COMMANDS = {"list", "version", "help"}
 
 
 def ambiguous_project(command: str, rest: list[str]) -> str:
-    """Refuse to guess which project, when more than one is in reach.
-
-    The auto-detection picks the newest extracted folder. With two projects
-    side by side that is a coin toss reported as an answer, and it sits
-    upstream of every fingerprint check: those prove an index belongs to the
-    root that was analysed, not that the root was the one meant.
-
-    Only when the caller said nothing. An explicit --root, PROJECT_ROOT, or a
-    project named on the command line all settle it, and asking for --help
-    settles it too.
-    """
+    """Refuse to guess which project, when more than one is in reach."""
     if command in NO_PROJECT_COMMANDS:
         return ""
     if "--root" in rest or any(item.startswith("--root=") for item in rest):
@@ -785,8 +761,6 @@ def ambiguous_project(command: str, rest: list[str]) -> str:
         return ""
     if any(item.lower().endswith(".gx3") for item in rest):
         return ""
-    # A project named positionally settles it too: `semantic-diff old new`
-    # says which projects it means and never consults the auto-detection.
     for item in rest:
         if item.startswith("-"):
             continue
@@ -841,8 +815,7 @@ def main(argv: list[str] | None = None) -> int:
             list_commands()
             return 0
         if command == "context":
-            print_context()
-            return 0
+            return run_context(rest)
         if command == "quick-device":
             return run_quick_device(rest)
         if command == "query-device":
