@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-"""A trace that stopped at a limit has not answered the question.
+"""A trace that stopped at a limit or semantic boundary has not answered the question.
 
-It has shown where looking stopped. The flag for it was inside a stats line --
-"truncated=True", between an edge count and a device count -- and the
-conditions printed underneath read as the whole condition.
-
-Issue #49, P0: the states are to be the same across commands, and a conclusion
-resting on something not fully read is to say so. trace-device now reports
-through the same vocabulary lint uses, above the answer rather than inside a
-statistics line.
+The important invariant here is not that every analysis is complete. It is that
+anything the project-level model did not account for is named before the reader
+sees the local rung condition as though it were the whole answer.
 """
 
 from gx3cli.gx3_analysis_state import CHECKED, DECODE, PARTIAL, TOPOLOGY, TRUNCATED
@@ -20,7 +15,6 @@ def test_a_complete_trace_says_nothing_extra() -> None:
     state = trace_state(truncated=False, reasons=[], partial_rows=[])
     assert state.state == CHECKED
     assert state.conclusive
-    # Nothing above the answer when there is nothing to warn about.
     assert state_lines({"analysis": state.as_dict()}) == []
 
 
@@ -39,8 +33,6 @@ def test_a_trace_that_hit_a_limit_says_which_limit() -> None:
 
 
 def test_an_unread_driver_row_outranks_a_limit() -> None:
-    # Both are true, and the one that matters is that part of the condition
-    # could not be read: raising the limit would not fix it.
     state = trace_state(
         truncated=True, reasons=["max_depth"], partial_rows=[{"parse_status": "partial"}]
     )
@@ -58,13 +50,6 @@ def test_the_japanese_output_says_the_same_thing() -> None:
 
 
 def test_a_condition_too_large_to_expand_is_a_wiring_limit_not_a_decoding_one() -> None:
-    """The instructions were read. What could not be finished was the folding.
-
-    Reporting it as "instructions and operands" sends the reader to parse-gaps,
-    which has nothing to say about it: there is no gap in the decoding. The
-    rung is one whose expanded condition passed the size budget, and the way
-    to see it is to look at the rung.
-    """
     state = trace_state(
         truncated=False, reasons=[], partial_rows=[], capped_rows=[{"logic_stats": {"too_large": 1}}]
     )
@@ -76,8 +61,6 @@ def test_a_condition_too_large_to_expand_is_a_wiring_limit_not_a_decoding_one() 
 
 
 def test_an_unread_row_still_outranks_a_capped_one() -> None:
-    # Both incomplete; the unreadable one is the worse problem and the one
-    # whose remedy differs from doing nothing.
     state = trace_state(
         truncated=False,
         reasons=[],
@@ -95,12 +78,6 @@ def test_the_stage_reaches_the_printed_line() -> None:
 
 
 def test_a_stateful_driver_is_not_a_finished_answer() -> None:
-    """#95: SET, PLS and timers carry state a Boolean condition does not.
-
-    The condition folded from the contacts is right, and it answers "when does
-    this change", not "when does this hold". Returning `checked` said there was
-    nothing else to know.
-    """
     from gx3cli.gx3_analysis_state import SEMANTICS
     from gx3cli.trace_gx3_device_dependencies import semantic_gaps
 
@@ -114,14 +91,90 @@ def test_a_stateful_driver_is_not_a_finished_answer() -> None:
 
 
 def test_a_jump_above_a_driver_row_is_reported() -> None:
-    # #98: the targets are not resolved, so which rungs a jump bypasses is
-    # unknown. A trace that crosses one cannot say the rung ran.
     from gx3cli.trace_gx3_device_dependencies import semantic_gaps
 
     gaps = semantic_gaps([
-        {"driver_roles": ["c"], "conditions": [], "cj_upstream": [{"pos": 10}]}
+        {
+            "driver_roles": ["c"],
+            "conditions": [],
+            "strict_logic": True,
+            "mc_zones": [],
+            "cj_upstream": [{"pos": 10, "opcode": "CJ", "condition_text": "[M1]"}],
+        }
     ])
     assert any("jump" in gap for gap in gaps), gaps
+    assert not any("CALL/ECALL" in gap for gap in gaps), gaps
+
+
+def test_an_unresolved_call_is_not_mislabeled_as_a_jump() -> None:
+    """#91: the safety state and its explanation must name the same construct."""
+    from gx3cli.gx3_analysis_state import SEMANTICS
+    from gx3cli.trace_gx3_device_dependencies import execution_guards, semantic_gaps
+
+    site = type(
+        "CallGuard",
+        (),
+        {
+            "opcode": "CALL_CONTEXT",
+            "pos": 99,
+            "condition_text": "CALL P240 target has no following RET",
+            "reason": "CALL P240 target has no following RET",
+            "start_pos": 100,
+            "end_pos": 200,
+        },
+    )()
+    row = {
+        "driver_roles": ["c"],
+        "conditions": [],
+        "strict_logic": True,
+        "mc_zones": [],
+        "cj_upstream": [{
+            "pos": 99,
+            "opcode": "CALL_CONTEXT",
+            "condition_text": site.condition_text,
+            "reason": site.reason,
+        }],
+    }
+    gaps = semantic_gaps([row])
+    assert any("CALL/ECALL" in gap for gap in gaps), gaps
+    assert not any("conditional jump" in gap for gap in gaps), gaps
+
+    state = trace_state(False, [], [], [], gaps)
+    assert state.state == PARTIAL and state.stage == SEMANTICS, state
+
+    guards = execution_guards([site])
+    assert guards == [{
+        "kind": "call_context_unresolved",
+        "opcode": "CALL_CONTEXT",
+        "pos": 99,
+        "condition": site.condition_text,
+        "target_resolved": False,
+        "reason": site.reason,
+        "scope_start_pos": 100,
+        "scope_end_pos": 200,
+    }], guards
+
+
+def test_flat_trace_with_project_execution_context_is_not_checked() -> None:
+    """CALL/MC zones are not silently discarded by the default flat view."""
+    from gx3cli.gx3_analysis_state import SEMANTICS
+    from gx3cli.trace_gx3_device_dependencies import semantic_gaps
+
+    row = {
+        "driver_roles": ["c"],
+        "conditions": [{"device": "M20"}],
+        "strict_logic": False,
+        "mc_zones": [{
+            "kind": "call_invocation",
+            "pointer": 240,
+            "condition_text": "[M10]",
+        }],
+        "cj_upstream": [],
+    }
+    gaps = semantic_gaps([row])
+    assert any("--strict-logic" in gap for gap in gaps), gaps
+    state = trace_state(False, [], [], [], gaps)
+    assert state.state == PARTIAL and state.stage == SEMANTICS, state
 
 
 def test_a_timer_contact_in_the_condition_is_named() -> None:
@@ -131,6 +184,8 @@ def test_a_timer_contact_in_the_condition_is_named() -> None:
         {
             "driver_roles": ["c"],
             "cj_upstream": [],
+            "strict_logic": True,
+            "mc_zones": [],
             "conditions": [{"device": "T580"}, {"device": "M100"}],
         }
     ])
@@ -139,21 +194,20 @@ def test_a_timer_contact_in_the_condition_is_named() -> None:
 
 
 def test_a_plain_coil_says_nothing_extra() -> None:
-    # The opposite error: if everything is partial, the word stops being read.
     from gx3cli.trace_gx3_device_dependencies import semantic_gaps
 
     assert semantic_gaps([
-        {"driver_roles": ["c"], "conditions": [{"device": "M100"}], "cj_upstream": []}
+        {
+            "driver_roles": ["c"],
+            "conditions": [{"device": "M100"}],
+            "strict_logic": True,
+            "mc_zones": [],
+            "cj_upstream": [],
+        }
     ]) == []
 
 
 def test_every_constraint_survives_the_one_that_names_the_state() -> None:
-    """#76's addendum: choosing an overall state must not erase the others.
-
-    A trace can be semantically incomplete and truncated at once. Raising the
-    depth limit does not make the timer modelled, and a reader who only sees
-    the winner fixes one and believes the answer.
-    """
     state = trace_state(
         truncated=True,
         reasons=["max_depth"],
@@ -171,9 +225,6 @@ def test_every_constraint_survives_the_one_that_names_the_state() -> None:
 
 
 def test_the_order_is_what_to_do_next() -> None:
-    # An unread row outranks everything: nothing else can be trusted over it.
-    from gx3cli.gx3_analysis_state import DECODE
-
     state = trace_state(
         truncated=True,
         reasons=["max_depth"],
@@ -186,20 +237,14 @@ def test_the_order_is_what_to_do_next() -> None:
 
 
 def main() -> int:
-    test_a_complete_trace_says_nothing_extra()
-    test_a_trace_that_hit_a_limit_says_which_limit()
-    test_an_unread_driver_row_outranks_a_limit()
-    test_the_japanese_output_says_the_same_thing()
-    test_a_condition_too_large_to_expand_is_a_wiring_limit_not_a_decoding_one()
-    test_an_unread_row_still_outranks_a_capped_one()
-    test_the_stage_reaches_the_printed_line()
-    test_a_stateful_driver_is_not_a_finished_answer()
-    test_a_jump_above_a_driver_row_is_reported()
-    test_a_timer_contact_in_the_condition_is_named()
-    test_a_plain_coil_says_nothing_extra()
-    test_every_constraint_survives_the_one_that_names_the_state()
-    test_the_order_is_what_to_do_next()
-    print("trace state checks passed")
+    tests = [
+        (name, obj)
+        for name, obj in sorted(globals().items())
+        if name.startswith("test_") and callable(obj)
+    ]
+    for _name, test in tests:
+        test()
+    print(f"{len(tests)} trace state checks passed")
     return 0
 
 
