@@ -3,7 +3,7 @@ from __future__ import annotations
 """Constant-aware simplification for dependency tracing.
 
 This module is the bridge between project-wide constant propagation and the
-normal `trace-device` workflow.  It does not decide PLC runtime state.  It only
+normal `trace-device` workflow. It does not decide PLC runtime state. It only
 uses constants that the conservative dead-logic analysis could prove from the
 saved project, then simplifies a rung's Boolean enable expression before the
 trace queue expands upstream devices.
@@ -15,15 +15,20 @@ That gives the useful short-circuit behaviour a maintainer expects:
 - FALSE OR X -> X, so only X remains in the trace.
 - A/B contacts invert a proven coil state in the usual way.
 
-If xref evidence is unavailable, tracing simply falls back to its historical
-behaviour with no pruning.
+If required xref/index-lite evidence is unavailable or stale, tracing simply
+falls back to its historical behaviour with no constant pruning.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, load_external_devices, propagate_constant_devices
+from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, propagate_constant_devices
+from gx3cli.gx3_index_lite import (
+    DEVICE_NAMING,
+    check_input as check_lite_input,
+    connect as connect_lite_index,
+)
 from gx3cli.gx3_ladder_logic import (
     and_logic,
     condition_refs_from_logic,
@@ -62,6 +67,47 @@ class TraceConstantContext:
         }
 
 
+def _load_external_boundaries(root: Path) -> tuple[dict[str, str] | None, str]:
+    """Read external/HMI/communication ownership from a validated lite index.
+
+    Constant pruning is destructive to the search graph, so an absent, stale,
+    old-format, or malformed lite index must not be treated as "zero external
+    writers". In those cases the caller disables pruning and keeps the normal
+    trace instead.
+
+    This opens the DB locally instead of calling ``open_existing`` because that
+    legacy helper can raise before closing its connection on an old/malformed
+    index. Windows keeps that file locked, which turns a safe rejection into a
+    resource leak. Validation here is equivalent, with an unconditional close.
+    """
+    path = lite_db_path(root)
+    if not path.exists():
+        return None, f"index-lite database not found: {path}"
+
+    con = None
+    try:
+        con = connect_lite_index(path)
+        row = con.execute("select value from meta where key='device_naming'").fetchone()
+        if row is None or row["value"] != DEVICE_NAMING:
+            return None, (
+                "index-lite unavailable for constant pruning: index was built by an "
+                "older/incompatible version; rebuild index-lite"
+            )
+        check_lite_input(path, con, root)
+        rows = con.execute(
+            "select device, source_kind, semantic_group from external_sources"
+        ).fetchall()
+        return {
+            str(row["device"]): f"{row['source_kind']}/{row['semantic_group']}"
+            for row in rows
+        }, ""
+    except (Exception, SystemExit) as exc:
+        return None, f"index-lite unavailable for constant pruning: {exc}"
+    finally:
+        if con is not None:
+            con.close()
+
+
 def load_trace_constant_context(
     root: Path,
     rows: list[LadderRow],
@@ -69,10 +115,15 @@ def load_trace_constant_context(
 ) -> TraceConstantContext:
     """Load only constants that project evidence can prove safely.
 
-    The existing trace command does not require an xref DB.  Constant-aware
-    pruning therefore remains optional: missing/stale prerequisites must never
-    make tracing fail or silently turn an unknown into a constant.
+    The existing trace command does not require xref/index-lite databases.
+    Constant-aware pruning therefore remains optional: missing, stale, or
+    malformed prerequisites must never make tracing fail or silently turn an
+    external/HMI/network-written value into a project constant.
     """
+    externals, boundary_reason = _load_external_boundaries(root)
+    if externals is None:
+        return TraceConstantContext({}, False, boundary_reason)
+
     xref_path = default_db_path(root)
     if not xref_path.exists():
         return TraceConstantContext({}, False, f"xref database not found: {xref_path}")
@@ -83,7 +134,6 @@ def load_trace_constant_context(
         return TraceConstantContext({}, False, f"xref unavailable for constant pruning: {exc}")
 
     try:
-        externals = load_external_devices(lite_db_path(root))
         facts, _findings = propagate_constant_devices(
             rows,
             con,

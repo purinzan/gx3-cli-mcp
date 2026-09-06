@@ -14,6 +14,7 @@ be reported as zero findings and treated as normal.
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,7 @@ from gx3cli.gx3_analysis_state import (
     worst,
 )
 from gx3cli.gx3_synthetic_project import create_demo_line_project
+from gx3cli.gx3_topology_conditions import load_trace_constant_context
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -184,6 +186,46 @@ def test_aggregating_nothing_does_not_raise() -> None:
     assert state.as_dict()["stage"] == DISCOVERY
 
 
+def test_trace_constant_pruning_is_disabled_without_index_lite() -> None:
+    """Missing external-boundary evidence is inconclusive, not zero externals."""
+    with tempfile.TemporaryDirectory() as tmp:
+        previous = Path.cwd()
+        os.chdir(tmp)
+        try:
+            root = Path("project")
+            root.mkdir()
+            context = load_trace_constant_context(root, [], [])
+        finally:
+            os.chdir(previous)
+
+    assert context.enabled is False, context
+    assert context.facts == {}, context
+    assert "index-lite database not found" in context.reason, context.reason
+
+
+def test_trace_constant_pruning_is_disabled_for_malformed_index_lite() -> None:
+    """An unreadable boundary index must never be treated as an empty boundary set."""
+    with tempfile.TemporaryDirectory() as tmp:
+        previous = Path.cwd()
+        os.chdir(tmp)
+        try:
+            root = Path("project")
+            root.mkdir()
+            index_dir = Path(".gx3_index")
+            index_dir.mkdir()
+            con = sqlite3.connect(index_dir / "project.sqlite")
+            con.execute("create table unrelated(value text)")
+            con.commit()
+            con.close()
+            context = load_trace_constant_context(root, [], [])
+        finally:
+            os.chdir(previous)
+
+    assert context.enabled is False, context
+    assert context.facts == {}, context
+    assert "index-lite unavailable for constant pruning" in context.reason, context.reason
+
+
 def main() -> int:
     test_a_state_says_why_and_what_to_do()
     test_an_unknown_state_is_refused()
@@ -195,6 +237,8 @@ def main() -> int:
     test_the_five_stages_are_the_five_the_issue_names()
     test_an_unknown_stage_is_refused()
     test_aggregating_nothing_does_not_raise()
+    test_trace_constant_pruning_is_disabled_without_index_lite()
+    test_trace_constant_pruning_is_disabled_for_malformed_index_lite()
     print("analysis state checks passed")
     return 0
 
