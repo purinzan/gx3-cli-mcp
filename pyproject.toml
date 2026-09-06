@@ -27,6 +27,7 @@ Issues = "https://github.com/purinzan/gx3-cli-mcp/issues"
 gx3-cli = "gx3cli.gx3_cli:main"
 gx3-mcp-server = "gx3cli.gx3_mcp_server:main"
 gx3-snapshot-explain = "gx3cli.gx3_live_read:snapshot_main"
+gx3-log-replay = "gx3cli.gx3_live_read:log_replay_main"
 
 [tool.setuptools]
 include-package-data = false
