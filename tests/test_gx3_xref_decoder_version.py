@@ -42,6 +42,10 @@ def test_a_database_from_another_decoder_is_refused() -> None:
         make_db(old, "arg-decode-1")
         expect_refused(old, "a database from an older decoder")
 
+        before_flow_spans = Path(tmp) / "v6_xref.sqlite"
+        make_db(before_flow_spans, "arg-decode-strefs-countspans-6")
+        expect_refused(before_flow_spans, "physical flow spans were not persisted in v6")
+
         unstamped = Path(tmp) / "unstamped_xref.sqlite"
         make_db(unstamped, None)
         expect_refused(unstamped, "a database with no decoder recorded")

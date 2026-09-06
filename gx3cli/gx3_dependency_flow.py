@@ -157,6 +157,7 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
     try:
         rows = con.execute(
             "select source_device, destination_device, opcode, pou, step, range_count, "
+            "source_range_len, destination_range_len, source_detail, destination_detail, "
             "read_modify_write from data_flow"
         ).fetchall()
     except sqlite3.Error:
@@ -171,7 +172,11 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
             "opcode": row["opcode"],
             "pou": row["pou"],
             "step": row["step"],
-            "range_count": int(row["range_count"] or 1),
+            "range_count": int(row["range_count"]),
+            "source_range_len": int(row["source_range_len"]),
+            "destination_range_len": int(row["destination_range_len"]),
+            "source_detail": row["source_detail"],
+            "destination_detail": row["destination_detail"],
             "read_modify_write": bool(row["read_modify_write"]),
         }
         destination = str(row["destination_device"])
@@ -182,7 +187,7 @@ def value_sources(xref_db: Path | None) -> dict[str, list[dict[str, Any]]]:
         # device nothing writes. Asked where D900 came from, the trace answered
         # D401 and marked it terminal -- "this is the origin" -- about a device
         # the BMOV above it fills every scan.
-        for member in _run_members(destination, record["range_count"]):
+        for member in _run_members(destination, record["destination_range_len"]):
             found.setdefault(member, []).append(record)
     return found
 

@@ -202,6 +202,12 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+xrefのデータフロー索引は、読出し側・書込み側の物理範囲を別々に保存します。
+命令の件数`range_count`を範囲長として再利用しません。動的件数やインデックス修飾で
+終端が不明な場合は、`source_range_len` / `destination_range_len`の0で不明を保持します。
+この変更以前のxrefは再構築が必要です。これは範囲内の各語が一対一に対応することや、
+実行時の値・順序を保証するものではありません。
+
 - 解析結果は参考情報です。実設備への変更判断は GX Works3 と現場の検証で確認してください。
 - 一部コマンドは CSV、Markdown、ZIP、SQLite DB などをローカルに生成します。
 - `live-read` は実設備に TCP 接続します。現場ルール、PLC 設定、ネットワーク権限を確認してから使ってください。
