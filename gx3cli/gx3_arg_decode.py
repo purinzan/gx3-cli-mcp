@@ -174,26 +174,35 @@ def base_opcode(opcode: str) -> str:
     return opcode
 
 
+def _manual_writes(opcode: str, op: str, argc: int) -> set[int] | None:
+    manual = manual_write_indices(opcode, argc)
+    if manual is None and opcode != op:
+        manual = manual_write_indices(op, argc)
+    return manual
+
+
 def write_indices(opcode: str, argc: int) -> tuple[set[int] | None, bool]:
     """Return (write index set, is_read_modify_write_dest). None => unknown."""
     op = base_opcode(opcode)
     if COMPARE_RE.match(op):
         return set(), False
     if op in ARITH_OPS:
-        # Kept ahead of the manual table for the read-modify-write flag: the
-        # two-operand form of "+" both reads and writes its destination, which
-        # the operand table does not express.
+        # The two-operand arithmetic form reads and writes its destination.
+        # For longer forms the manual table wins when present: block arithmetic
+        # such as BK+ is (s1),(s2),(d),(n), so "last operand" would call the
+        # count the destination and leave the real result device read-only.
         if argc <= 2:
             return {argc - 1}, True
+        manual = _manual_writes(opcode, op, argc)
+        if manual is not None:
+            return manual, False
         return {argc - 1}, False
     # The manuals name each operand, so they pin the destination down exactly.
     # Preferred over the table below, which was written by hand and put the
     # destination on the wrong operand for WTOB, BTOW, MIDR, MIDW, INSTR,
     # STRDEL, SERDATA, BKAND, BKRST, BREAK, G.INPUT and ZP.CSET -- for most of
     # those it named the count operand as the one being written.
-    manual = manual_write_indices(opcode, argc)
-    if manual is None and opcode != op:
-        manual = manual_write_indices(op, argc)
+    manual = _manual_writes(opcode, op, argc)
     if manual is not None:
         return manual, False
     spec = WRITE_ARG_TABLE.get(op)
@@ -210,7 +219,11 @@ def write_index_basis(opcode: str, argc: int) -> str:
     if COMPARE_RE.match(op):
         return "compare regex"
     if op in ARITH_OPS:
-        return "arithmetic read/modify/write rule" if argc <= 2 else "arithmetic last-operand rule"
+        if argc <= 2:
+            return "arithmetic read/modify/write rule"
+        if _manual_writes(opcode, op, argc) is not None:
+            return "manual operand table"
+        return "arithmetic last-operand rule"
     if manual_write_indices(opcode, argc) is not None:
         return "manual operand table"
     if opcode != op and manual_write_indices(op, argc) is not None:
@@ -295,12 +308,9 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
         occ = decode_args(raw_args, arg_tokens, hop.op, labels)
         wset, rmw = write_indices(hop.op, len(raw_args))
         basis = write_index_basis(hop.op, len(raw_args))
-        # The destination always gets the span. A source gets it only where
-        # the instruction is known to read a run of the same length -- see
-        # SOURCE_RUN_OPERANDS, which is written per instruction because the
-        # operand tables spell BMOV and FMOV identically.
         span, span_basis = block_span(hop.op, raw_args)
         source_runs = source_run_indices(hop.op, len(raw_args)) if span != 1 else set()
+        physical_spans, physical_span_basis = counted_operand_spans(hop.op, raw_args)
         widths = operand_widths(hop.op, len(raw_args))
         for a in occ:
             apply_operand_width(a, widths)
@@ -331,7 +341,17 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
                 )
             else:
                 a.access = "read"
-            a.access_basis = basis
+            if a.arg_index in physical_spans and "indexed" not in (a.detail or ""):
+                physical_span = physical_spans[a.arg_index]
+                a.range_len = physical_span
+                a.detail = (a.detail + "; " if a.detail else "") + (
+                    f"physical span {physical_span} devices"
+                    if physical_span
+                    else "physical span unknown at runtime"
+                )
+                if physical_span_basis:
+                    a.access_basis = physical_span_basis
+            a.access_basis = a.access_basis or basis
         results.append(
             DecodedOperation(
                 role=hop.op,
@@ -368,6 +388,61 @@ def top_level_arg_items(text: str) -> list[str]:
     return [item for item in items if item]
 
 
+# Exceptions where the documented (n) is not already a count of physical PLC
+# devices. Values are (numerator, denominator): physical devices are
+# ceil(n * numerator / denominator). Keep this explicit per instruction and
+# operand; opcode spelling alone does not define the unit.
+COUNTED_OPERAND_FACTORS: dict[str, dict[str, tuple[int, int]]] = {
+    # DFMOV repeats n double-word (32-bit) values at the destination.
+    "DFMOV": {"(d)": (2, 1)},
+    # WTOB separates n bytes from packed source words; BTOW does the reverse.
+    "WTOB": {"(s)": (1, 2), "(d)": (1, 1)},
+    "BTOW": {"(s)": (1, 1), "(d)": (1, 2)},
+    # BK+ operates on n 16-bit elements in each source and result block.
+    "BK+": {"(s1)": (1, 1), "(s2)": (1, 1), "(d)": (1, 1)},
+}
+
+
+def counted_operand_spans(opcode: str, raw_args: list[str]) -> tuple[dict[int, int], str]:
+    """Physical-device spans for documented count-unit exceptions.
+
+    A zero span means the count is held in a device and the static end is
+    unknown. Instructions not listed above deliberately return no overrides;
+    their existing conservative/generic behavior stays in place until their
+    count unit is documented rather than guessed.
+    """
+    argc = len(raw_args)
+    op = base_opcode(opcode)
+    factors = COUNTED_OPERAND_FACTORS.get(opcode) or COUNTED_OPERAND_FACTORS.get(op)
+    if not factors:
+        return {}, ""
+    names = manual_operand_names(opcode, argc) or manual_operand_names(op, argc)
+    if names is None or "(n)" not in names:
+        return {}, ""
+    count_arg = raw_args[names.index("(n)")]
+    if not count_arg.startswith("c{"):
+        return (
+            {names.index(name): 0 for name in factors if name in names},
+            "documented count unit; length in a device",
+        )
+    match = CONST_VALUE_RE.search(count_arg)
+    try:
+        count = int(match.group(1)) if match else 0
+    except ValueError:
+        count = 0
+    if count < 1:
+        return (
+            {names.index(name): 0 for name in factors if name in names},
+            "documented count unit; length unreadable",
+        )
+    spans = {
+        names.index(name): (count * numerator + denominator - 1) // denominator
+        for name, (numerator, denominator) in factors.items()
+        if name in names
+    }
+    return spans, "documented count unit"
+
+
 # Instructions whose source operand covers the same run as the destination.
 #
 # The operand tables cannot tell these apart. BMOV and FMOV are both spelled
@@ -395,8 +470,8 @@ def operand_widths(opcode: str, argc: int) -> dict[int, int]:
     canonical views of one operation disagreed, the occurrence layer recording
     a single device where the value-flow layer recorded a pair.
 
-    Only the width. The count of a block instruction is a separate thing and is
-    already in devices, so multiplying the two would expand a run twice.
+    Only the fixed width. Count-bearing operations may override it with a
+    documented physical span; the numeric count is not assumed to mean words.
     """
     types = manual_operand_types(opcode, argc) or manual_operand_types(base_opcode(opcode), argc)
     if types is None:
@@ -415,7 +490,7 @@ def apply_operand_width(occ: ArgOcc, widths: dict[int, int]) -> None:
     Left alone in three cases, each for its own reason:
 
     an index register     it is one device, whatever it modifies
-    a run already sized   a block count is in devices; multiplying double-counts
+    a run already sized   its physical extent was already resolved elsewhere
     an index-modified base  which devices it reaches is not knowable from the
                             file, so a width here would name the wrong ones
     """
@@ -445,18 +520,21 @@ def source_run_indices(opcode: str, argc: int) -> set[int]:
 
 
 def block_span(opcode: str, raw_args: list[str]) -> tuple[int, str]:
-    """How many devices a block instruction's destination covers.
+    """How many physical devices a block instruction's destination covers.
 
-    The manuals name a count operand "(n)" on the instructions that work on a
-    run of devices: BMOV, FMOV, BKRST, BK+ and the rest. The ladder names only
-    the first device of the run, so a cross-reference built from the operands
-    alone records D64061 for a "BMOV .. D64061 K4" and nothing for the D64062,
-    D64063 and D64064 it also writes. Searching for one of those answered "no
-    occurrences", which reads as "nothing writes this device".
-
-    Returns (length, basis): 1 for an ordinary single device, and 0 for a run
-    whose count is held in a device, so its end is not knowable statically.
+    Explicit documented count-unit exceptions win. Otherwise the legacy
+    generic rule remains: a manual (n) is treated as the physical run length,
+    with zero meaning a device-held/unknown static extent. The generic fallback
+    is intentionally retained until each remaining count-bearing instruction
+    is classified under #122 rather than guessed from its opcode spelling.
     """
+    explicit, explicit_basis = counted_operand_spans(opcode, raw_args)
+    if explicit:
+        wset, _ = write_indices(opcode, len(raw_args))
+        for index in sorted(wset or set()):
+            if index in explicit:
+                return explicit[index], explicit_basis
+
     argc = len(raw_args)
     names = manual_operand_names(opcode, argc)
     if names is None:
