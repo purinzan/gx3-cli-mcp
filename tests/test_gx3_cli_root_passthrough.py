@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from gx3cli.gx3_cli import COMMANDS
-from gx3cli.gx3_project_paths import ROOT_ENV
+from gx3cli.gx3_project_paths import LEGACY_ROOT_ENV, ROOT_ENV
 from gx3cli.gx3_synthetic_project import create_demo_line_project
 
 
@@ -23,6 +23,35 @@ REPO = Path(__file__).resolve().parents[1]
 # The commands with no --root option of their own: their module-level ROOT is
 # whatever default_project_root() resolved at import time.
 ENV_ROOT_COMMANDS = ("used-devices", "hmi-build-info", "extended-instructions")
+
+
+def cli_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.pop(ROOT_ENV, None)
+    env.pop(LEGACY_ROOT_ENV, None)
+    return env
+
+
+def run_cli(work: Path, args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "gx3cli.gx3_cli", *args],
+        cwd=work,
+        env=cli_env(),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def two_projects(work: Path) -> tuple[Path, Path]:
+    one = create_demo_line_project(work / "_extracted_one", overwrite=True)
+    two = create_demo_line_project(work / "_extracted_two", overwrite=True)
+    return one, two
 
 
 def ladder_row_count(root: Path) -> int:
@@ -61,21 +90,7 @@ def test_requested_root_reaches_a_command_that_reads_the_environment() -> None:
         decoy_rows = ladder_row_count(decoy)
         assert wanted_rows > decoy_rows > 0, (wanted_rows, decoy_rows)
 
-        env = dict(os.environ)
-        env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        env.pop(ROOT_ENV, None)
-        completed = subprocess.run(
-            [sys.executable, "-m", "gx3cli.gx3_cli", "extended-instructions", "--root", str(wanted)],
-            cwd=work,
-            env=env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
+        completed = run_cli(work, ["extended-instructions", "--root", str(wanted)])
         assert completed.returncode == 0, completed.stdout
 
         summary = work / "project_extended_instruction_knowledge.txt"
@@ -90,9 +105,63 @@ def test_requested_root_reaches_a_command_that_reads_the_environment() -> None:
         )
 
 
+def test_context_and_doctor_refuse_to_guess_between_projects() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        one, two = two_projects(work)
+        expected_names = {one.name, two.name}
+        for command in ("context", "doctor"):
+            completed = run_cli(work, [command])
+            assert completed.returncode != 0, (command, completed.stdout)
+            assert "more than one project" in completed.stdout, (command, completed.stdout)
+            # Windows can spell the same TEMP parent with its 8.3 short name
+            # (RUNNER~1) in one process and the long account name in another.
+            # The project leaf names are the stable evidence that both choices
+            # were actually listed.
+            listed_names = {
+                Path(line.strip()).name
+                for line in completed.stdout.splitlines()
+                if line.startswith("  ") and line.strip()
+            }
+            assert expected_names <= listed_names, (expected_names, listed_names, completed.stdout)
+
+
+def test_context_uses_the_explicit_root_instead_of_autodetecting_again() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        one, _two = two_projects(work)
+        completed = run_cli(work, ["context", "--root", str(one)])
+        assert completed.returncode == 0, completed.stdout
+        target_line = next(
+            (line for line in completed.stdout.splitlines() if line.startswith("Target root: ")),
+            "",
+        )
+        assert target_line, completed.stdout
+        reported = Path(target_line.split(": ", 1)[1]).resolve()
+        assert reported == one.resolve(), (reported, one.resolve(), completed.stdout)
+
+
+def test_explicit_doctor_root_and_help_still_bypass_ambiguity() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        one, _two = two_projects(work)
+
+        doctor = run_cli(work, ["doctor", "--root", str(one), "--warn-only"])
+        assert doctor.returncode == 0, doctor.stdout
+        assert "more than one project" not in doctor.stdout
+
+        for args in (["context", "--help"], ["doctor", "--help"]):
+            help_result = run_cli(work, list(args))
+            assert help_result.returncode == 0, help_result.stdout
+            assert "more than one project" not in help_result.stdout
+
+
 def main() -> int:
     test_env_root_commands_have_no_root_option()
     test_requested_root_reaches_a_command_that_reads_the_environment()
+    test_context_and_doctor_refuse_to_guess_between_projects()
+    test_context_uses_the_explicit_root_instead_of_autodetecting_again()
+    test_explicit_doctor_root_and_help_still_bypass_ambiguity()
     print("cli root passthrough checks passed")
     return 0
 
