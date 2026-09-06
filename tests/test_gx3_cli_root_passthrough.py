@@ -122,7 +122,13 @@ def test_context_uses_the_explicit_root_instead_of_autodetecting_again() -> None
         one, _two = two_projects(work)
         completed = run_cli(work, ["context", "--root", str(one)])
         assert completed.returncode == 0, completed.stdout
-        assert f"Target root: {one.resolve()}" in completed.stdout, completed.stdout
+        target_line = next(
+            (line for line in completed.stdout.splitlines() if line.startswith("Target root: ")),
+            "",
+        )
+        assert target_line, completed.stdout
+        reported = Path(target_line.split(": ", 1)[1]).resolve()
+        assert reported == one.resolve(), (reported, one.resolve(), completed.stdout)
 
 
 def test_explicit_doctor_root_and_help_still_bypass_ambiguity() -> None:
