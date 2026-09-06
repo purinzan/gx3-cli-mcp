@@ -625,63 +625,67 @@ def print_cross_where_used(args: argparse.Namespace, device: str) -> None:
     project = args.project or project_label_from_root(Path(args.root))
     link_con = sqlite3.connect(link_db)
     link_con.row_factory = sqlite3.Row
-    rows = link_con.execute(
-        """
-        select *, project_b as other_project, device_b as other_device
-        from link_map
-        where project_a=? and device_a=?
-        union all
-        select *, project_a as other_project, device_a as other_device
-        from link_map
-        where project_b=? and device_b=?
-        order by confidence desc, other_project, other_device
-        """,
-        (project, device, project, device),
-    ).fetchall()
-    print(f"\nCross-link targets via {link_db} ({project}:{device}):")
-    if not rows:
-        print("  (none)")
-        link_con.close()
-        return
-    for link in rows[: args.cross_limit]:
-        other_project = str(link["other_project"])
-        other_device = str(link["other_device"])
-        print(
-            f"  -> {other_project}:{other_device} "
-            f"type={link['link_type']} dir={link['direction']} confidence={link['confidence']} role={link['role']}"
-        )
-        db_row = link_con.execute("select xref_db from project where label=?", (other_project,)).fetchone()
-        if not db_row:
-            print("     xref db: unknown project in link-map")
-            continue
-        xref_path = Path(str(db_row["xref_db"]))
-        if not xref_path.exists():
-            print(f"     xref db missing: {xref_path}")
-            continue
-        other_con = sqlite3.connect(xref_path)
-        other_con.row_factory = sqlite3.Row
-        other_rows = other_con.execute(
-            "select * from xref where device=? order by pou, pos limit ?",
-            (other_device, args.cross_xref_limit),
+    try:
+        rows = link_con.execute(
+            """
+            select *, project_b as other_project, device_b as other_device
+            from link_map
+            where project_a=? and device_a=?
+            union all
+            select *, project_a as other_project, device_a as other_device
+            from link_map
+            where project_b=? and device_b=?
+            order by confidence desc, other_project, other_device
+            """,
+            (project, device, project, device),
         ).fetchall()
-        if not other_rows:
-            print("     no xref rows")
-            other_con.close()
-            continue
-        writers = [r for r in other_rows if r["access"] in {"write", "both"}]
-        readers = [r for r in other_rows if r["access"] == "read"]
-        if writers:
-            print(f"     Writers ({len(writers)} shown):")
-            for r in writers:
-                print("   " + fmt_row(r))
-        if readers:
-            print(f"     Readers ({len(readers)} shown):")
-            for r in readers:
-                print("   " + fmt_row(r))
-        other_con.close()
-    if len(rows) > args.cross_limit:
-        print(f"  ... {len(rows) - args.cross_limit} more cross-link targets suppressed")
-    link_con.close()
+        print(f"\nCross-link targets via {link_db} ({project}:{device}):")
+        if not rows:
+            print("  (none)")
+            return
+        for link in rows[: args.cross_limit]:
+            other_project = str(link["other_project"])
+            other_device = str(link["other_device"])
+            print(
+                f"  -> {other_project}:{other_device} "
+                f"type={link['link_type']} dir={link['direction']} confidence={link['confidence']} role={link['role']}"
+            )
+            db_row = link_con.execute(
+                "select root, xref_db from project where label=?", (other_project,)
+            ).fetchone()
+            if not db_row:
+                print("     xref db: unknown project in link-map")
+                continue
+            xref_path = Path(str(db_row["xref_db"]))
+            if not xref_path.exists():
+                print(f"     xref db missing: {xref_path}")
+                continue
+            other_root = Path(str(db_row["root"]))
+            other_con = open_xref_db(xref_path, read_only=True, root=other_root)
+            try:
+                other_rows = other_con.execute(
+                    "select * from xref where device=? order by pou, pos limit ?",
+                    (other_device, args.cross_xref_limit),
+                ).fetchall()
+                if not other_rows:
+                    print("     no xref rows")
+                    continue
+                writers = [r for r in other_rows if r["access"] in {"write", "both"}]
+                readers = [r for r in other_rows if r["access"] == "read"]
+                if writers:
+                    print(f"     Writers ({len(writers)} shown):")
+                    for r in writers:
+                        print("   " + fmt_row(r))
+                if readers:
+                    print(f"     Readers ({len(readers)} shown):")
+                    for r in readers:
+                        print("   " + fmt_row(r))
+            finally:
+                other_con.close()
+        if len(rows) > args.cross_limit:
+            print(f"  ... {len(rows) - args.cross_limit} more cross-link targets suppressed")
+    finally:
+        link_con.close()
 
 
 def downstream(args: argparse.Namespace) -> int:

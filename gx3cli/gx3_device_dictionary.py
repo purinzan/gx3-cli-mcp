@@ -5,12 +5,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import sqlite3
 from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
-from gx3cli.gx3_xref import default_db_path
+from gx3cli.gx3_xref import default_db_path, open_xref_db
 from gx3cli.review_gx3_project import load_comments_for_root
 
 
@@ -39,56 +38,57 @@ def collect_dictionary(root: Path, xref_db: Path | None = None) -> list[dict[str
         }
 
     if xref_db and xref_db.exists():
-        con = sqlite3.connect(xref_db)
-        con.row_factory = sqlite3.Row
-        for row in con.execute(
-            """
-            select device, device_type, number,
-                   sum(case when access='read' then 1 else 0 end) as read_count,
-                   sum(case when access in ('write','both') then 1 else 0 end) as write_count,
-                   sum(case when access='ref' then 1 else 0 end) as ref_count,
-                   count(*) as occurrences,
-                   min(step) as first_step,
-                   group_concat(distinct pou) as pous,
-                   max(comment) as xref_comment
-            from xref
-            group by device, device_type, number
-            order by device_type, number
-            """
-        ):
-            device = str(row["device"])
-            item = by_device.setdefault(
-                device,
-                {
-                    "address": device,
-                    "device": device,
-                    "device_prefix": row["device_type"],
-                    "device_number": row["number"],
-                    "comment": row["xref_comment"] or "",
-                    "comment_ja": "",
-                    "comment_en": "",
-                    "all_text": row["xref_comment"] or "",
-                    "source": "xref",
-                    "read_count": 0,
-                    "write_count": 0,
-                    "ref_count": 0,
-                    "occurrences": 0,
-                    "pous": [],
-                    "first_step": None,
-                    "confidence": "referenced",
-                },
-            )
-            if not item.get("comment") and row["xref_comment"]:
-                item["comment"] = row["xref_comment"]
-                item["all_text"] = row["xref_comment"]
-            item["read_count"] = int(row["read_count"] or 0)
-            item["write_count"] = int(row["write_count"] or 0)
-            item["ref_count"] = int(row["ref_count"] or 0)
-            item["occurrences"] = int(row["occurrences"] or 0)
-            item["first_step"] = row["first_step"]
-            item["pous"] = sorted(p for p in str(row["pous"] or "").split(",") if p)
-            item["source"] = "gx3-comment+xref" if item["source"] == "gx3-comment" else "xref"
-        con.close()
+        con = open_xref_db(xref_db, read_only=True, root=root)
+        try:
+            for row in con.execute(
+                """
+                select device, device_type, number,
+                       sum(case when access='read' then 1 else 0 end) as read_count,
+                       sum(case when access in ('write','both') then 1 else 0 end) as write_count,
+                       sum(case when access='ref' then 1 else 0 end) as ref_count,
+                       count(*) as occurrences,
+                       min(step) as first_step,
+                       group_concat(distinct pou) as pous,
+                       max(comment) as xref_comment
+                from xref
+                group by device, device_type, number
+                order by device_type, number
+                """
+            ):
+                device = str(row["device"])
+                item = by_device.setdefault(
+                    device,
+                    {
+                        "address": device,
+                        "device": device,
+                        "device_prefix": row["device_type"],
+                        "device_number": row["number"],
+                        "comment": row["xref_comment"] or "",
+                        "comment_ja": "",
+                        "comment_en": "",
+                        "all_text": row["xref_comment"] or "",
+                        "source": "xref",
+                        "read_count": 0,
+                        "write_count": 0,
+                        "ref_count": 0,
+                        "occurrences": 0,
+                        "pous": [],
+                        "first_step": None,
+                        "confidence": "referenced",
+                    },
+                )
+                if not item.get("comment") and row["xref_comment"]:
+                    item["comment"] = row["xref_comment"]
+                    item["all_text"] = row["xref_comment"]
+                item["read_count"] = int(row["read_count"] or 0)
+                item["write_count"] = int(row["write_count"] or 0)
+                item["ref_count"] = int(row["ref_count"] or 0)
+                item["occurrences"] = int(row["occurrences"] or 0)
+                item["first_step"] = row["first_step"]
+                item["pous"] = sorted(p for p in str(row["pous"] or "").split(",") if p)
+                item["source"] = "gx3-comment+xref" if item["source"] == "gx3-comment" else "xref"
+        finally:
+            con.close()
 
     return sorted(by_device.values(), key=lambda r: (str(r["device_prefix"]), int(r["device_number"])))
 

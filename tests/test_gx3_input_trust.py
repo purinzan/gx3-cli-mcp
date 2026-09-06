@@ -19,6 +19,7 @@ What is pinned here is mostly the shape of the refusal, because the failure
 mode in all three is a run that completes.
 """
 
+import argparse
 import contextlib
 import io
 import os
@@ -31,13 +32,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gx3cli.gx3_cli import ambiguous_project
+from gx3cli.gx3_device_dictionary import collect_dictionary
 from gx3cli.gx3_label_resolve import (
     LABELS_ABSENT,
     LABELS_UNKNOWN_SCHEMA,
     LABELS_UNREADABLE,
     load_label_resolver,
 )
-from gx3cli.gx3_xref import main as xref_main
+from gx3cli.gx3_link_map import ProjectSpec, load_project_devices
+from gx3cli.gx3_xref import main as xref_main, print_cross_where_used
 from test_gx3_shared_reach import coil, write_program
 
 
@@ -47,6 +50,30 @@ ROOT = Path(__file__).resolve().parents[1]
 def two_projects(work: Path) -> None:
     write_program(work / "_extracted_one", [("_guid/a", coil("a", 1, 100))])
     write_program(work / "_extracted_two", [("_guid/a", coil("a", 2, 200))])
+
+
+def build_xref(root: Path, db: Path) -> None:
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert xref_main(["--root", str(root), "--db", str(db), "build"]) == 0
+
+
+def foreign_xref_fixture(work: Path) -> tuple[Path, Path, Path]:
+    one = work / "one"
+    two = work / "two"
+    write_program(one, [("_guid/a", coil("a", 1, 100))])
+    write_program(two, [("_guid/a", coil("a", 2, 200))])
+    db = work / "two_xref.sqlite"
+    build_xref(two, db)
+    return one, two, db
+
+
+def assert_foreign_xref_rejected(call) -> None:
+    try:
+        call()
+    except SystemExit as stopped:
+        assert "xref db was built from a different input" in str(stopped), str(stopped)
+    else:
+        raise AssertionError("a foreign xref was accepted as if it belonged to the selected project")
 
 
 def run_cli(work: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -115,6 +142,59 @@ def test_one_project_is_never_ambiguous() -> None:
             assert ambiguous_project("metrics", []) == ""
         finally:
             os.chdir(previous)
+
+
+def test_device_dictionary_rejects_another_projects_xref() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        one, _two, foreign = foreign_xref_fixture(Path(tmp))
+        assert_foreign_xref_rejected(lambda: collect_dictionary(one, foreign))
+
+
+def test_link_map_rejects_another_projects_xref() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        one, _two, foreign = foreign_xref_fixture(Path(tmp))
+        assert_foreign_xref_rejected(
+            lambda: load_project_devices(ProjectSpec(label="one", root=one, db=foreign))
+        )
+
+
+def test_cross_where_used_rejects_a_swapped_linked_xref() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        one, _two, foreign = foreign_xref_fixture(work)
+        link_db = work / "link_map.sqlite"
+        con = sqlite3.connect(link_db)
+        con.executescript(
+            """
+            create table project(label text primary key, root text not null, xref_db text not null);
+            create table link_map(
+                id integer primary key autoincrement,
+                project_a text not null, device_a text not null,
+                project_b text not null, device_b text not null,
+                link_type text not null, link_addr text,
+                direction text, confidence text, role text, evidence text
+            );
+            """
+        )
+        con.execute(
+            "insert into project(label, root, xref_db) values (?, ?, ?)",
+            ("other", str(one), str(foreign)),
+        )
+        con.execute(
+            "insert into link_map(project_a, device_a, project_b, device_b, link_type, "
+            "link_addr, direction, confidence, role, evidence) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("current", "M100", "other", "M200", "exact-device", "M100", "current_to_other", "high", "", "test"),
+        )
+        con.commit()
+        con.close()
+
+        args = argparse.Namespace(
+            link_db=str(link_db), project="current", root=str(one),
+            cross_limit=20, cross_xref_limit=20,
+        )
+        assert_foreign_xref_rejected(
+            lambda: print_cross_where_used(args, "M100")
+        )
 
 
 def test_a_label_database_that_will_not_open_stops_the_build() -> None:
@@ -189,6 +269,9 @@ def main() -> int:
     test_help_and_version_never_ask_for_a_project()
     test_a_project_named_positionally_settles_it_too()
     test_one_project_is_never_ambiguous()
+    test_device_dictionary_rejects_another_projects_xref()
+    test_link_map_rejects_another_projects_xref()
+    test_cross_where_used_rejects_a_swapped_linked_xref()
     test_a_label_database_that_will_not_open_stops_the_build()
     test_no_label_database_is_not_a_failure()
     test_a_schema_this_build_does_not_know_is_reported_not_fatal()
