@@ -149,3 +149,18 @@ ld-st 25→27。counts_forが対象集合を一括照会する固定2文で、�
 open回数（3、multi-pouは6）、rows/comments各1回、入力hash読込みは変更なし。
 時間・Python peak・累積RSSは既存予算内。これは当該6合成検体の照会コスト測定で、
 全プロジェクト規模やWindows性能を保証しない。通常OUTの定数証明の完全性とも別。
+
+## 値フローの検証・読取りsnapshot化
+
+`eeca7ff23248240c8338aed0d6421c1d87577cd7`→`6d48bf687f6075ff7765f13ed8f889881cb6da57`。
+同じv2 harnessでCLI同様のパス選択とbuild_flowを測定した。前版のprobeと再openも
+測定に含む。固定6検体・各3回を同じ環境で順次実行し、全入力hashが一致。
+中央値msはsmall 3.08→2.96、wide 21.53→21.42、deep 24.45→22.55、
+large-span 15.35→16.70、multi-pou 24.90→23.48、ld-st 22.72→22.81。
+
+値フローphaseのSQLite openは3→2（multi-pouは6→5）、SQLは9→11
+（multi-pouは12→14）。BEGINとST能力差の確認が各1回増える。
+rows/commentsは各1回、labelsは0回、入力hash読込み回数は変更なし。
+Python peak中央値の増分は最大約60KiBで、値フローphaseの時間・Python peak・
+累積RSSは前述の予算内。構造的なSQL/open予算も回帰テストへ追加した。
+速度改善の一般化はしない。全入力の同時変更防止、Windows性能、実案件規模は未検証。
