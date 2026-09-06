@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: ["main"]
+    paths: ["pyproject.toml"]
 
 jobs:
   build:
@@ -19,6 +21,9 @@ jobs:
       - name: Install build
         run: python -m pip install build
 
+      - name: Run tests
+        run: python run_tests.py
+
       - name: Run source release gate
         run: python scripts/release_gate.py .
 
@@ -28,14 +33,16 @@ jobs:
       - name: Run artifact release gate
         run: python scripts/release_gate.py dist/*.whl dist/*.tar.gz
 
-      - name: Verify the tag matches the packaged version
+      - name: Verify the ref matches the packaged version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           pkg=$(ls dist/*.whl | sed -E 's/.*gx3_cli_mcp-([^-]+)-.*/\1/')
-          echo "tag=$tag packaged=$pkg"
-          if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag $tag does not match packaged version $pkg (bump version in pyproject.toml)"
-            exit 1
+          echo "ref=$GITHUB_REF_NAME type=$GITHUB_REF_TYPE packaged=$pkg"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$pkg" ]; then
+              echo "::error::tag $tag does not match packaged version $pkg (bump version in pyproject.toml)"
+              exit 1
+            fi
           fi
 
       - name: Upload distributions
@@ -61,26 +68,46 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    # Four tags shipped before anyone noticed there were no GitHub Releases to
-    # go with them, which reads from the outside as an unmaintained project.
     needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download distributions
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
 
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            version=$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(data["project"]["version"])
+          PY
+          )
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ steps.release.outputs.tag }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.release.outputs.tag }}" \
             --generate-notes \
             --latest \
             dist/*
