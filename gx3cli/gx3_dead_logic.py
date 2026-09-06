@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
-from gx3cli.gx3_analysis_state import checked, not_evaluated
+from gx3cli.gx3_analysis_state import AnalysisState, PARTIAL, SEMANTICS, checked, not_evaluated
 from gx3cli.gx3_index_lite import external_sources_from, open_existing
 from gx3cli.gx3_ladder_logic import (
     condition_refs_from_logic,
@@ -457,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
         """
         select device, device_type,
                sum(case when access in ('write','both') then 1 else 0 end) as writes,
-               sum(case when access='read' then 1 else 0 end) as reads,
+               sum(case when access in ('read','both') then 1 else 0 end) as reads,
                sum(case when access='ref' then 1 else 0 end) as refs,
                sum(case when role='SET' then 1 else 0 end) as sets,
                sum(case when role='RST' then 1 else 0 end) as rsts,
@@ -482,13 +482,22 @@ def main(argv: list[str] | None = None) -> int:
         ).fetchall()
         return "; ".join(f"{r['pou']} st{r['step']}" for r in rows)
 
-    # 1) contacts on never-written internal bit devices ------------------------
+    # 1) No indexed writer is an observation, never an initial/retained value.
+    contact_counts = counts_for(con, [device for device, stat in stats.items()
+        if stat["device_type"] in INTERNAL_BIT_TYPES and stat["reads"]])
+    contact_state = AnalysisState(
+        PARTIAL, stage=SEMANTICS,
+        reason="no indexed writer does not determine contact state; retained/initial values, external and unparsed writes remain possible",
+        next_step="inspect initialization, retention, external writers and unsupported program sources in GX Works3",
+        detail={"scope": "indexed physical writer observations only"},
+    ) if boundary_state.conclusive else boundary_state
+    print(contact_state.line("unwritten-contact"))
     for device, s in sorted(stats.items()):
         if not boundary_state.conclusive:
             continue
         if s["device_type"] not in INTERNAL_BIT_TYPES:
             continue
-        if s["writes"] or s["refs"]:
+        if contact_counts.get(device, {}).get("write") or s["refs"]:
             continue
         if device in externals:
             continue
@@ -505,28 +514,20 @@ def main(argv: list[str] | None = None) -> int:
                 (device,),
             )
         }
-        if roles.get("a"):
-            findings.append(
-                {
-                    "category": "const-off-contact",
+        for role in ("a", "b"):
+            if not roles.get(role):
+                continue
+            findings.append({
+                    "category": "unwritten-contact",
                     "device": device,
                     "comment": s["comment"] or "",
-                    "count": roles["a"],
-                    "where": usage_sites(device, ("read",)),
-                    "note": "NO contact, no writer found -> branch never conducts",
-                }
-            )
-        if roles.get("b"):
-            findings.append(
-                {
-                    "category": "always-on-contact",
-                    "device": device,
-                    "comment": s["comment"] or "",
-                    "count": roles["b"],
-                    "where": usage_sites(device, ("read",)),
-                    "note": "NC contact, no writer found -> always closed",
-                }
-            )
+                    "count": roles[role],
+                    "where": usage_sites(device, ("read", "both")),
+                    "contact_role": role,
+                    "analysis_state": contact_state.state,
+                    "analysis_stage": contact_state.stage,
+                    "note": "no indexed physical writer found; contact value is unknown",
+                })
 
     # 2) rows intentionally disabled via SM400/SM401 ---------------------------
     sm_rows = con.execute(
@@ -623,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
     print("")
     category_order = [
         "constant-output", "constant-device", "dead-contact", "redundant-contact",
-        "const-off-contact", "always-on-contact", "sm-disabled-row",
+        "unwritten-contact", "sm-disabled-row",
         "unread-coil", "unread-word", "set-without-rst",
     ]
     for cat in category_order:
@@ -643,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     out = out_dir / f"{prefix}.csv"
     fieldnames = [
         "category", "device", "constant_state", "comment", "count", "where",
-        "note", "chain", "chain_depth", "roots",
+        "note", "chain", "chain_depth", "roots", "contact_role", "analysis_state", "analysis_stage",
     ]
     with out.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -658,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
     state_path.write_text(json.dumps({
         "root": str(root),
         "external_boundary": boundary_state.as_dict(),
+        "unwritten_contact_analysis": contact_state.as_dict(),
         "boundary_dependent_checks_evaluated": boundary_state.conclusive,
         "constant_propagation_evaluated": boundary_state.conclusive and not args.no_constant_propagation,
         "scope": "saved-project static observations, not PLC runtime guarantees",

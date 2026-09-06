@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+dead-logicの`unwritten-contact`は「索引に物理writerが見つからない」という観測です。
+旧`const-off-contact` / `always-on-contact`のようにA/B接点の値を断定しません。
+CSVの`contact_role`はa/b、`analysis_state`はpartial、定数値は空欄です。
+初期値・保持値・未解析領域・外部書込みを確認する必要があり、sidecarの
+`unwritten_contact_analysis`にその制約を残します。範囲内writerも共通readerで数えます。
+これは通常OUTからの定数伝播の証明条件すべてを解決する変更ではありません。
+
 dependency-flow / graphの値フローは、実際に使うSQLite読取りトランザクション内で
 入力・版・基本構造を照合します。パスを選んだ時点の検証結果を再利用しません。
 `value_flow_analysis`は保存LD値フローの評価範囲を表し、未取得/必要表欠損を未評価、

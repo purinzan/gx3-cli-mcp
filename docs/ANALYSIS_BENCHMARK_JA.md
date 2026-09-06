@@ -135,6 +135,21 @@ loader回数とfingerprint読込みは前と同じ。Python peak中央値は増�
 process peak RSS中央値の増加も最大約0.24MiBで、いずれも前述の予算内だった。
 単独の速度改善を狙う変更ではなく、構造検証の追加コストが固定的であることの確認。
 
+## dead-logic未書込み接点の照会比較
+
+`eeca7ff23248240c8338aed0d6421c1d87577cd7`→`65876a002d5c96f419f3f48235497b2e794867ec`。
+既存のfixture/measureを使い、固定6検体のprepare後にdead_logic.mainを
+root・xref・lite・一時出力先指定で実行。各caseを別processで3回、前後を順次測定。
+出力のStringIOのみreconfigureを受理するadapterを使用し、解析関数は差替えない。
+入力hash全一致。中央値msはsmall 8.49→8.54、wide 22.45→22.22、deep 37.61→36.37、
+large-span 7.74→7.68、multi-pou 37.04→37.71、ld-st 35.76→36.47。
+
+SQLはsmall/deep 24→26、wide 24→24、large-span 26→28、multi-pou 27→29、
+ld-st 25→27。counts_forが対象集合を一括照会する固定2文で、対象なしのwideは増分0。
+open回数（3、multi-pouは6）、rows/comments各1回、入力hash読込みは変更なし。
+時間・Python peak・累積RSSは既存予算内。これは当該6合成検体の照会コスト測定で、
+全プロジェクト規模やWindows性能を保証しない。通常OUTの定数証明の完全性とも別。
+
 ## 値フローの検証・読取りsnapshot化
 
 `eeca7ff23248240c8338aed0d6421c1d87577cd7`→`6d48bf687f6075ff7765f13ed8f889881cb6da57`。

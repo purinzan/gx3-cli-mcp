@@ -307,6 +307,47 @@ def test_external_boundary_failures_are_not_empty_evidence() -> None:
                     assert not ctx.states["constant-chain"].conclusive
 
 
+def test_no_writer_is_an_observation_not_a_constant_proof() -> None:
+    from test_gx3_shared_reach import write_program
+    from test_gx3_block_range import operation_row
+    from gx3cli.gx3_workspace import prepare
+
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "project"
+        write_program(root, [
+            ("range", operation_row("MOV", "K_1:M:Ks", "c{s=#:v=16}:M{b=d{s=#:a=96:vt=nn}:m=c{s=#:v=4}}")),
+            *[(f"contact-{device}-{role}", generate_rung(
+                {"device": device} if role == "a" else {"not": {"device": device}},
+                {"type": "coil", "device": "Y0"})[0])
+              for device in ("M95", "M96", "M100", "M111", "M112", "L100")
+              for role in ("a", "b")],
+        ])
+        built = prepare(root)
+        # Exercise the accepted empty-classification boundary. Instruction/xref
+        # facts still come from the real decoder, not handwritten occurrences.
+        with closing(sqlite3.connect(built.index.path)) as lite, lite:
+            lite.execute("delete from external_sources")
+        result = subprocess.run([
+            sys.executable, "-m", "gx3cli.gx3_dead_logic", "--root", str(root),
+            "--db", str(built.xref.path), "--lite-db", str(built.index.path),
+            "--output-dir", str(work / "out"), "--prefix", "contacts",
+        ], cwd=work, env=dict(os.environ, PYTHONPATH=str(repo)),
+            capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        with (work / "out" / "contacts.csv").open(encoding="utf-8-sig") as handle:
+            findings = list(csv.DictReader(handle))
+        assert not any(f["category"] in {"const-off-contact", "always-on-contact"} for f in findings), findings
+        observations = [f for f in findings if f["category"] == "unwritten-contact"]
+        assert {(f["device"], f["contact_role"]) for f in observations} == {
+            (device, role) for device in ("M95", "M112", "L100") for role in ("a", "b")
+        }, observations
+        assert all(f["analysis_state"] == "partial" and not f["constant_state"] for f in observations)
+        state = json.loads((work / "out" / "contacts_analysis.json").read_text(encoding="utf-8"))
+        assert state["unwritten_contact_analysis"]["stage"] == "semantics", state
+
+
 def main() -> int:
     tests = [
         (name, obj)
