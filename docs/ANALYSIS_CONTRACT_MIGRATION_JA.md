@@ -33,6 +33,12 @@
 
 ## 共通基盤の変更と残り
 
+通常OUTの定数証明は、保存されたST/inline-ST coverageがpartialなら停止する。
+STDBの未対応IFに隠れたwriterを実builderで再現し、trace/dead-logic/Doctorに
+decode段階の制約とsource位置を伝える。coverage表欠損も未評価でありSTなしではない。
+対応済みSTの既知writerは既存counts_forで扱う。FBD/未解読LD、保持/初期値、
+実行条件、外部CSVの証明範囲は別の未完項目として残す。
+
 dead-logicのwriter未検出接点は、物理memberを含むcounts_forで照会し、
 値不明のunwritten-contactとして表示する。未書込みからA/Bの常時値を推定しない。
 外部境界が確認済みでも初期値・保持値・未解析writerの不存在証明にはならない。

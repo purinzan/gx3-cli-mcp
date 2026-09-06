@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
-from gx3cli.gx3_analysis_state import AnalysisState, PARTIAL, SEMANTICS, checked, not_evaluated
+from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, SEMANTICS, checked, not_evaluated
 from gx3cli.gx3_index_lite import external_sources_from, open_existing
 from gx3cli.gx3_ladder_logic import (
     condition_refs_from_logic,
@@ -212,6 +212,39 @@ def _in_refresh(device_type: str, device: str, refresh_areas: list) -> bool:
     return refresh_area_for(device_type, parsed[1], refresh_areas) is not None
 
 
+class ConstantProofUnavailable(RuntimeError):
+    """Missing source coverage is not an empty set of competing writers."""
+
+    def __init__(self, analysis: AnalysisState):
+        super().__init__(analysis.reason)
+        self.analysis = analysis
+
+
+def check_constant_st_coverage(con: sqlite3.Connection) -> None:
+    """Require stored ST/inline-ST coverage before proving exclusive writers.
+
+    This gate addresses known ST gaps, not complete source/runtime coverage.
+    It deliberately does not guess device names from unsupported syntax.
+    """
+    try:
+        gaps = con.execute(
+            "select source_file, source_location, reason from st_sources "
+            "where coverage is null or coverage != 'supported'"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise ConstantProofUnavailable(not_evaluated(
+            f"ST source coverage unavailable for constant proof: {exc}",
+            "rebuild xref for this project",
+        )) from exc
+    if gaps:
+        raise ConstantProofUnavailable(AnalysisState(
+            PARTIAL, stage=DECODE,
+            reason="unparsed ST/inline-ST may contain competing writers; exclusive ownership is unproven",
+            next_step="inspect the listed ST sources in GX Works3 before relying on constant pruning",
+            detail={"sources": [dict(zip(("file", "location", "reason"), row)) for row in gaps]},
+        ))
+
+
 def propagate_constant_devices(
     rows: list[LadderRow],
     con: sqlite3.Connection,
@@ -227,6 +260,7 @@ def propagate_constant_devices(
     are also excluded. Resolved MC/CALL enable conditions are folded into the
     rung condition through the existing execution-context model.
     """
+    check_constant_st_coverage(con)
     externals = externals or {}
     refresh_areas = refresh_areas or []
     writers = _writer_rows(con)
@@ -605,18 +639,22 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     # 5) project-wide constants ------------------------------------------------
+    constant_state = not_evaluated("constant propagation disabled", "omit --no-constant-propagation") if args.no_constant_propagation else boundary_state
     if not args.no_constant_propagation and boundary_state.conclusive:
         comments = load_comments_for_root(root)
         rows = load_rows(root, comments)
-        facts, propagated = propagate_constant_devices(
-            rows,
-            con,
-            externals=externals,
-            refresh_areas=refresh_areas,
-        )
-        findings.extend(propagated)
-        proven = [fact for device, fact in facts.items() if device not in SPECIAL_CONSTANTS]
-        print(f"project-wide proven constant coils: {len(proven)}")
+        try:
+            facts, propagated = propagate_constant_devices(
+                rows, con, externals=externals, refresh_areas=refresh_areas,
+            )
+        except ConstantProofUnavailable as exc:
+            constant_state = exc.analysis
+        else:
+            constant_state = checked({"scope": "supported indexed writer and saved boundary model"})
+            findings.extend(propagated)
+            proven = [fact for device, fact in facts.items() if device not in SPECIAL_CONSTANTS]
+            print(f"project-wide proven constant coils: {len(proven)}")
+    print(constant_state.line("constant-propagation"))
 
     by_cat: dict[str, list[dict[str, object]]] = {}
     for finding in findings:
@@ -661,7 +699,8 @@ def main(argv: list[str] | None = None) -> int:
         "external_boundary": boundary_state.as_dict(),
         "unwritten_contact_analysis": contact_state.as_dict(),
         "boundary_dependent_checks_evaluated": boundary_state.conclusive,
-        "constant_propagation_evaluated": boundary_state.conclusive and not args.no_constant_propagation,
+        "constant_propagation_evaluated": constant_state.conclusive,
+        "constant_propagation_analysis": constant_state.as_dict(),
         "scope": "saved-project static observations, not PLC runtime guarantees",
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"analysis: {state_path}")

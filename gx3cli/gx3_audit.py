@@ -14,7 +14,7 @@ from pathlib import Path
 
 from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
-from gx3cli.gx3_dead_logic import propagate_constant_devices
+from gx3cli.gx3_dead_logic import ConstantProofUnavailable, propagate_constant_devices
 from gx3cli.gx3_index_lite import external_sources_from
 from gx3cli.gx3_external_inputs import load_refresh_areas
 from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_checked_lite, open_optional
@@ -172,12 +172,14 @@ def collect_constant_chains(
             )
         refresh_areas = load_refresh_areas(refresh_path)
 
-    _facts, propagated = propagate_constant_devices(
-        ctx.rows,
-        ctx.xref,
-        externals=externals,
-        refresh_areas=refresh_areas,
-    )
+    try:
+        _facts, propagated = propagate_constant_devices(
+            ctx.rows, ctx.xref, externals=externals, refresh_areas=refresh_areas,
+        )
+    except ConstantProofUnavailable as exc:
+        ctx.states["constant-chain"] = exc.analysis
+        print(exc.analysis.line("constant-chain"))
+        return []
 
     findings: list[dict[str, object]] = []
     for item in propagated:

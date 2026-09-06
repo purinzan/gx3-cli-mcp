@@ -164,3 +164,15 @@ rows/commentsは各1回、labelsは0回、入力hash読込み回数は変更な�
 Python peak中央値の増分は最大約60KiBで、値フローphaseの時間・Python peak・
 累積RSSは前述の予算内。構造的なSQL/open予算も回帰テストへ追加した。
 速度改善の一般化はしない。全入力の同時変更防止、Windows性能、実案件規模は未検証。
+
+## ST未解析writerによる定数証明の停止
+
+`f55838706e016ec5bb56e73a67aa4c7d1614236b`→`b0e6c9e8efb57bf391a01f368b3c2f012141ceed`。
+同じv2 harness・固定6検体・各3回、前後を順次測定。入力hash全一致。
+trace中央値msはsmall 7.70→8.04、wide 49.82→50.05、deep 70.04→66.06、
+large-span 7.45→7.46、multi-pou 68.06→66.88、ld-st 66.12→66.16。
+SQLは20→22（multi-pouは23→25）。読取りsnapshotのBEGINとST coverage照会が
+各1回追加され、rows/comments/labels各1回、DB openと指紋読込みは変わらない。
+Python peak中央値は全caseで420bytes増加。traceの時間・メモリは既存予算内。
+SQLの固定増分を回帰テストにも明記した。STを解析できない場合に枝刈りを止める
+正しさは別のIF文検体で確認し、この性能検体の単純代入STと混同しない。

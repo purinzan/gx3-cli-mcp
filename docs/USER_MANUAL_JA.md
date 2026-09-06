@@ -217,6 +217,14 @@ semantic-diffの変更要約は各版を一度だけ解読し、旧版または�
 解読できた命令・引数だけで変更全体を説明したとは扱いません。差分の有無は従来
 どおり描画領域寸法だけを除いた生データで判断し、解読結果の一致で隠しません。
 
+ST/inline-STの保存coverageに未解析部分がある場合、dead-logicの通常OUT定数伝播、
+traceの定数枝刈り、Doctorのconstant-chainはwriter集合の完全性を証明しません。
+trace自体は継続し、`constant_pruning.analysis`にdecode段階の制約を表示します。
+dead-logicのsidecarは`constant_propagation_analysis`と実施有無を分けます。
+ST coverage表がない旧DBも「STなし」とみなさず再構築を案内します。
+対応済みSTの既知writerは従来どおり数えます。FBD、未解読LD、実行順・保持値・
+外部CSVを含む全証明条件がこれだけで解決するわけではありません。
+
 dead-logicの`unwritten-contact`は「索引に物理writerが見つからない」という観測です。
 旧`const-off-contact` / `always-on-contact`のようにA/B接点の値を断定しません。
 CSVの`contact_role`はa/b、`analysis_state`はpartial、定数値は空欄です。
