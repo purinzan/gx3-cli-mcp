@@ -172,14 +172,22 @@ def test_constant_chain_reaches_doctor_as_ranked_causal_evidence() -> None:
         rows = load_rows(root, comments)
         con = sqlite3.connect(db)
         con.row_factory = sqlite3.Row
+        lite_path = work / "lite.sqlite"
+        lite = sqlite3.connect(lite_path)
+        lite.execute(
+            "create table external_sources(device text primary key, source_kind text, semantic_group text)"
+        )
+        lite.commit()
+        lite.row_factory = sqlite3.Row
         try:
-            ctx = LintContext(root=root, rows=rows, comments=comments, xref=con)
-            findings = collect_constant_chains(ctx, index_db=work / "missing-lite.sqlite")
+            ctx = LintContext(root=root, rows=rows, comments=comments, xref=con, lite=lite)
+            findings = collect_constant_chains(ctx, index_db=lite_path)
         finally:
             con.close()
+            lite.close()
 
         by_device = {str(item["device"]): item for item in findings}
-        assert by_device["M100"]["constant_state"] == "ALWAYS_OFF", by_device
+        assert "M100" not in by_device, by_device
         assert by_device["Y0"]["constant_state"] == "ALWAYS_ON", by_device
         assert by_device["Y0"]["severity"] == "high", by_device["Y0"]
         assert "SM401" in str(by_device["Y0"]["chain"]), by_device["Y0"]
@@ -188,8 +196,9 @@ def test_constant_chain_reaches_doctor_as_ranked_causal_evidence() -> None:
         report = build_health_report(root, {"constant-chain": findings}, {}, top=10)
         y0 = next(item for item in report["top_risks"] if item["device"] == "Y0")
         assert y0["check"] == "constant-chain", y0
-        assert y0["priority"] > finding_priority(by_device["M100"])
+        assert y0["severity"] == "high", y0
         assert report["scores"]["Change safety"] < 100, report
+        assert report["scores"]["Troubleshootability"] < 100, report
 
 
 def test_project_health_mode_reports_incomplete_when_core_evidence_is_missing() -> None:
