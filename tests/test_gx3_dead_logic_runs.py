@@ -3,6 +3,10 @@ from __future__ import annotations
 """dead-logic range handling and project-wide constant propagation regressions."""
 
 import sqlite3
+import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,6 +17,7 @@ from gx3cli.gx3_dead_logic import (
 )
 from gx3cli.gx3_intermediate_tool import generate_rung
 from gx3cli.review_gx3_project import LadderRow
+from gx3cli.gx3_xref_read import counts_for
 
 
 XREF_SCHEMA = """
@@ -171,6 +176,62 @@ def test_multiple_writer_occurrences_on_one_row_still_block_propagation() -> Non
     facts, _findings = propagate_constant_devices(rows, con)
     assert "M100" not in facts, facts
     con.close()
+
+
+def test_both_access_counts_as_read_and_write() -> None:
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(XREF_SCHEMA)
+    _insert_xref(con, "M100", "M", 100, "both", "+", "p", 0, "p", 0)
+    assert counts_for(con, ["M100"])["M100"] == {"read": 1, "write": 1}
+    con.close()
+
+
+def test_real_cli_range_writer_never_becomes_a_constant() -> None:
+    from test_gx3_shared_reach import write_program
+    from test_gx3_block_range import operation_row
+
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [
+            ("off", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("range", operation_row("MOV", "K_1:M:Ks", "c{s=#:v=16}:M{b=d{s=#:a=96:vt=nn}:m=c{s=#:v=4}}")),
+            ("use", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0]),
+            ("outside", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M112"})[0]),
+        ])
+        env = dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8")
+
+        def cli(*args: str) -> str:
+            result = subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_cli", *args, "--root", str(root)],
+                cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8",
+            )
+            assert result.returncode == 0, (args, result.stdout, result.stderr)
+            return result.stdout
+
+        cli("xref", "build")
+        cli("index-lite", "build")
+        xref = json.loads(cli("xref", "where-used", "M100", "--format", "json"))
+        assert xref["results"][0]["total_counts"]["writers"] == 2, xref
+        dead = cli("dead-logic")
+        assert "M100=OFF" not in dead and "Y0=OFF" not in dead, dead
+        assert "M112=OFF" in dead, dead  # one past the end stays eligible
+        trace = json.loads(cli("trace-device", "Y0", "--strict-logic", "--format", "json"))
+        assert trace["stats"]["prequeue_pruned_dependency_refs"] == 0, trace
+
+
+def test_unresolved_or_unindexed_ranges_cannot_prove_ownership() -> None:
+    for span, detail, access in [(16, "", "write"), (0, "", "write"), (1, "Z0 indexed", "write"), (1, "", "ref")]:
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.executescript(XREF_SCHEMA)
+        _insert_xref(con, "M100", "M", 100, "write", "c", "p", 10, "p", 10)
+        _insert_xref(con, "M96", "M", 96, access, "MOV", "p", 20, "p", 20)
+        con.execute("update xref set range_len=?, detail=? where number=96", (span, detail))
+        facts, _ = propagate_constant_devices([_row({"device": "SM401"}, "M100", 10, "p")], con)
+        assert "M100" not in facts, (span, detail, access, facts)
+        con.close()
 
 
 def main() -> int:
