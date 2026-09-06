@@ -14,6 +14,7 @@ came from the same input. So the fingerprint covers all of them.
 """
 
 import sqlite3
+import os
 import tempfile
 from pathlib import Path
 
@@ -158,7 +159,35 @@ def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:
             moved.rename(artifact.path)
 
 
+def test_rejected_xref_disables_only_optional_trace_pruning() -> None:
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
+        built = prepare(project)
+        previous = Path.cwd()
+        try:
+            os.chdir(tmp)
+            for key in ("input_sha256", "decoder"):
+                with sqlite3.connect(built.xref.path) as con:
+                    original = con.execute("select value from meta where key=?", (key,)).fetchone()[0]
+                    con.execute("delete from meta where key=?", (key,))
+                context = load_trace_constant_context(project, [], [])
+                assert not context.enabled and not context.facts, context
+                assert "xref unavailable" in context.reason, context
+                trace = build_trace(project, "Y0", max_depth=2, max_devices=20,
+                                    include_reset=True, strict_logic=True)
+                assert trace["target"]["device"] == "Y0", trace
+                with sqlite3.connect(built.xref.path) as con:
+                    con.execute("insert into meta values (?, ?)", (key, original))
+        finally:
+            os.chdir(previous)
+
+
 def main() -> int:
+    test_rejected_xref_disables_only_optional_trace_pruning()
     test_a_folder_with_no_ladder_has_no_identity()
     test_the_same_project_hashes_the_same_and_a_changed_one_does_not()
     test_the_ladder_the_comments_and_the_parameters_all_count()
