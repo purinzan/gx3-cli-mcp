@@ -211,6 +211,50 @@ def test_a_multi_word_operand_covers_the_words_it_occupies() -> None:
         assert past == [], past
 
 
+def multiword_project(work: Path, opcode: str) -> Path:
+    from test_gx3_shared_reach import rung
+
+    instruction = rung(
+        f"{opcode}:D:D",
+        "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}",
+    )
+    write_program(work / "p", [("_guid/op", instruction)])
+    return build_xref(work / "p", work / "x.sqlite")
+
+
+def opcodes_for(db: Path, device: str, access: tuple[str, ...]) -> list[str]:
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = occurrences_of(con, device, access=access)
+        return [str(row["opcode"]) for row in rows]
+    finally:
+        con.close()
+
+
+def test_dmov_high_source_word_is_a_read_member() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = multiword_project(Path(tmp), "DMOV")
+        assert opcodes_for(db, "D101", ("read", "both")) == ["DMOV"]
+        assert opcodes_for(db, "D102", ("read", "both")) == []
+
+
+def test_dmovp_keeps_the_same_two_word_coverage() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = multiword_project(Path(tmp), "DMOVP")
+        assert opcodes_for(db, "D101", ("read", "both")) == ["DMOVP"]
+        assert opcodes_for(db, "D201", ("write", "both")) == ["DMOVP"]
+        assert opcodes_for(db, "D202", ("write", "both")) == []
+
+
+def test_edmov_covers_all_four_destination_words() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = multiword_project(Path(tmp), "EDMOV")
+        for device in ("D200", "D201", "D202", "D203"):
+            assert opcodes_for(db, device, ("write", "both")) == ["EDMOV"], device
+        assert opcodes_for(db, "D204", ("write", "both")) == []
+
+
 def test_a_block_count_is_not_multiplied_by_the_operand_width() -> None:
     # The count of a block instruction is already in devices. Multiplying it by
     # the operand width would expand the run twice.
@@ -263,6 +307,9 @@ def main() -> int:
     test_a_database_without_the_index_still_answers()
     test_a_run_of_unknown_length_gets_one_member()
     test_a_multi_word_operand_covers_the_words_it_occupies()
+    test_dmov_high_source_word_is_a_read_member()
+    test_dmovp_keeps_the_same_two_word_coverage()
+    test_edmov_covers_all_four_destination_words()
     test_a_block_count_is_not_multiplied_by_the_operand_width()
     test_a_single_word_operand_is_unchanged()
     test_the_decoder_version_moved_so_older_databases_are_rebuilt()
