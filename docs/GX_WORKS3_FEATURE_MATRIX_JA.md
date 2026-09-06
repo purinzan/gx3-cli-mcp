@@ -61,7 +61,7 @@ Issue #128 の調査結果を、GX Works3 の標準機能と `gx3-cli-mcp` の�
 - `tests/test_gx3_live_read.py`
 - `tests/test_gx3_format_graph.py`
 
-`live-read` は MCP の `EXTERNAL_IO_COMMANDS` として明示的に除外されている。取得済み JSON を使う `ladder-print` や project-read-only 解析は MCP から利用できる。
+`live-read` は MCP の `EXTERNAL_IO_COMMANDS` として明示的に除外されている。接続を開かない `live-read explain` / `live-read replay` も、同じコマンド入口を共有するため現時点では除外のまま。取得済み JSON を使う `ladder-print` や project-read-only 解析は MCP から利用できる。
 
 ### 不足
 

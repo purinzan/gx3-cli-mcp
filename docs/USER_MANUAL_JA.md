@@ -105,6 +105,22 @@ gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type wor
 gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit --format json
 ```
 
+### 採取済みデータをオフラインで読む
+
+`live-read` には接続を開かない2つのモードがあります。どちらも採取済みのファイルだけを読みます。
+
+```powershell
+gx3-cli live-read explain M100 --root project.gx3 --snapshot live.json
+gx3-cli live-read replay changes captured_log.csv
+gx3-cli live-read modes
+```
+
+`explain` は静的トレースで求めた成立条件に、採取した値を突き合わせます。答えは他コマンドと同じ解析状態で返り、
+スナップショットに値が無いデバイスがあれば `no measured value; file only`（実測値なし）として、
+その値をどう採るかまで示します。値が揃っている行だけを見て「確認済み」と読めてしまわないようにするためです。
+
+一枚のスナップショットが答えるのは「採取した瞬間の条件」だけで、過去の停止・トリップの原因ではありません。
+
 JSON を保存して `ladder-print` に渡すと、GX 印刷風のラダー根拠に現在値を重ねられます。
 
 ```powershell

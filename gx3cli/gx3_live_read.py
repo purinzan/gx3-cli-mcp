@@ -17,6 +17,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gx3cli.gx3_analysis_state import (
+    AnalysisState,
+    DECODE,
+    NO_MEASUREMENT,
+    PARTIAL,
+    SEMANTICS,
+    TOPOLOGY,
+    TRUNCATED,
+    UNSUPPORTED,
+    checked,
+    from_dict,
+    no_measurement,
+    not_evaluated,
+    worst,
+)
 from gx3cli.gx3_device_name import device_radix, format_device
 from gx3cli.gx3_input_identity import fingerprint, short
 from gx3cli.gx3_ladder_print import load_live_values, live_overlay_for_devices
@@ -261,7 +276,11 @@ def format_text(result: dict[str, object]) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Read current PLC device values over MC Protocol/SLMP 3E binary.")
+    parser = argparse.ArgumentParser(
+        description="Read current PLC device values over MC Protocol/SLMP 3E binary.",
+        epilog=MODE_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--ip", required=True, help="PLC IP address")
     parser.add_argument("--port", type=int, default=5000, help="PLC TCP port, often 5000 or project-specific")
     parser.add_argument("--device", required=True, help="start device, e.g. D1000, M200, X10")
@@ -280,10 +299,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+MODE_HELP = """live-read has three modes:
+
+  live-read --ip <addr> --device <device> [...]   read current values from a PLC
+  live-read explain <device> --snapshot <file>    explain traced conditions against a capture
+  live-read replay <normalize|series|changes|snapshot> <log>   read a captured log offline
+
+The last two never open a network connection; they read files that were
+captured earlier."""
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # The offline modes were written with their own parsers and their own
+    # main(), and nothing called either one: `live-read` reached the network
+    # reader alone, so ~740 lines of shipped code had no way in. Dispatch on a
+    # leading word, which leaves every existing flag-first invocation alone.
+    if raw and raw[0] == "explain":
+        return snapshot_main(raw[1:])
+    if raw and raw[0] == "replay":
+        return log_replay_main(raw[1:])
+    if raw and raw[0] in {"modes", "help"}:
+        print(MODE_HELP)
+        return 0
+    args = build_parser().parse_args(raw)
     if args.explain_frame:
         args.dry_run = True
     try:
@@ -332,15 +373,26 @@ def _contact_result(node: dict[str, Any], values: dict[str, object]) -> dict[str
     ct_code = str(node.get("ct_code") or "")
     if ct_code in {"p", "f"}:
         result["reason"] = "edge contact requires previous-scan state"
+        result["analysis_state"] = UNSUPPORTED
+        result["analysis_stage"] = SEMANTICS
+        result["next_step"] = "read this edge from a scan-synchronized recording, not a snapshot"
         return result
     if not device or role not in {"a", "b"}:
         result["reason"] = "contact identity/role is unresolved"
+        result["analysis_state"] = PARTIAL
+        result["analysis_stage"] = DECODE
+        result["next_step"] = "gx3-cli parse-gaps --root <project> to see what the decoder could not read"
         return result
     overlay = live_overlay_for_devices([{"device": device, "role": role}], values)[0]
     result.update({key: value for key, value in overlay.items() if key != "role"})
     if "value" not in overlay:
+        # The file was read through to the end. What is absent is a measured
+        # value, which is a different thing from a decode gap and gets its own
+        # state so a summary cannot average the two together.
         result["condition"] = "missing"
         result["reason"] = "snapshot has no value for this device"
+        result["analysis_state"] = NO_MEASUREMENT
+        result["next_step"] = f"capture {device} into the snapshot before reading this condition"
     return result
 
 
@@ -369,7 +421,14 @@ def _combine_snapshot_states(op: str, child_states: list[str]) -> str:
 def evaluate_logic(node: object, values: dict[str, object]) -> tuple[str, list[dict[str, object]]]:
     """Conservatively evaluate a strict trace tree against one snapshot."""
     if not isinstance(node, dict):
-        return "unknown", [{"kind": "unknown", "condition": "unknown", "reason": "logic node is not decoded"}]
+        return "unknown", [{
+            "kind": "unknown",
+            "condition": "unknown",
+            "reason": "logic node is not decoded",
+            "analysis_state": PARTIAL,
+            "analysis_stage": DECODE,
+            "next_step": "gx3-cli parse-gaps --root <project> to see what the decoder could not read",
+        }]
     op = str(node.get("op") or "")
     if op == "true":
         return "pass", []
@@ -398,12 +457,18 @@ def evaluate_logic(node: object, values: dict[str, object]) -> tuple[str, list[d
             "devices": node.get("devices", []),
             "constants": node.get("constants", []),
             "reason": "predicate value is not evaluated from a contact snapshot",
+            "analysis_state": UNSUPPORTED,
+            "analysis_stage": SEMANTICS,
+            "next_step": "evaluate this comparison by hand from the captured word values",
         }]
     if op == "too_large":
         return "unknown", [{
             "kind": "too_large",
             "condition": "unknown",
             "reason": "static condition was capped before a complete logic tree was produced",
+            "analysis_state": TRUNCATED,
+            "analysis_stage": TOPOLOGY,
+            "next_step": "narrow the target with --max-depth/--max-devices so the condition fits the budget",
         }]
     return "unknown", [{
         "kind": op or "unknown",
@@ -411,6 +476,9 @@ def evaluate_logic(node: object, values: dict[str, object]) -> tuple[str, list[d
         "opcode": node.get("opcode", ""),
         "position": node.get("position", ""),
         "reason": "unsupported/unknown logic is not guessed",
+        "analysis_state": UNSUPPORTED,
+        "analysis_stage": SEMANTICS,
+        "next_step": "read this rung with gx3-cli rung-text and judge the condition by hand",
     }]
 
 
@@ -424,6 +492,35 @@ def _leaf_metadata(row: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, 
         )
         out[key] = condition
     return out
+
+
+def leaf_states(leaves: list[dict[str, object]]) -> list[AnalysisState]:
+    """The shared states the leaves of one row already declared.
+
+    Each leaf names its own state where it is built, so this does not re-derive
+    one from the leaf's prose. A leaf that says nothing was read cleanly and
+    contributes nothing.
+    """
+    states: list[AnalysisState] = []
+    for leaf in leaves:
+        name = str(leaf.get("analysis_state") or "")
+        if not name:
+            continue
+        reason = str(leaf.get("reason") or "")
+        next_step = str(leaf.get("next_step") or "")
+        device = str(leaf.get("device") or "")
+        detail = {"device": device} if device else {}
+        if name == NO_MEASUREMENT:
+            states.append(no_measurement(reason, next_step, detail))
+            continue
+        states.append(AnalysisState(
+            name,
+            reason=reason,
+            next_step=next_step,
+            stage=str(leaf.get("analysis_stage") or SEMANTICS),
+            detail=detail,
+        ))
+    return states
 
 
 def explain_driver_row(row: dict[str, Any], values: dict[str, object]) -> dict[str, object]:
@@ -456,18 +553,44 @@ def explain_driver_row(row: dict[str, Any], values: dict[str, object]) -> dict[s
     guards = list(row.get("execution_guards") or [])
     temporal = list(row.get("temporal_predicates") or [])
     warnings: list[str] = []
+    states: list[AnalysisState] = leaf_states(leaves)
     if guards:
         warnings.append("unresolved execution guard means this row may not execute")
+        states.append(AnalysisState(
+            PARTIAL,
+            reason="an execution guard (MC/jump) over this row is unresolved, so it may not execute",
+            next_step="gx3-cli exec-config --root <project> to see what gates this program",
+            stage=SEMANTICS,
+        ))
         state = "unknown"
     if str(row.get("parse_status", "")) != "exact":
         warnings.append("row was not fully decoded")
+        states.append(AnalysisState(
+            PARTIAL,
+            reason="the row was not fully decoded",
+            next_step="gx3-cli parse-gaps --root <project> to see what the decoder could not read",
+            stage=DECODE,
+        ))
         state = "unknown"
     if int((row.get("logic_stats") or {}).get("too_large", 0) or 0) > 0:
         warnings.append("strict logic was capped as too large")
+        states.append(AnalysisState(
+            TRUNCATED,
+            reason="the strict logic tree was capped before it was complete",
+            next_step="narrow the target with --max-depth/--max-devices so the condition fits the budget",
+            stage=TOPOLOGY,
+        ))
         state = "unknown"
     if temporal:
         warnings.append("stateful/temporal semantics are present; snapshot evaluates the current write/enable condition only")
+        states.append(AnalysisState(
+            PARTIAL,
+            reason="stateful/temporal semantics are present; one snapshot shows the current condition only",
+            next_step="use a scan-synchronized recording to judge how this row got here",
+            stage=SEMANTICS,
+        ))
 
+    analysis = worst(states) if states else checked()
     return {
         "row_id": row.get("row_id", ""),
         "device": row.get("device", ""),
@@ -483,6 +606,7 @@ def explain_driver_row(row: dict[str, Any], values: dict[str, object]) -> dict[s
         "execution_guards": guards,
         "temporal_predicates": temporal,
         "historical_root_cause_supported": False,
+        "analysis": analysis.as_dict(),
         "warnings": warnings,
     }
 
@@ -533,8 +657,20 @@ def build_explanation(
         state = str(row.get("current_enable_condition", "unknown"))
         counts[state if state in counts else "unknown"] += 1
 
-    analysis_state = str((trace.get("analysis") or {}).get("state", ""))
-    if analysis_state and analysis_state != "checked":
+    # The whole answer is only as good as its weakest part, and the static
+    # trace is part of it: a snapshot read against a trace that itself stopped
+    # early is not a checked result, however many rows evaluated cleanly.
+    states = [from_dict(row.get("analysis")) for row in rows]
+    states.append(from_dict(trace.get("analysis")))
+    if not rows:
+        states.append(not_evaluated(
+            "the trace produced no driver row for this device",
+            next_step=f"gx3-cli xref where-used {target_device} --root <project> to see whether anything writes it",
+        ))
+    analysis = worst(states)
+    # `warnings` keeps its own terse note for readers that only look there.
+    # The sentence itself lives in `analysis` now, so it is not repeated here.
+    if not from_dict(trace.get("analysis")).conclusive:
         warnings.append("static trace itself is not fully checked; see trace_analysis before using snapshot conclusions")
 
     return {
@@ -550,6 +686,7 @@ def build_explanation(
             "fingerprint_match": fingerprint_match,
             "value_count": len(values),
         },
+        "analysis": analysis.as_dict(),
         "trace_analysis": trace.get("analysis", {}),
         "trace_verification": trace.get("verification", {}),
         "driver_row_state_counts": counts,
@@ -571,6 +708,9 @@ def format_snapshot_text(result: dict[str, object]) -> str:
     if snapshot.get("project_fingerprint"):
         match = snapshot.get("fingerprint_match")
         lines.append("fingerprint: " + ("match" if match is True else "MISMATCH" if match is False else "not verified"))
+    # First, in the same words every other command uses, whether this answer
+    # can be read as the whole answer.
+    lines.append(from_dict(result.get("analysis")).line("answer"))
     for warning in result.get("warnings", []):
         lines.append(f"WARNING: {warning}")
     if result.get("warnings"):
@@ -586,6 +726,9 @@ def format_snapshot_text(result: dict[str, object]) -> str:
         )
         if row.get("enable_logic_text"):
             lines.append(f"  logic: {row.get('enable_logic_text')}")
+        row_analysis = from_dict(row.get("analysis"))
+        if not row_analysis.conclusive:
+            lines.append(f"  {row_analysis.line()}")
         for leaf in row.get("leaf_conditions", []):
             device = leaf.get("device", leaf.get("opcode", leaf.get("kind", "?")))
             value = f" value={leaf['value']!r}" if "value" in leaf else ""
@@ -597,7 +740,10 @@ def format_snapshot_text(result: dict[str, object]) -> str:
 
 
 def build_snapshot_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Explain strict traced ladder conditions against one captured device snapshot.")
+    parser = argparse.ArgumentParser(
+        prog="gx3-cli live-read explain",
+        description="Explain strict traced ladder conditions against one captured device snapshot.",
+    )
     parser.add_argument("device", help="target device or resolved label")
     parser.add_argument("--root", default=str(default_project_root()), help="project folder or .gx3")
     parser.add_argument("--snapshot", required=True, help="captured live-values JSON")
@@ -982,6 +1128,7 @@ def _write_replay_result(result: dict[str, object], output: str | None) -> int:
 
 def build_log_replay_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="gx3-cli live-read replay",
         description=(
             "Import already-captured CSV/JSON device logs for offline replay. "
             "Ordinary imported/polled data is not treated as scan-synchronized recording."
