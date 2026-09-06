@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+定数証明は候補ラングだけでなく、供給された全LD行のparse_statusと、選択rootの
+FBD形式一覧も確認します。別のLD行が未解析、またはFBDが存在する場合、通常OUTの
+プロジェクト全体での定数証明を停止します。ST/LD/FBDの制約は同時に保持します。
+rootなしの低レベルAPIは供給行・索引に限った契約で、プロジェクト全体の監査では
+ありません。trace/dead-logic/Doctorの呼出しは選択rootを明示します。
+解読済みという状態だけで実行順・初期値・外部書込みまで保証するものではありません。
+
 semantic-diffの変更要約は各版を一度だけ解読し、旧版または新版がpartialの場合は
 `summary-scope`にdecode段階の注記を出します。画面とCSVのsummary両方に残り、
 解読できた命令・引数だけで変更全体を説明したとは扱いません。差分の有無は従来

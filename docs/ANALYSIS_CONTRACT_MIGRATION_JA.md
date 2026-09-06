@@ -33,6 +33,11 @@
 
 ## 共通基盤の変更と残り
 
+定数証明の共通入口は供給された全LD行の未解析状態と選択rootのFBDも確認する。
+別ラングの未解析writerを候補行のexactで隠さない。ST/LD/FBD同時gapの3制約を
+JSONへ残す実builder回帰を追加。全CLI consumerはrootを渡す。全入力の途中変更、
+空デコードをexactとする既存ケース、実行順・初期値・外部証拠は別の残件。
+
 通常OUTの定数証明は、保存されたST/inline-ST coverageがpartialなら停止する。
 STDBの未対応IFに隠れたwriterを実builderで再現し、trace/dead-logic/Doctorに
 decode段階の制約とsource位置を伝える。coverage表欠損も未評価でありSTなしではない。

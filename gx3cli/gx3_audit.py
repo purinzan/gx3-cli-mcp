@@ -174,7 +174,7 @@ def collect_constant_chains(
 
     try:
         _facts, propagated = propagate_constant_devices(
-            ctx.rows, ctx.xref, externals=externals, refresh_areas=refresh_areas,
+            ctx.rows, ctx.xref, externals=externals, refresh_areas=refresh_areas, root=ctx.root,
         )
     except ConstantProofUnavailable as exc:
         ctx.states["constant-chain"] = exc.analysis
