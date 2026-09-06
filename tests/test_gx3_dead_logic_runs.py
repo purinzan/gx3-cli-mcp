@@ -158,6 +158,21 @@ def test_multiple_writers_block_constant_propagation() -> None:
     con.close()
 
 
+def test_multiple_writer_occurrences_on_one_row_still_block_propagation() -> None:
+    """Two xref writers sharing (lddb,pos) are still two writers."""
+    rows = [_row({"device": "SM401"}, "M100", 10, "P1_LDDB.db")]
+    con = sqlite3.connect(":memory:")
+    con.executescript(XREF_SCHEMA)
+    con.row_factory = sqlite3.Row
+    _insert_xref(con, "SM401", "SM", 401, "read", "a", "P1_LDDB.db", 10, "P1", 10)
+    _insert_xref(con, "M100", "M", 100, "write", "c", "P1_LDDB.db", 10, "P1", 10)
+    _insert_xref(con, "M100", "M", 100, "write", "c", "P1_LDDB.db", 10, "P1", 10)
+    con.commit()
+    facts, _findings = propagate_constant_devices(rows, con)
+    assert "M100" not in facts, facts
+    con.close()
+
+
 def main() -> int:
     tests = [
         (name, obj)
