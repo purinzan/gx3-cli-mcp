@@ -9,15 +9,17 @@ question "what can make this coil turn on?": project constants proven by
 that collapse to FALSE/TRUE are removed, and only still-relevant upstream
 conditions remain in the returned trace.
 
-This first integration prunes the returned evidence graph after the canonical
-trace has decoded it.  It deliberately does not fork the ladder decoder.  The
-same simplification can later move into the BFS queue as a performance
-optimization without changing the result contract.
+The public trace path also installs a context-local condition-ref dispatcher
+around the canonical engine.  Strict enable logic is simplified before the BFS
+adds upstream devices to its queue, so branches proven irrelevant are never
+expanded.  A post-pass still rewrites the returned Boolean expressions and
+attaches the constant evidence; the ladder decoder itself is not forked.
 """
 
 import json
 import sys
 from collections import Counter, deque
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +81,51 @@ format_compact = base.format_compact
 build_parser = base.build_parser
 
 
+# ``gx3_trace_state`` binds condition_refs_from_logic as a module global.  Keep
+# one dispatcher installed there and use ContextVar rather than temporary
+# monkeypatching: concurrent MCP trace calls then carry independent pruning
+# facts without changing each other's behaviour. Calls outside this facade see
+# the original function because the context variable is empty.
+_ORIGINAL_CONDITION_REFS = base.condition_refs_from_logic
+_ACTIVE_CONSTANT_FACTS: ContextVar[dict | None] = ContextVar(
+    "gx3_trace_constant_facts", default=None
+)
+_ACTIVE_PRUNE_STATS: ContextVar[dict[str, int] | None] = ContextVar(
+    "gx3_trace_prune_stats", default=None
+)
+
+
+def _condition_refs_dispatch(node: dict[str, Any]) -> list[dict[str, Any]]:
+    facts = _ACTIVE_CONSTANT_FACTS.get()
+    if not facts:
+        return _ORIGINAL_CONDITION_REFS(node)
+    raw = _ORIGINAL_CONDITION_REFS(node)
+    result = simplify_logic_for_trace(node, facts)
+    kept = _ORIGINAL_CONDITION_REFS(result.logic)
+    stats = _ACTIVE_PRUNE_STATS.get()
+    if stats is not None:
+        stats["calls"] = stats.get("calls", 0) + 1
+        stats["raw_refs"] = stats.get("raw_refs", 0) + len(raw)
+        stats["kept_refs"] = stats.get("kept_refs", 0) + len(kept)
+        if result.constant_value is not None:
+            stats["constant_rows"] = stats.get("constant_rows", 0) + 1
+    return kept
+
+
+if base.condition_refs_from_logic is not _condition_refs_dispatch:
+    base.condition_refs_from_logic = _condition_refs_dispatch
+
+
+def _load_constant_context(root: Path):
+    comments = base.load_comments_for_root(root)
+    labels = base.load_label_resolver(root)
+    rows = base.load_rows(root, comments)
+    base.resolve_label_occurrences(rows, labels)
+    comm_prefix = base.default_comm_prefix()
+    refresh_areas = base.load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
+    return load_trace_constant_context(root, rows, refresh_areas)
+
+
 def __getattr__(name: str) -> Any:
     """Delegate legacy/internal attributes to the canonical trace engine.
 
@@ -138,7 +185,10 @@ def _filter_row_conditions(row: dict[str, Any], facts: dict) -> int:
         if _condition_key(cond) in remaining:
             kept.append(cond)
     row["conditions"] = kept
-    return len(original_conditions) - len(kept)
+    # Conditions may already have been removed before the BFS queue expanded.
+    # The simplified expression still knows every raw contact it eliminated,
+    # so use that evidence count rather than only comparing returned records.
+    return len(result.pruned_conditions)
 
 
 def _reachable_devices(trace: dict[str, Any], edges: list[dict[str, Any]]) -> set[str]:
@@ -163,7 +213,13 @@ def _reachable_devices(trace: dict[str, Any], edges: list[dict[str, Any]]) -> se
     return reachable
 
 
-def prune_trace_result(trace: dict[str, Any], root: Path) -> dict[str, Any]:
+def prune_trace_result(
+    trace: dict[str, Any],
+    root: Path,
+    *,
+    context=None,
+    prequeue_stats: dict[str, int] | None = None,
+) -> dict[str, Any]:
     if not trace.get("strict_logic"):
         trace["constant_pruning"] = {
             "enabled": False,
@@ -172,12 +228,7 @@ def prune_trace_result(trace: dict[str, Any], root: Path) -> dict[str, Any]:
         return trace
 
     comments = base.load_comments_for_root(root)
-    labels = base.load_label_resolver(root)
-    rows = base.load_rows(root, comments)
-    base.resolve_label_occurrences(rows, labels)
-    comm_prefix = base.default_comm_prefix()
-    refresh_areas = base.load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
-    context = load_trace_constant_context(root, rows, refresh_areas)
+    context = context or _load_constant_context(root)
     trace["constant_pruning"] = context.summary()
     if not context.enabled:
         return trace
@@ -234,14 +285,23 @@ def prune_trace_result(trace: dict[str, Any], root: Path) -> dict[str, Any]:
     stats["pruned_dependency_conditions"] = pruned_conditions
     stats["pruned_dependency_edges"] = len(old_edges) - len(trace["edges"])
 
+    prequeue_stats = prequeue_stats or {}
+    prequeue_pruned = max(
+        0,
+        int(prequeue_stats.get("raw_refs", 0)) - int(prequeue_stats.get("kept_refs", 0)),
+    )
+    stats["prequeue_pruned_dependency_refs"] = prequeue_pruned
+    stats["prequeue_constant_rows"] = int(prequeue_stats.get("constant_rows", 0))
     trace["constant_pruning"].update(
         {
-            "stage": "post-trace-filter",
+            "stage": "pre-queue-prune",
             "pruned_conditions": pruned_conditions,
-            "pruned_edges": len(old_edges) - len(trace["edges"]),
+            "prequeue_pruned_refs": prequeue_pruned,
+            "prequeue_condition_calls": int(prequeue_stats.get("calls", 0)),
+            "postfilter_pruned_edges": len(old_edges) - len(trace["edges"]),
             "note": (
-                "the returned dependency graph is pruned; the canonical trace engine still "
-                "expanded the original graph before this filtering pass"
+                "strict enable logic was simplified before upstream conditions entered the "
+                "BFS queue; the post-pass only rewrites returned expressions and attaches evidence"
             ),
         }
     )
@@ -256,15 +316,30 @@ def build_trace(
     include_reset: bool,
     strict_logic: bool,
 ) -> dict[str, Any]:
-    trace = base.build_trace(
-        root=root,
-        target_device=target_device,
-        max_depth=max_depth,
-        max_devices=max_devices,
-        include_reset=include_reset,
-        strict_logic=strict_logic,
+    context = _load_constant_context(root) if strict_logic else None
+    prequeue_stats: dict[str, int] = {}
+    facts_token = _ACTIVE_CONSTANT_FACTS.set(
+        context.facts if context is not None and context.enabled else None
     )
-    return prune_trace_result(trace, root)
+    stats_token = _ACTIVE_PRUNE_STATS.set(prequeue_stats if strict_logic else None)
+    try:
+        trace = base.build_trace(
+            root=root,
+            target_device=target_device,
+            max_depth=max_depth,
+            max_devices=max_devices,
+            include_reset=include_reset,
+            strict_logic=strict_logic,
+        )
+    finally:
+        _ACTIVE_PRUNE_STATS.reset(stats_token)
+        _ACTIVE_CONSTANT_FACTS.reset(facts_token)
+    return prune_trace_result(
+        trace,
+        root,
+        context=context,
+        prequeue_stats=prequeue_stats,
+    )
 
 
 def main() -> None:
