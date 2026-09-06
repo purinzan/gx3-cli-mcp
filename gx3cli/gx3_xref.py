@@ -67,10 +67,10 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   fewer members than this build would find and must not be reused: the
 #   fingerprint is the same input, and the answer would still be narrower.
 #
-#   arg-decode-5-strefs: supported simple ST/inline-ST assignments contribute
+#   arg-decode-strefs-5: supported simple ST/inline-ST assignments contribute
 #   read/write evidence. The database also records unresolved ST sources and
 #   label-only references so absence can be reported as partial, not complete.
-XREF_DECODER = "arg-decode-5-strefs"
+XREF_DECODER = "arg-decode-strefs-5"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
