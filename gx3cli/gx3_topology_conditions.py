@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, load_external_devices, propagate_constant_devices
+from gx3cli.gx3_dead_logic import ConstantFact, ConstantProofUnavailable, lite_db_path, load_external_devices, propagate_constant_devices
+from gx3cli.gx3_analysis_state import AnalysisState
 from gx3cli.gx3_ladder_logic import (
     and_logic,
     condition_refs_from_logic,
@@ -53,12 +54,14 @@ class TraceConstantContext:
     facts: dict[str, ConstantFact]
     enabled: bool
     reason: str = ""
+    analysis: AnalysisState | None = None
 
     def summary(self) -> dict[str, object]:
         return {
             "enabled": self.enabled,
             "proven_constants": len(self.facts),
             "reason": self.reason,
+            "analysis": self.analysis.as_dict() if self.analysis is not None else None,
         }
 
 
@@ -104,7 +107,7 @@ def load_trace_constant_context(
         return TraceConstantContext({}, False, f"xref database not found: {xref_path}")
 
     try:
-        con = open_xref_db(xref_path, root=root)
+        con = open_xref_db(xref_path, read_only=True, root=root, snapshot=True)
     except (Exception, SystemExit) as exc:
         return TraceConstantContext({}, False, f"xref unavailable for constant pruning: {exc}")
 
@@ -115,6 +118,8 @@ def load_trace_constant_context(
             externals=externals,
             refresh_areas=refresh_areas,
         )
+    except ConstantProofUnavailable as exc:
+        return TraceConstantContext({}, False, str(exc), exc.analysis)
     except Exception as exc:
         return TraceConstantContext({}, False, f"constant propagation unavailable: {exc}")
     finally:

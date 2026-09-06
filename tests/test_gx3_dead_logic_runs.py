@@ -25,6 +25,9 @@ from gx3cli.gx3_xref_read import counts_for
 
 
 XREF_SCHEMA = """
+-- Unit-only writer graph fixtures explicitly contain no ST sources.
+-- Real source coverage is tested via prepare and the STDB fixture below.
+create table st_sources (source_file text, source_location text, coverage text, reason text);
 create table xref (
     id integer primary key autoincrement,
     device text, device_type text, number integer,
@@ -346,6 +349,107 @@ def test_no_writer_is_an_observation_not_a_constant_proof() -> None:
         assert all(f["analysis_state"] == "partial" and not f["constant_state"] for f in observations)
         state = json.loads((work / "out" / "contacts_analysis.json").read_text(encoding="utf-8"))
         assert state["unwritten_contact_analysis"]["stage"] == "semantics", state
+
+
+def test_partial_st_cannot_hide_a_writer_from_constant_propagation() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [
+            ("off", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("use", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0]),
+        ])
+        with closing(sqlite3.connect(root / "002_STDB.db")) as st, st:
+            st.execute("create table Source(Pou text, Code text)")
+            st.execute("insert into Source values ('STWriter', 'IF X0 THEN M100 := TRUE; END_IF;')")
+        built = prepare(root)
+        rows = load_rows(root, load_comments_for_root(root))
+        with closing(sqlite3.connect(built.xref.path)) as con:
+            con.row_factory = sqlite3.Row
+            assert con.execute("select coverage from st_sources").fetchone()[0] == "partial"
+            # The ST bridge deliberately does not guess this writer. Therefore
+            # one indexed writer does not prove exclusive physical ownership.
+            assert counts_for(con, ["M100"])["M100"]["write"] == 1
+        previous = Path.cwd()
+        try:
+            os.chdir(tmp)
+            context = load_trace_constant_context(root, rows, [])
+        finally:
+            os.chdir(previous)
+        assert not context.enabled and "ST" in context.reason, context
+        assert "M100" not in context.facts and "Y0" not in context.facts, context
+        assert context.summary()["analysis"]["stage"] == "decode"
+
+        repo = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8")
+        result = subprocess.run([
+            sys.executable, "-m", "gx3cli.gx3_cli", "trace-device", "Y0",
+            "--root", str(root), "--strict-logic", "--format", "json",
+        ], cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        trace = json.loads(result.stdout)
+        assert trace["constant_pruning"]["enabled"] is False, trace
+        assert trace["constant_pruning"]["analysis"]["stage"] == "decode", trace
+        assert trace["stats"].get("prequeue_pruned_dependency_refs", 0) == 0, trace
+        assert any(device["device"] == "M100" for device in trace["devices"]), trace
+
+        result = subprocess.run([
+            sys.executable, "-m", "gx3cli.gx3_dead_logic", "--root", str(root),
+            "--db", str(built.xref.path), "--lite-db", str(built.index.path),
+            "--output-dir", str(Path(tmp) / "out"), "--prefix", "st",
+        ], cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        report = json.loads((Path(tmp) / "out/st_analysis.json").read_text(encoding="utf-8"))
+        assert report["constant_propagation_evaluated"] is False, report
+        assert report["constant_propagation_analysis"]["stage"] == "decode", report
+
+        from gx3cli.gx3_audit import collect_constant_chains
+        from gx3cli.gx3_lint import LintContext
+        with closing(sqlite3.connect(built.xref.path)) as xref, closing(sqlite3.connect(built.index.path)) as lite:
+            xref.row_factory = lite.row_factory = sqlite3.Row
+            ctx = LintContext(root, rows, {}, xref=xref, lite=lite)
+            assert collect_constant_chains(ctx, index_db=built.index.path) == []
+            assert ctx.states["constant-chain"].stage == "decode", ctx.states
+
+
+def test_supported_st_preserves_known_writer_ownership() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+
+    for text, has_constant in (("D900 := D901;", True), ("M100 := TRUE;", False)):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            write_program(root, [("off", generate_rung(
+                {"device": "SM401"}, {"type": "coil", "device": "M100"})[0])])
+            with closing(sqlite3.connect(root / "002_STDB.db")) as st, st:
+                st.execute("create table Source(Pou text, Code text)")
+                st.execute("insert into Source values ('STWriter', ?)", (text,))
+            built = prepare(root)
+            rows = load_rows(root, load_comments_for_root(root))
+            with closing(sqlite3.connect(built.xref.path)) as con:
+                con.row_factory = sqlite3.Row
+                facts, _ = propagate_constant_devices(rows, con)
+            assert ("M100" in facts) is has_constant, (text, facts)
+
+
+def test_missing_st_coverage_is_not_proof_of_no_st_writers() -> None:
+    from gx3cli.gx3_dead_logic import ConstantProofUnavailable
+
+    with closing(sqlite3.connect(":memory:")) as con:
+        con.row_factory = sqlite3.Row
+        con.executescript(XREF_SCHEMA)
+        con.execute("drop table st_sources")
+        try:
+            propagate_constant_devices([], con)
+        except ConstantProofUnavailable as exc:
+            assert exc.analysis.state == "not_evaluated", exc.analysis
+        else:
+            raise AssertionError("missing source coverage was accepted as empty")
 
 
 def main() -> int:
