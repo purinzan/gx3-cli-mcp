@@ -321,27 +321,29 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
                 a.access = "read"
                 a.access_basis = "index register"
                 continue
+            indexed = "indexed" in (a.detail or "")
             if wset is None:
                 a.access = "ref"
             elif a.arg_index in wset:
                 a.access = "both" if rmw else "write"
-                if span != 1:
+                if span != 1 and not indexed:
                     a.range_len = span
                     a.detail = (a.detail + "; " if a.detail else "") + (
                         f"covers {span} devices" if span else "covers a run of unknown length"
                     )
             elif a.arg_index in source_runs:
                 a.access = "read"
-                a.range_len = span
-                a.access_basis = a.access_basis or span_basis
-                a.detail = (a.detail + "; " if a.detail else "") + (
-                    f"reads a run of {span} devices"
-                    if span
-                    else "reads a run of unknown length"
-                )
+                if not indexed:
+                    a.range_len = span
+                    a.access_basis = a.access_basis or span_basis
+                    a.detail = (a.detail + "; " if a.detail else "") + (
+                        f"reads a run of {span} devices"
+                        if span
+                        else "reads a run of unknown length"
+                    )
             else:
                 a.access = "read"
-            if a.arg_index in physical_spans and "indexed" not in (a.detail or ""):
+            if a.arg_index in physical_spans and not indexed:
                 physical_span = physical_spans[a.arg_index]
                 a.range_len = physical_span
                 a.detail = (a.detail + "; " if a.detail else "") + (
