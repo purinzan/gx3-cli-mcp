@@ -109,11 +109,21 @@ def test_context_and_doctor_refuse_to_guess_between_projects() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         one, two = two_projects(work)
+        expected_names = {one.name, two.name}
         for command in ("context", "doctor"):
             completed = run_cli(work, [command])
             assert completed.returncode != 0, (command, completed.stdout)
             assert "more than one project" in completed.stdout, (command, completed.stdout)
-            assert str(one) in completed.stdout and str(two) in completed.stdout, completed.stdout
+            # Windows can spell the same TEMP parent with its 8.3 short name
+            # (RUNNER~1) in one process and the long account name in another.
+            # The project leaf names are the stable evidence that both choices
+            # were actually listed.
+            listed_names = {
+                Path(line.strip()).name
+                for line in completed.stdout.splitlines()
+                if line.startswith("  ") and line.strip()
+            }
+            assert expected_names <= listed_names, (expected_names, listed_names, completed.stdout)
 
 
 def test_context_uses_the_explicit_root_instead_of_autodetecting_again() -> None:
