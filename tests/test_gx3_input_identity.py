@@ -15,6 +15,7 @@ came from the same input. So the fingerprint covers all of them.
 
 import sqlite3
 import tempfile
+import shutil
 from pathlib import Path
 
 from gx3cli.gx3_input_identity import fingerprint, input_files
@@ -116,7 +117,39 @@ def test_a_database_with_no_input_recorded_still_opens() -> None:
         con.close()
 
 
+def test_new_analysis_dependencies_invalidate_real_indexes() -> None:
+    from gx3cli.gx3_workspace import prepare, locate, OTHER_INPUT
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
+        built = prepare(project)
+        baseline = fingerprint(project)
+        for name in ("sample_STDB.db", "sample_DM.db", "sample_FBDDB.db", "module.db",
+                     "SourceInfo.CAB", "Config.xml", "motion.iut", "parameters.w3pa"):
+            path = project / name
+            assert not path.exists(), name
+            path.write_bytes(b"synthetic new input")
+            assert fingerprint(project) != baseline, name
+            state = locate(project)
+            assert state.index.state == state.xref.state == OTHER_INPUT, (name, state)
+            try:
+                open_xref_db(built.xref.path, root=project)
+            except SystemExit as exc:
+                assert "different input" in str(exc), exc
+            else:
+                raise AssertionError(f"stale xref accepted after {name}")
+            path.unlink()
+            assert fingerprint(project) == baseline
+        moved = Path(tmp) / "moved"
+        shutil.copytree(project, moved)
+        assert fingerprint(moved) == baseline
+        (project / "report.csv").write_text("output", encoding="utf-8")
+        (project / "cache.sqlite").write_bytes(b"generated")
+        assert fingerprint(project) == baseline
+
+
 def main() -> int:
+    test_new_analysis_dependencies_invalidate_real_indexes()
     test_a_folder_with_no_ladder_has_no_identity()
     test_the_same_project_hashes_the_same_and_a_changed_one_does_not()
     test_the_ladder_the_comments_and_the_parameters_all_count()
