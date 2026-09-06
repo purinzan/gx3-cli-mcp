@@ -131,6 +131,52 @@ def create_link_db(path: Path, xref_a: Path, xref_b: Path) -> None:
     con.close()
 
 
+def test_link_map_root_must_match_the_xref_input() -> None:
+    from gx3cli.gx3_input_identity import fingerprint
+    from gx3cli.gx3_synthetic_project import create_demo_line_project
+    from gx3cli.gx3_timing_chart import detect_signals
+
+    with tempfile.TemporaryDirectory(prefix="gx3_timing_identity_") as tmp:
+        work = Path(tmp)
+        project_a = create_demo_line_project(work / "project_a", overwrite=True)
+        project_b = create_demo_line_project(work / "project_b", overwrite=True)
+
+        # Make the two otherwise-identical synthetic projects different inputs.
+        comment_db = next(project_a.glob("*_DC.db"))
+        con = sqlite3.connect(comment_db)
+        con.execute("update COMMENT_DATA set CmtData = CmtData || ' project-a'")
+        con.commit()
+        con.close()
+
+        foreign_xref = work / "project_b_xref.sqlite"
+        create_xref(foreign_xref, [("M1", "read", "a", {})])
+        con = sqlite3.connect(foreign_xref)
+        con.execute(
+            "insert or replace into meta(key, value) values ('input_sha256', ?)",
+            (fingerprint(project_b),),
+        )
+        con.commit()
+        con.close()
+
+        link_db = work / "link_map.sqlite"
+        con = sqlite3.connect(link_db)
+        con.execute("create table project(label text primary key, root text not null, xref_db text not null)")
+        # Deliberately pair A's root with B's cross-reference.
+        con.execute(
+            "insert into project(label, root, xref_db) values (?, ?, ?)",
+            ("LINE_A", str(project_a), str(foreign_xref)),
+        )
+        con.commit()
+        con.close()
+
+        try:
+            detect_signals("LINE_A", "LINE_B", link_db)
+        except SystemExit as stopped:
+            assert "xref db was built from a different input" in str(stopped), str(stopped)
+        else:
+            raise AssertionError("timing-chart accepted an xref from a different project")
+
+
 def main() -> int:
     from gx3cli.gx3_timing_chart import detect_signals, first_by_role
 
@@ -200,6 +246,7 @@ def main() -> int:
         if expected not in top.receiver_action:
             raise AssertionError(f"data action missing {expected!r}: {top.receiver_action!r}")
 
+    test_link_map_root_must_match_the_xref_input()
     print("all timing detect checks passed")
     return 0
 

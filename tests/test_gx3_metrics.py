@@ -22,9 +22,11 @@ from gx3cli.gx3_metrics import (
     hotspots,
     program_metrics,
     to_json,
+    xref_totals,
 )
 from gx3cli.gx3_rung_text import RungText, collect
 from gx3cli.gx3_synthetic_project import create_demo_line_project
+from test_gx3_shared_reach import build_xref, coil, write_program
 
 
 def _fixture(tmp: str) -> Path:
@@ -93,6 +95,27 @@ def test_json_carries_the_three_sections() -> None:
         assert set(payload) == {"project", "programs", "hotspots"}
         assert payload["project"]["rungs"] == sum(p["rungs"] for p in payload["programs"])
         assert len(payload["hotspots"]) == 3
+
+
+def test_xref_totals_refuse_a_database_from_another_project() -> None:
+    # #88: metrics combines project-local rung facts with xref totals. A bare
+    # SQLite open used to allow Project A's rungs and Project B's device totals
+    # in one successful report.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project_a = work / "a"
+        project_b = work / "b"
+        write_program(project_a, [("_guid/a", coil("a", 1, 100))])
+        write_program(project_b, [("_guid/b", coil("a", 2, 200))])
+        db_b = build_xref(project_b, work / "b_xref.sqlite")
+
+        try:
+            xref_totals(db_b, project_a)
+        except SystemExit as stopped:
+            text = str(stopped).lower()
+            assert "xref" in text and ("input" in text or "project" in text), str(stopped)
+        else:
+            raise AssertionError("metrics accepted another project's xref database")
 
 
 def main() -> int:

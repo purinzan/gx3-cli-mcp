@@ -35,6 +35,7 @@ from gx3cli.gx3_analysis_state import CHECKED
 from gx3cli.gx3_format import build_format_inventory, unsupported_programs
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_rung_text import RungText, collect
+from gx3cli.gx3_xref import open_xref_db
 
 # A device or label term in a rendered condition: X10, /M100, IN_Start.
 _TERM = re.compile(r"/?[A-Za-z_][A-Za-z0-9_]*")
@@ -101,11 +102,18 @@ def hotspots(items: list[RungText], limit: int) -> list[RungText]:
     )[:limit]
 
 
-def xref_totals(db: Path) -> dict[str, int]:
-    """Device counts from the cross-reference, when one has been built."""
+def xref_totals(db: Path, root: Path) -> dict[str, int]:
+    """Device counts from a cross-reference proven to belong to ``root``.
+
+    Metrics combines facts read directly from the selected project with totals
+    read from a derived xref artifact. Opening that artifact without the root
+    fingerprint check can produce a perfectly valid-looking report made from
+    two different PLC projects, so the shared xref validator is part of this
+    read boundary rather than an optional caller concern.
+    """
     if not db.exists():
         return {}
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con = open_xref_db(db, read_only=True, root=root)
     try:
         rows = con.execute(
             "select count(distinct device),"
@@ -226,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
 
     programs = program_metrics(items)
     top = hotspots(items, args.top) if args.top > 0 else []
-    totals = xref_totals(Path(args.xref_db)) if args.xref_db else {}
+    totals = xref_totals(Path(args.xref_db), root) if args.xref_db else {}
 
     return emit(
         args,
