@@ -121,6 +121,8 @@ gx3-cli live-read modes
 
 一枚のスナップショットが答えるのは「採取した瞬間の条件」だけで、過去の停止・トリップの原因ではありません。
 
+この2モードは MCP からも使えます（`gx3_explain_snapshot` / `gx3_replay_capture`）。ネットワークに接続する既定モードは MCP から実行できません。
+
 JSON を保存して `ladder-print` に渡すと、GX 印刷風のラダー根拠に現在値を重ねられます。
 
 ```powershell

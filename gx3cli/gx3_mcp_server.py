@@ -92,6 +92,32 @@ PROJECT_MUTATING_COMMANDS = {"intermediate", "roundtrip", "instruction-edit-test
 LOCAL_STATE_COMMANDS = {"synthetic-project"}
 EXTERNAL_IO_COMMANDS = {"live-read"}
 
+# `live-read` opens a socket in its default mode and reads captured files in the
+# other two. The gate is therefore on the mode word rather than the command
+# name: naming the command as read-only would hand an agent the network reader
+# along with the offline modes, and leaving it fully closed keeps two working
+# offline analyses out of reach for no safety gained.
+#
+# `modes` prints the mode list and touches nothing.
+OFFLINE_EXTERNAL_IO_MODES = {"live-read": {"explain", "replay", "modes"}}
+
+# Flags that only the network mode takes. Its parser already rejects them under
+# an offline mode word, so this is a second reading of the same boundary in the
+# place the boundary is decided.
+NETWORK_ONLY_FLAGS = ("--ip", "--port", "--timeout", "--network", "--station")
+
+
+def offline_mode_allowed(command: str, args: list[str]) -> bool:
+    """Whether this invocation of an external-IO command stays off the network."""
+    modes = OFFLINE_EXTERNAL_IO_MODES.get(command)
+    if not modes or not args or args[0] not in modes:
+        return False
+    return not any(
+        arg == flag or arg.startswith(flag + "=")
+        for arg in args
+        for flag in NETWORK_ONLY_FLAGS
+    )
+
 MCP_DISABLED_COMMANDS = PROJECT_MUTATING_COMMANDS | LOCAL_STATE_COMMANDS | EXTERNAL_IO_COMMANDS
 
 # Query verbs implemented directly in gx3_cli (not in COMMANDS).
@@ -407,6 +433,81 @@ TYPED_TOOLS: list[TypedTool] = [
             *_opt(a, "device", "--device"),
         ],
     ),
+    TypedTool(
+        name="gx3_explain_snapshot",
+        command="live-read",
+        description=(
+            "Match a captured device snapshot against the enable conditions the static trace "
+            "produced, and say what the snapshot does not answer for. Reads files only: this "
+            "never opens a PLC connection, and there is no MCP tool that does. "
+            "Report the `analysis` state with the result -- a device the snapshot holds no "
+            "value for comes back as 'no measured value; file only', and the rows that did "
+            "evaluate are not the whole answer when that appears. "
+            "One snapshot explains the instant it was captured, never the cause of a past "
+            "stop or trip: do not use it to answer 'why did this trip earlier'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "device": {"type": "string", "description": "Target device or resolved label."},
+                "root": {"type": "string", "description": "Extracted project folder."},
+                "snapshot": {"type": "string", "description": "Captured live-values JSON, previously exported."},
+                "max_depth": {"type": "integer", "default": 4, "minimum": 1, "maximum": 12},
+                "max_devices": {"type": "integer", "default": 300, "minimum": 1, "maximum": 2000},
+                "exclude_reset": {"type": "boolean", "default": False},
+                "format": {"type": "string", "enum": ["text", "json"], "default": "text"},
+            },
+            "required": ["device", "root", "snapshot"],
+            "additionalProperties": False,
+        },
+        build_args=lambda a: [
+            "explain", _require(a, "device"), "--root", _require(a, "root"),
+            "--snapshot", _require(a, "snapshot"),
+            "--max-depth", str(int(a.get("max_depth", 4))),
+            "--max-devices", str(int(a.get("max_devices", 300))),
+            *_flag(a, "exclude_reset", "--exclude-reset"),
+            "--format", str(a.get("format", "text")),
+        ],
+    ),
+    TypedTool(
+        name="gx3_replay_capture",
+        command="live-read",
+        description=(
+            "Read an already-captured CSV/JSON device log offline: normalize it, emit per-device "
+            "time series, list value change points, or export one instant as a snapshot for "
+            "gx3_explain_snapshot. Reads files only and never opens a PLC connection. "
+            "An imported or polled log is not a scan-synchronized recording: two devices that "
+            "appear to change together may simply have been sampled together, so do not read "
+            "ordering between devices out of it."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "verb": {
+                    "type": "string",
+                    "enum": ["normalize", "series", "changes", "snapshot"],
+                    "description": "What to do with the captured log.",
+                },
+                "input": {"type": "string", "description": "Captured CSV or JSON log."},
+                "device": {"type": "string", "description": "Optional one-device filter for series/changes."},
+                "at": {"type": "string", "description": "ISO 8601 timestamp; required for verb=snapshot."},
+                "at_mode": {"type": "string", "enum": ["exact", "nearest"], "default": "exact"},
+                "root": {"type": "string", "description": "Optional project, used only to verify project_fingerprint."},
+            },
+            "required": ["verb", "input"],
+            "additionalProperties": False,
+        },
+        build_args=lambda a: [
+            "replay", _require(a, "verb"), _require(a, "input"),
+            *(_opt(a, "device", "--device") if a.get("verb") in {"series", "changes"} else []),
+            *(
+                ["--at", _require(a, "at"), "--mode", str(a.get("at_mode", "exact"))]
+                + _opt(a, "root", "--root")
+                if a.get("verb") == "snapshot"
+                else []
+            ),
+        ],
+    ),
 ]
 
 TYPED_BY_NAME = {tool.name: tool for tool in TYPED_TOOLS}
@@ -451,7 +552,15 @@ def command_summary() -> str:
         "Project-read-only GX3 analysis commands (project-mutating commands "
         "and local demo-generation commands are not available through this server):"
     )
-    return header + "\n" + "\n".join(f"  {row}" for row in rows)
+    # A command whose offline modes are allowed is not in READ_ONLY_COMMANDS,
+    # so it would otherwise be absent from the only list an agent can read --
+    # and it would keep guessing at the whole command and being refused.
+    modes = [
+        f"{name} {mode}: offline mode only (the network mode is not available here)"
+        for name, allowed in sorted(OFFLINE_EXTERNAL_IO_MODES.items())
+        for mode in sorted(allowed)
+    ]
+    return header + "\n" + "\n".join(f"  {row}" for row in rows + modes)
 
 
 GENERIC_TOOL = {
@@ -582,8 +691,13 @@ def run_cli(command: str, args: list[str], root: str | None, timeout_seconds: in
     if command in LOCAL_STATE_COMMANDS:
         raise ValueError(f"command '{command}' creates local demo artifacts and is disabled on the MCP server")
     if command in EXTERNAL_IO_COMMANDS:
-        raise ValueError(f"command '{command}' connects to external equipment and is disabled on the MCP server")
-    if command not in READ_ONLY_COMMANDS:
+        if not offline_mode_allowed(command, args):
+            modes = ", ".join(sorted(OFFLINE_EXTERNAL_IO_MODES.get(command, set())))
+            raise ValueError(
+                f"command '{command}' connects to external equipment and is disabled on the MCP server"
+                + (f"; only its offline modes are available here: {modes}" if modes else "")
+            )
+    elif command not in READ_ONLY_COMMANDS:
         raise ValueError(f"unknown or non-allowed command: {command}")
     if getattr(sys, "frozen", False):
         raise RuntimeError(
