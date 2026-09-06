@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Read current Mitsubishi PLC values and explain captured snapshots.
+"""Read current Mitsubishi PLC values and explain/replay captured data.
 
-The network reader is intentionally read-only. Snapshot explanation is a
-separate offline path: it consumes an already-captured JSON file, combines it
-with ``trace-device --strict-logic``, and never opens a PLC connection.
+The network reader is intentionally read-only. Snapshot explanation and captured
+log replay are separate offline paths: they consume already-captured JSON/CSV,
+never open a PLC connection, and never claim ordinary imported/polled data is
+scan-synchronized recording.
 """
 
 import argparse
@@ -57,6 +58,11 @@ DEVICE_CODES = {
 CURRENT_ONLY_NOTE = (
     "current snapshot only: these values explain the captured instant, not the "
     "historical cause of a past stop/trip"
+)
+
+LOG_REPLAY_SCOPE = (
+    "offline imported/polled device log; timestamps are not assumed to be "
+    "scan-synchronized PLC recording"
 )
 
 
@@ -179,28 +185,6 @@ def decode_word_values(payload: bytes, value_type: str, count: int) -> list[int 
     raise ValueError(f"unsupported value type: {value_type}")
 
 
-def read_current_values(args: argparse.Namespace) -> dict[str, object]:
-    plan = explain_request(args)
-    frame = bytes.fromhex(str(plan["request_hex"]))
-    if getattr(args, "dry_run", False):
-        return plan
-    device = parse_device(args.device)
-    bit_units = args.type == "bit"
-    read_count = int(plan["read_words"] or args.count)
-    with socket.create_connection((args.ip, args.port), timeout=args.timeout) as sock:
-        sock.settimeout(args.timeout)
-        sock.sendall(frame)
-        header = read_exact(sock, 9)
-        length = int.from_bytes(header[7:9], "little")
-        payload = read_exact(sock, length)
-    raw = parse_3e_binary_response(header + payload)
-    values = decode_bit_values(raw, args.count) if bit_units else decode_word_values(raw, args.type, read_count)
-    result = dict(plan)
-    result["values"] = values
-    result["dry_run"] = False
-    return result
-
-
 def explain_request(args: argparse.Namespace) -> dict[str, object]:
     device = parse_device(args.device)
     bit_units = args.type == "bit"
@@ -235,6 +219,28 @@ def explain_request(args: argparse.Namespace) -> dict[str, object]:
         "timer": args.timer,
         "request_hex": frame.hex(" "),
     }
+
+
+def read_current_values(args: argparse.Namespace) -> dict[str, object]:
+    plan = explain_request(args)
+    frame = bytes.fromhex(str(plan["request_hex"]))
+    if getattr(args, "dry_run", False):
+        return plan
+    device = parse_device(args.device)
+    bit_units = args.type == "bit"
+    read_count = int(plan["read_words"] or args.count)
+    with socket.create_connection((args.ip, args.port), timeout=args.timeout) as sock:
+        sock.settimeout(args.timeout)
+        sock.sendall(frame)
+        header = read_exact(sock, 9)
+        length = int.from_bytes(header[7:9], "little")
+        payload = read_exact(sock, length)
+    raw = parse_3e_binary_response(header + payload)
+    values = decode_bit_values(raw, args.count) if bit_units else decode_word_values(raw, args.type, read_count)
+    result = dict(plan)
+    result["values"] = values
+    result["dry_run"] = False
+    return result
 
 
 def format_text(result: dict[str, object]) -> str:
@@ -627,6 +633,406 @@ def snapshot_main(argv: list[str] | None = None) -> int:
     else:
         print(text)
     return 0
+
+
+# ----- Offline captured device-log replay ------------------------------------
+
+
+def _canonical_timestamp(value: object) -> tuple[str, object]:
+    from datetime import datetime, timezone
+
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("timestamp is required")
+    candidate = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError(f"timestamp must be ISO 8601: {text}") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z"), dt
+
+
+def _infer_value_type(value: object) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "string"
+    return "unknown"
+
+
+def _parse_logged_value(value: object, value_type: str) -> object:
+    kind = value_type.strip().lower()
+    if not isinstance(value, str):
+        if kind in {"bit", "bool", "boolean"}:
+            return bool(value)
+        if kind in {"word", "signed-word", "dword", "signed-dword", "int", "integer"}:
+            return int(value)
+        if kind in {"float", "real", "double"}:
+            return float(value)
+        return value
+
+    text = value.strip()
+    if kind in {"bit", "bool", "boolean"}:
+        lowered = text.lower()
+        if lowered in {"1", "true", "on", "yes"}:
+            return True
+        if lowered in {"0", "false", "off", "no"}:
+            return False
+        raise ValueError(f"cannot parse boolean value: {value!r}")
+    if kind in {"word", "signed-word", "dword", "signed-dword", "int", "integer"}:
+        try:
+            return int(text, 0)
+        except ValueError:
+            return int(text, 10)
+    if kind in {"float", "real", "double"}:
+        return float(text)
+    if kind in {"string", "str", "text"}:
+        return value
+    if kind and kind != "unknown":
+        # Unknown vendor-specific types are preserved verbatim rather than guessed.
+        return value
+
+    lowered = text.lower()
+    if lowered in {"true", "on", "yes"}:
+        return True
+    if lowered in {"false", "off", "no"}:
+        return False
+    try:
+        return int(text, 0)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return value
+
+
+def _normalise_log_row(
+    raw: dict[str, object],
+    *,
+    sequence: int,
+    default_source: str,
+    default_fingerprint: str,
+) -> dict[str, object]:
+    timestamp, _dt = _canonical_timestamp(raw.get("timestamp"))
+    device = str(raw.get("device") or "").strip().upper()
+    if not device:
+        raise ValueError(f"record {sequence}: device is required")
+    if "value" not in raw:
+        raise ValueError(f"record {sequence}: value is required")
+    declared_type = str(raw.get("value_type") or "").strip()
+    parsed = _parse_logged_value(raw.get("value"), declared_type)
+    value_type = declared_type or _infer_value_type(parsed)
+    return {
+        "timestamp": timestamp,
+        "device": device,
+        "value": parsed,
+        "value_type": value_type or "unknown",
+        "source": str(raw.get("source") or default_source or "").strip(),
+        "project_fingerprint": str(raw.get("project_fingerprint") or default_fingerprint or "").strip(),
+        "_sequence": sequence,
+    }
+
+
+def _read_json_log(path: Path) -> tuple[list[dict[str, object]], dict[str, object]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    metadata: dict[str, object] = {}
+    if isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        nested = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        metadata = {
+            "source": data.get("source", nested.get("source", "")),
+            "project_fingerprint": data.get("project_fingerprint", nested.get("project_fingerprint", "")),
+        }
+        rows = data.get("records")
+        if rows is None:
+            rows = data.get("log")
+        if rows is None:
+            rows = data.get("rows")
+    else:
+        raise ValueError("JSON log must be a record list or an object containing records")
+    if not isinstance(rows, list):
+        raise ValueError("JSON log must contain a records/log/rows list")
+    clean: list[dict[str, object]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"record {index}: expected an object")
+        clean.append(row)
+    return clean, metadata
+
+
+def _read_csv_log(path: Path) -> tuple[list[dict[str, object]], dict[str, object]]:
+    import csv
+
+    with path.open("r", encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        required = {"timestamp", "device", "value"}
+        fields = set(reader.fieldnames or [])
+        missing = sorted(required - fields)
+        if missing:
+            raise ValueError("CSV is missing required columns: " + ", ".join(missing))
+        return [dict(row) for row in reader], {}
+
+
+def load_captured_log(path: Path) -> dict[str, object]:
+    """Load CSV/JSON and return deterministic normalized records.
+
+    Duplicate policy: same timestamp+device is last-record-wins in source order.
+    No value is carried forward to another timestamp.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        raw_rows, metadata = _read_csv_log(path)
+    elif suffix == ".json":
+        raw_rows, metadata = _read_json_log(path)
+    else:
+        raise ValueError("captured log input must be .csv or .json")
+
+    default_source = str(metadata.get("source") or path.name)
+    default_fp = str(metadata.get("project_fingerprint") or "")
+    deduped: dict[tuple[str, str], dict[str, object]] = {}
+    duplicate_count = 0
+    for sequence, raw in enumerate(raw_rows):
+        row = _normalise_log_row(
+            raw,
+            sequence=sequence,
+            default_source=default_source,
+            default_fingerprint=default_fp,
+        )
+        key = (str(row["timestamp"]), str(row["device"]))
+        if key in deduped:
+            duplicate_count += 1
+        deduped[key] = row
+
+    records = sorted(
+        deduped.values(),
+        key=lambda row: (_canonical_timestamp(row["timestamp"])[1], str(row["device"]), int(row["_sequence"])),
+    )
+    for row in records:
+        row.pop("_sequence", None)
+    fingerprints = sorted({str(row["project_fingerprint"]) for row in records if row.get("project_fingerprint")})
+    sources = sorted({str(row["source"]) for row in records if row.get("source")})
+    return {
+        "kind": "captured_device_log",
+        "scope": LOG_REPLAY_SCOPE,
+        "metadata": {
+            "input": str(path),
+            "input_records": len(raw_rows),
+            "normalized_records": len(records),
+            "duplicate_records_replaced": duplicate_count,
+            "duplicate_policy": "same timestamp+device: last input record wins",
+            "timestamp_policy": "ISO 8601 normalized to UTC; timezone-less timestamps are treated as UTC",
+            "carry_forward": False,
+            "sources": sources,
+            "project_fingerprints": fingerprints,
+        },
+        "records": records,
+    }
+
+
+def build_device_series(normalized: dict[str, object], device: str | None = None) -> dict[str, object]:
+    selected = device.strip().upper() if device else ""
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for row in normalized.get("records", []):
+        name = str(row.get("device") or "")
+        if selected and name != selected:
+            continue
+        grouped.setdefault(name, []).append(dict(row))
+    return {
+        "kind": "device_time_series",
+        "scope": normalized.get("scope", LOG_REPLAY_SCOPE),
+        "devices": {name: grouped[name] for name in sorted(grouped)},
+    }
+
+
+def build_change_points(normalized: dict[str, object], device: str | None = None) -> dict[str, object]:
+    series = build_device_series(normalized, device)
+    changes: list[dict[str, object]] = []
+    for name, rows in series["devices"].items():
+        previous: dict[str, object] | None = None
+        for row in rows:
+            if previous is not None and (
+                row.get("value") != previous.get("value")
+                or row.get("value_type") != previous.get("value_type")
+            ):
+                changes.append({
+                    "timestamp": row.get("timestamp"),
+                    "device": name,
+                    "previous_value": previous.get("value"),
+                    "value": row.get("value"),
+                    "previous_value_type": previous.get("value_type"),
+                    "value_type": row.get("value_type"),
+                    "source": row.get("source", ""),
+                })
+            previous = row
+    changes.sort(key=lambda row: (_canonical_timestamp(row["timestamp"])[1], str(row["device"])))
+    return {
+        "kind": "device_change_points",
+        "scope": normalized.get("scope", LOG_REPLAY_SCOPE),
+        "changes": changes,
+    }
+
+
+def _select_snapshot_timestamp(records: list[dict[str, object]], requested: str, mode: str) -> tuple[str, float]:
+    requested_text, requested_dt = _canonical_timestamp(requested)
+    available = sorted({str(row["timestamp"]) for row in records}, key=lambda value: _canonical_timestamp(value)[1])
+    if not available:
+        raise ValueError("captured log has no records")
+    if requested_text in available:
+        return requested_text, 0.0
+    if mode == "exact":
+        raise ValueError(f"no records at requested timestamp: {requested_text}; use --mode nearest to select a nearby capture")
+    if mode != "nearest":
+        raise ValueError(f"unsupported snapshot mode: {mode}")
+    # Tie-break toward the earlier timestamp for deterministic replay.
+    selected = min(
+        available,
+        key=lambda value: (
+            abs((_canonical_timestamp(value)[1] - requested_dt).total_seconds()),
+            _canonical_timestamp(value)[1],
+        ),
+    )
+    distance = abs((_canonical_timestamp(selected)[1] - requested_dt).total_seconds())
+    return selected, distance
+
+
+def build_log_snapshot(
+    normalized: dict[str, object],
+    requested_timestamp: str,
+    *,
+    mode: str = "exact",
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    records = list(normalized.get("records", []))
+    selected_timestamp, distance = _select_snapshot_timestamp(records, requested_timestamp, mode)
+    selected = [row for row in records if str(row.get("timestamp")) == selected_timestamp]
+    values = {str(row["device"]): row.get("value") for row in selected}
+    value_types = {str(row["device"]): str(row.get("value_type") or "unknown") for row in selected}
+    sources = sorted({str(row.get("source") or "") for row in selected if row.get("source")})
+    fingerprints = sorted({
+        str(row.get("project_fingerprint") or "")
+        for row in selected
+        if row.get("project_fingerprint")
+    })
+    supplied_fp = fingerprints[0] if len(fingerprints) == 1 else ""
+    warnings: list[str] = []
+    if len(fingerprints) > 1:
+        warnings.append("selected timestamp contains multiple project_fingerprints; project identity is ambiguous")
+
+    actual_fp = ""
+    fingerprint_match: bool | None = None
+    if project_root is not None:
+        actual_fp = fingerprint(Path(project_root))
+        if supplied_fp:
+            fingerprint_match = supplied_fp == actual_fp
+            if not fingerprint_match:
+                warnings.append(
+                    "captured log project fingerprint does not match this project: "
+                    f"log={short(supplied_fp)} project={short(actual_fp)}"
+                )
+        elif actual_fp:
+            warnings.append("selected timestamp has no single project_fingerprint; project identity could not be verified")
+
+    requested_text, _ = _canonical_timestamp(requested_timestamp)
+    return {
+        "timestamp": selected_timestamp,
+        "source": sources[0] if len(sources) == 1 else "mixed" if sources else "",
+        "project_fingerprint": supplied_fp,
+        "values": values,
+        "metadata": {
+            "kind": "captured_log_snapshot",
+            "scope": LOG_REPLAY_SCOPE,
+            "requested_timestamp": requested_text,
+            "selected_timestamp": selected_timestamp,
+            "selection_mode": mode,
+            "distance_seconds": distance,
+            "value_count": len(values),
+            "value_types": value_types,
+            "sources": sources,
+            "project_fingerprints": fingerprints,
+            "actual_project_fingerprint": actual_fp,
+            "fingerprint_match": fingerprint_match,
+            "carry_forward": False,
+            "scan_synchronized": False,
+            "warnings": warnings,
+        },
+    }
+
+
+def _write_replay_result(result: dict[str, object], output: str | None) -> int:
+    text = json.dumps(result, ensure_ascii=False, indent=2)
+    if output:
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
+        print(f"written: {path}")
+    else:
+        print(text)
+    return 0
+
+
+def build_log_replay_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Import already-captured CSV/JSON device logs for offline replay. "
+            "Ordinary imported/polled data is not treated as scan-synchronized recording."
+        )
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("normalize", help="normalize and deterministically de-duplicate a captured log")
+    p.add_argument("input", help="CSV or JSON captured log")
+    p.add_argument("-o", "--output")
+
+    p = sub.add_parser("series", help="emit per-device time series")
+    p.add_argument("input", help="CSV or JSON captured log")
+    p.add_argument("--device", default=None, help="optional one-device filter")
+    p.add_argument("-o", "--output")
+
+    p = sub.add_parser("changes", help="emit value/type change points")
+    p.add_argument("input", help="CSV or JSON captured log")
+    p.add_argument("--device", default=None, help="optional one-device filter")
+    p.add_argument("-o", "--output")
+
+    p = sub.add_parser("snapshot", help="export live-values-compatible JSON at or nearest a timestamp")
+    p.add_argument("input", help="CSV or JSON captured log")
+    p.add_argument("--at", required=True, help="requested ISO 8601 timestamp")
+    p.add_argument("--mode", choices=("exact", "nearest"), default="exact")
+    p.add_argument("--root", default=None, help="optional GX3 project used only to verify project_fingerprint")
+    p.add_argument("-o", "--output")
+    return parser
+
+
+def log_replay_main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    args = build_log_replay_parser().parse_args(argv)
+    try:
+        normalized = load_captured_log(Path(args.input))
+        if args.command == "normalize":
+            result = normalized
+        elif args.command == "series":
+            result = build_device_series(normalized, args.device)
+        elif args.command == "changes":
+            result = build_change_points(normalized, args.device)
+        elif args.command == "snapshot":
+            root = resolve_project_root(args.root) if args.root else None
+            result = build_log_snapshot(normalized, args.at, mode=args.mode, project_root=root)
+        else:
+            raise ValueError(f"unsupported log-replay command: {args.command}")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"gx3 log-replay error: {exc}", file=sys.stderr)
+        return 2
+    return _write_replay_result(result, args.output)
 
 
 if __name__ == "__main__":
