@@ -9,6 +9,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from gx3cli.gx3_ladder_logic import enable_logic_for_device, logic_stats, logic_to_text
+from gx3cli.review_gx3_project import load_comments_for_root, load_rows
 from gx3cli.gx3_xref_read import device_match
 from gx3cli.gx3_xref import open_xref_db
 
@@ -122,6 +124,19 @@ def project_xref_paths(link_con: sqlite3.Connection) -> dict[str, Path]:
     }
 
 
+def project_rows(link_con: sqlite3.Connection) -> dict[str, RowIndex]:
+    """A row index per project, so a condition can be read from the wiring.
+
+    The link map records each project's root beside its cross-reference. Two
+    sides of a handshake live in different projects, so the index has to be per
+    project rather than one for the run.
+    """
+    return {
+        str(row["label"]): RowIndex(Path(str(row["root"])))
+        for row in link_con.execute("select label, root from project")
+    }
+
+
 def open_xref(path: Path) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"xref db not found: {path}")
@@ -137,7 +152,45 @@ def first_comment(con: sqlite3.Connection, device: str) -> str:
     return str(row["comment"]) if row else ""
 
 
-def same_row_conditions(con: sqlite3.Connection, lddb: str, pos: int) -> str:
+class RowIndex:
+    """The ladder rows of a project, by the position an occurrence names."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._rows: dict[tuple[str, int], object] | None = None
+
+    def get(self, lddb: str, pos: int):
+        if self._rows is None:
+            comments = load_comments_for_root(self._root)
+            self._rows = {
+                (row.lddb, int(row.pos)): row for row in load_rows(self._root, comments)
+            }
+        return self._rows.get((lddb, int(pos)))
+
+
+def same_row_conditions(
+    con: sqlite3.Connection,
+    lddb: str,
+    pos: int,
+    rows: "RowIndex | None" = None,
+    device: str = "",
+) -> str:
+    """What has to hold for this rung, as it is wired.
+
+    Reading the contacts out of the cross-reference and joining them with
+    " AND " turns two parallel branches into a series pair -- the reverse of
+    what the rung does. The wiring is in the rung, so the rung is read when it
+    can be, and the flat list says what it is when it cannot.
+    """
+    row = rows.get(lddb, pos) if rows is not None else None
+    if row is not None and device:
+        logic = enable_logic_for_device(row, device)
+        if not logic_stats(logic).get("too_large"):
+            return logic_to_text(logic)
+    return _flat_row_conditions(con, lddb, pos)
+
+
+def _flat_row_conditions(con: sqlite3.Connection, lddb: str, pos: int) -> str:
     rows = con.execute(
         """
         select device, role, comment
@@ -162,10 +215,13 @@ def same_row_conditions(con: sqlite3.Connection, lddb: str, pos: int) -> str:
         prefix = "/" if row["role"] == "b" else ""
         comment = f" {row['comment']}" if row["comment"] else ""
         parts.append(f"{prefix}{device}{comment}".strip())
-    return " AND ".join(parts)
+    joined = " AND ".join(parts)
+    return f"{joined}   (contacts on the rung; wiring not read)" if joined else joined
 
 
-def device_writer_condition(con: sqlite3.Connection, device: str) -> str:
+def device_writer_condition(
+    con: sqlite3.Connection, device: str, rows: "RowIndex | None" = None
+) -> str:
     source, match = device_match(con)
     row = con.execute(
         f"""
@@ -179,10 +235,12 @@ def device_writer_condition(con: sqlite3.Connection, device: str) -> str:
     ).fetchone()
     if not row:
         return ""
-    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]))
+    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]), rows, device)
 
 
-def device_reader_condition(con: sqlite3.Connection, device: str) -> str:
+def device_reader_condition(
+    con: sqlite3.Connection, device: str, rows: "RowIndex | None" = None
+) -> str:
     source, match = device_match(con)
     row = con.execute(
         f"""
@@ -196,7 +254,7 @@ def device_reader_condition(con: sqlite3.Connection, device: str) -> str:
     ).fetchone()
     if not row:
         return ""
-    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]))
+    return same_row_conditions(con, str(row["lddb"]), int(row["pos"]), rows, device)
 
 
 def const_numbers(text: str) -> list[int]:
@@ -265,6 +323,9 @@ def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[
     link_con = open_link_map(link_db)
     xref_paths = project_xref_paths(link_con)
     xrefs = {project: open_xref(path) for project, path in xref_paths.items()}
+    # Per project, and built lazily: a run that never needs a condition never
+    # reads a ladder.
+    rows = project_rows(link_con)
     try:
         links = link_rows_between(link_con, project_a, project_b)
         detected: list[DetectedSignal] = []
@@ -295,11 +356,21 @@ def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[
                     receiver_comment=first_comment(receiver_con, receiver_device) if receiver_con else "",
                     link_type=link_type,
                     confidence=str(row["confidence"] or ""),
-                    sender_condition=device_writer_condition(sender_con, sender_device) if sender_con else "",
-                    receiver_condition=device_reader_condition(receiver_con, receiver_device) if receiver_con else "",
+                    sender_condition=(
+                        device_writer_condition(sender_con, sender_device, rows.get(sender_project))
+                        if sender_con
+                        else ""
+                    ),
+                    receiver_condition=(
+                        device_reader_condition(
+                            receiver_con, receiver_device, rows.get(receiver_project)
+                        )
+                        if receiver_con
+                        else ""
+                    ),
                 )
             )
-        data_groups = detect_data_groups(project_a, project_b, links, xrefs)
+        data_groups = detect_data_groups(project_a, project_b, links, xrefs, rows)
         return dedupe_detected_signals(detected), data_groups
     finally:
         for con in xrefs.values():
@@ -367,6 +438,7 @@ def detect_data_groups(
     project_b: str,
     links: list[sqlite3.Row],
     xrefs: dict[str, sqlite3.Connection],
+    rows: dict[str, "RowIndex"] | None = None,
 ) -> list[DataGroup]:
     candidate_links = []
     for row in links:
@@ -414,7 +486,9 @@ def detect_data_groups(
             sender_con = xrefs.get(candidate_project)
             if not sender_con:
                 continue
-            sender_condition = device_writer_condition(sender_con, candidate_device)
+            sender_condition = device_writer_condition(
+                sender_con, candidate_device, (rows or {}).get(sender_project)
+            )
             if sender_condition:
                 sender_project = candidate_project
                 break

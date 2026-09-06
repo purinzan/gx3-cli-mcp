@@ -23,6 +23,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from gx3cli.gx3_ladder_logic import (
+    condition_refs_from_logic,
+    enable_logic_for_device,
+    logic_stats,
+    logic_to_text,
+)
+from gx3cli.review_gx3_project import load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 from gx3cli.gx3_xref import default_db_path, normalize_device, open_xref_db
 from gx3cli.gx3_xref_read import device_match
@@ -51,8 +58,70 @@ def open_db(args: argparse.Namespace) -> sqlite3.Connection:
     return open_xref_db(path, read_only=True, root=Path(args.root) if args.root else None)
 
 
-def row_conditions(con: sqlite3.Connection, lddb: str, pos: int, self_device: str) -> tuple[list[str], bool]:
-    rows = con.execute(
+class RowIndex:
+    """The ladder rows of a project, by the position an occurrence names.
+
+    alarm-map reads the cross-reference, which records which devices a rung
+    mentions and not how they are wired. Rebuilding a condition from that made
+    two parallel contacts into "A & B" -- the reverse of what the rung does.
+    The wiring is in the rung, so the rung is what gets read.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._rows: dict[tuple[str, int], object] | None = None
+
+    def get(self, lddb: str, pos: int):
+        if self._rows is None:
+            comments = load_comments_for_root(self._root)
+            self._rows = {
+                (row.lddb, int(row.pos)): row for row in load_rows(self._root, comments)
+            }
+        return self._rows.get((lddb, int(pos)))
+
+
+def row_conditions(
+    con: sqlite3.Connection,
+    lddb: str,
+    pos: int,
+    self_device: str,
+    rows: "RowIndex | None" = None,
+) -> tuple[list[str], bool, str]:
+    """What has to be true for this rung to drive the alarm, and self-hold.
+
+    Read from the topology when the rung is available, so parallel branches
+    stay OR and a contact on a dead branch does not appear at all. Self-hold
+    means the alarm's own contact is on a live path to this output, not merely
+    that it is somewhere on the row.
+
+    Falls back to the flat contact list when the rung cannot be read, and says
+    so, because a flattened condition that looks like the real one is what this
+    is being fixed for.
+    """
+    row = rows.get(lddb, pos) if rows is not None else None
+    if row is not None:
+        logic = enable_logic_for_device(row, self_device)
+        stats = logic_stats(logic)
+        if not stats.get("too_large"):
+            conds: list[str] = []
+            self_hold = False
+            for ref in condition_refs_from_logic(logic):
+                device = str(ref.get("display_device") or ref.get("device") or "")
+                if not device:
+                    continue
+                if device == self_device:
+                    self_hold = True
+                    continue
+                mark = "" if str(ref.get("required_state", "")).upper() == "ON" else "/"
+                comment = device_comment_from(con, device)
+                conds.append(f"{mark}{device}={comment}" if comment else f"{mark}{device}")
+            # The structure, not a list of the devices in it. Joining the
+            # contacts with " & " is how two parallel branches became "A & B"
+            # in the first place, and reading them from the topology and then
+            # flattening them would print the same wrong sentence.
+            return conds, self_hold, logic_to_text(logic)
+
+    flat = con.execute(
         """
         select device, role, comment from xref
         where lddb=? and pos=? and role in ('a','b')
@@ -62,7 +131,7 @@ def row_conditions(con: sqlite3.Connection, lddb: str, pos: int, self_device: st
     ).fetchall()
     conds = []
     self_hold = False
-    for r in rows:
+    for r in flat:
         if r["device"] == self_device:
             self_hold = True
             continue
@@ -71,7 +140,21 @@ def row_conditions(con: sqlite3.Connection, lddb: str, pos: int, self_device: st
         if r["comment"]:
             text += f"={r['comment']}"
         conds.append(text)
-    return conds, self_hold
+    text = " & ".join(conds)
+    if conds:
+        # Said beside the condition rather than in a header: the reader is
+        # looking at this line.
+        text += "   (contacts on the rung; wiring not read)"
+    return conds, self_hold, text
+
+
+def device_comment_from(con: sqlite3.Connection, device: str) -> str:
+    source, match = device_match(con)
+    row = con.execute(
+        f"select x.comment from {source} where {match} and x.comment<>'' limit 1",
+        (device,),
+    ).fetchone()
+    return str(row["comment"]) if row else ""
 
 
 def timer_setpoint(con: sqlite3.Connection, timer: str) -> str:
@@ -94,7 +177,11 @@ def timer_setpoint(con: sqlite3.Connection, timer: str) -> str:
     return " / ".join(dict.fromkeys(values))
 
 
-def collect_alarms(con: sqlite3.Connection, pattern: re.Pattern[str]) -> list[dict[str, object]]:
+def collect_alarms(
+    con: sqlite3.Connection,
+    pattern: re.Pattern[str],
+    rows: RowIndex | None = None,
+) -> list[dict[str, object]]:
     candidates = con.execute(
         f"""
         select device, device_type, comment, lddb, pos, pou, step, role
@@ -117,7 +204,7 @@ def collect_alarms(con: sqlite3.Connection, pattern: re.Pattern[str]) -> list[di
             continue
         seen_rows.add(key)
 
-        conds, self_hold = row_conditions(con, r["lddb"], r["pos"], r["device"])
+        conds, self_hold, trigger = row_conditions(con, r["lddb"], r["pos"], r["device"], rows)
         hold = "SET-latch" if r["role"] == "SET" else ("self-hold" if self_hold else "OUT")
 
         timers = [c for c in conds if re.match(r"^/?T\d+", c)]
@@ -140,7 +227,7 @@ def collect_alarms(con: sqlite3.Connection, pattern: re.Pattern[str]) -> list[di
                 "hold": hold,
                 "pou": r["pou"],
                 "step": r["step"],
-                "trigger_conditions": " & ".join(conds[:12]),
+                "trigger_conditions": trigger,
                 "monitor_timer": timer_info,
                 "reset_at": reset_info,
             }
@@ -151,7 +238,7 @@ def collect_alarms(con: sqlite3.Connection, pattern: re.Pattern[str]) -> list[di
 def cmd_list(args: argparse.Namespace) -> int:
     con = open_db(args)
     pattern = re.compile(args.pattern, re.IGNORECASE) if args.pattern else ALARM_COMMENT_RE
-    alarms = collect_alarms(con, pattern)
+    alarms = collect_alarms(con, pattern, RowIndex(Path(args.root)))
 
     out = Path(args.output or f"outputs/{default_output_prefix('alarms')}.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +266,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_show(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
+    rows = RowIndex(Path(args.root))
     drivers = con.execute(
         f"select x.* from {device_match(con)[0]} "
         f"where {device_match(con)[1]} and x.access='write' order by x.pos", (device,)
@@ -189,11 +277,15 @@ def cmd_show(args: argparse.Namespace) -> int:
     comment = next((d["comment"] for d in drivers if d["comment"]), "")
     print(f"{device} {comment}".rstrip())
     for d in drivers:
-        conds, self_hold = row_conditions(con, d["lddb"], d["pos"], device)
+        conds, self_hold, trigger = row_conditions(con, d["lddb"], d["pos"], device, rows)
         hold = "SET-latch" if d["role"] == "SET" else ("self-hold" if self_hold else d["role"])
         print(f"\n[{d['pou']} st{d['step']}] {hold}  {d['title'] or ''}".rstrip())
+        # The condition as it is wired, before the contacts that make it
+        # up. A list of contacts reads as a series circuit whatever it
+        # came from.
+        print(f"  {trigger}")
         for c in conds:
-            print(f"  {'NC ' if c.startswith('/') else 'NO '}{c.lstrip('/')}")
+            print(f"    {'NC ' if c.startswith('/') else 'NO '}{c.lstrip('/')}")
         for c in conds:
             m = re.match(r"^/?(T\d+)", c)
             if m:
