@@ -40,6 +40,7 @@ from gx3cli.gx3_analysis_state import (
     DECODE,
     DISCOVERY,
     NOT_EVALUATED,
+    SEMANTICS,
     PARTIAL,
     REACH,
     TOPOLOGY,
@@ -102,52 +103,128 @@ def device_key(device: str) -> tuple[str, int]:
     return parse_device(device)
 
 
+# What a driver row's own execution meaning depends on, beyond the contacts
+# folded into its condition. Each of these makes the printed condition an
+# answer to a narrower question than the reader is asking.
+TEMPORAL_DEVICE_TYPES = {"T", "ST", "C", "LT", "LC", "LST"}
+
+
+def semantic_gaps(driver_rows: list[dict]) -> list[str]:
+    """What the conditions do not account for, in the words of the constructs.
+
+    `trace-device` folds contacts into a Boolean condition. That is the right
+    answer for a coil, and it is not the whole answer for anything that carries
+    state or decides whether a rung runs at all:
+
+    a jump above the row  the rung may be skipped entirely, and the targets are
+                          not resolved, so which rungs are bypassed is unknown
+    SET / RST             the condition shown is when the device is set, not
+                          when it stays set; the reset is elsewhere
+    PLS / PLF             the write happens on an edge, not while the condition
+                          holds
+    a timer or counter    the driven contact means "done", which is the
+                          condition plus elapsed time or counts
+
+    Reported, not modelled. Folding a timer into a Boolean would be a claim
+    about time that a file cannot support, and leaving the result "checked"
+    was a claim that nothing was missing.
+    """
+    gaps: list[str] = []
+    if any(row.get("cj_upstream") for row in driver_rows):
+        gaps.append(
+            "a conditional jump above a driver row may bypass it; jump targets are "
+            "not resolved"
+        )
+    roles = {role for row in driver_rows for role in (row.get("driver_roles") or [])}
+    if {"SET", "RST"} & roles:
+        gaps.append("SET/RST: the condition shown is when it changes, not when it holds")
+    if {"PLS", "PLF"} & roles:
+        gaps.append("PLS/PLF: the write happens on an edge, not while the condition holds")
+    if {"OUT__16", "OUTH__16"} & roles:
+        gaps.append("a timer or counter is driven here; its contact means done, not enabled")
+    temporal = {
+        str(condition.get("device", ""))
+        for row in driver_rows
+        for condition in (row.get("conditions") or [])
+        if str(condition.get("device", ""))[:2].rstrip("0123456789") in TEMPORAL_DEVICE_TYPES
+        or str(condition.get("device", ""))[:1] in TEMPORAL_DEVICE_TYPES
+    }
+    if temporal:
+        listed = ", ".join(sorted(temporal)[:4])
+        gaps.append(f"timer/counter contacts in the condition ({listed}): elapsed time is not modelled")
+    return gaps
+
+
 def trace_state(
-    truncated: bool, reasons: list[str], partial_rows: list, capped_rows: list | None = None
+    truncated: bool,
+    reasons: list[str],
+    partial_rows: list,
+    capped_rows: list | None = None,
+    gaps: list[str] | None = None,
 ) -> AnalysisState:
     """What this trace is worth, in the words every command uses.
 
-    A trace that stopped at a depth limit has not shown where the condition
-    comes from; it has shown where looking stopped. A trace over a row the
-    decoder could not fully read is missing part of the condition. Either way
-    the list below it is not the whole answer, and saying so next to the answer
-    is the point -- "truncated=True" inside a stats line is not where a reader
-    looks.
+    Four things can be true at once and they are not ranked by importance --
+    they are ranked by what to do next. A row the decoder could not read is
+    first because nothing else can be trusted over it; a depth limit is last
+    because raising it is cheap and changes nothing else.
 
-    A row whose condition stopped expanding is a third thing, and it was being
-    reported as the second. The instructions and operands were read correctly;
-    what could not be finished was folding the wiring into one expression. That
-    is the topology stage, and the next step is to read the rung -- parse-gaps
-    has nothing to say about it, and sending a reader there wastes their time
-    on a gap that is not there.
+        decode      part of a driver row was not interpreted
+        topology    a condition was too large to fold into one expression
+        semantics   the condition is right and does not say what makes the
+                    rung run, or what makes the value persist
+        reach       the search stopped before it was exhausted
+
+    The state is the first of those that applies. The others are not dropped:
+    a trace that is both semantically incomplete and truncated tells the reader
+    both, because fixing one of them still leaves the other.
     """
-    capped_rows = capped_rows or []
+    found: list[tuple[str, str, str, str]] = []
     if partial_rows:
-        return AnalysisState(
+        found.append((
             PARTIAL,
-            reason=f"{len(partial_rows)} driver rows were not fully interpreted",
-            next_step="gx3-cli parse-gaps --root <project>",
-            stage=DECODE,
-        )
+            DECODE,
+            f"{len(partial_rows)} driver rows were not fully interpreted",
+            "gx3-cli parse-gaps --root <project>",
+        ))
     if capped_rows:
-        return AnalysisState(
+        found.append((
             PARTIAL,
-            reason=(
-                f"{len(capped_rows)} driver rows have a condition too large to expand; "
-                "the conditions listed are fewer than the rung has"
-            ),
-            next_step="read the rung itself: gx3-cli ladder-print / ladder-report",
-            stage=TOPOLOGY,
-        )
+            TOPOLOGY,
+            f"{len(capped_rows)} driver rows have a condition too large to expand; "
+            "the conditions listed are fewer than the rung has",
+            "read the rung itself: gx3-cli ladder-print / ladder-report",
+        ))
+    for gap in gaps or []:
+        found.append((
+            PARTIAL,
+            SEMANTICS,
+            gap,
+            "read the rung and check these on the machine: gx3-cli ladder-print / ladder-report",
+        ))
     if truncated:
-        limit = ", ".join(reasons) or "a limit"
-        return AnalysisState(
+        found.append((
             TRUNCATED,
-            reason=f"the search stopped at {limit}",
-            next_step="raise --max-depth or --max-devices and run it again",
-            stage=REACH,
-        )
-    return checked()
+            REACH,
+            f"the search stopped at {', '.join(reasons) or 'a limit'}",
+            "raise --max-depth or --max-devices and run it again",
+        ))
+
+    if not found:
+        return checked()
+
+    state, stage, reason, next_step = found[0]
+    others = [
+        {"stage": other_stage, "reason": other_reason, "next_step": other_next}
+        for _, other_stage, other_reason, other_next in found[1:]
+    ]
+    return AnalysisState(
+        state,
+        reason=reason,
+        next_step=next_step,
+        stage=stage,
+        detail={"also": others} if others else {},
+    )
 
 
 def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) -> str:
@@ -542,7 +619,11 @@ def build_trace(
             )
             if absent
             else trace_state(
-                truncated, sorted(truncated_reasons), partial_driver_rows, capped_driver_rows
+                truncated,
+                sorted(truncated_reasons),
+                partial_driver_rows,
+                capped_driver_rows,
+                semantic_gaps(driver_rows),
             )
         ).as_dict(),
         "stats": {
@@ -882,6 +963,13 @@ def state_lines(trace: dict[str, Any], ja: bool = False) -> list[str]:
     out = ["", f"{head}: {label} -- {analysis.get('reason', '')}".rstrip(" -")]
     if analysis.get("next_step"):
         out.append(f"  {nxt}: {analysis['next_step']}")
+    also = (analysis.get("detail") or {}).get("also") or []
+    if also:
+        # Every constraint, not only the one that decided the state: fixing the
+        # first still leaves the rest.
+        out.append("  " + ("ほかにも:" if ja else "also:"))
+        for item in also:
+            out.append(f"    - [{item.get('stage', '')}] {item.get('reason', '')}")
     out.append("")
     return out
 
@@ -911,9 +999,12 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
     lines.extend(state_lines(trace, ja))
     if trace["stats"].get("partial_driver_rows", 0):
         if ja:
-            lines.append("Parse warning: partial解析の駆動行があります。条件/命令参照が不足する可能性があります。")
+            lines.append("Parse warning: 駆動行の一部が構造として読み切れていません（条件/命令参照が不足する可能性）。"
+                         "なお構造が揃っていること自体は、意味が正しいことの証明ではありません。")
         else:
-            lines.append("Parse warning: partial-parse driver rows may hide conditions or instruction refs.")
+            lines.append("Parse warning: some driver rows did not decode into the expected shape, so "
+                         "conditions or instruction refs may be missing. A matching shape is "
+                         "not proof that the meaning is right.")
     lines.append("")
 
     for warning in target_rec.get("warnings", []):
