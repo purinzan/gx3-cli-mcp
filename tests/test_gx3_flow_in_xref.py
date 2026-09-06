@@ -23,9 +23,14 @@ import contextlib
 import io
 import sqlite3
 import tempfile
+import sys
 from pathlib import Path
 
 from gx3cli.gx3_xref import downstream, main as xref_main
+from gx3cli.gx3_dependency_flow import value_sources
+from gx3cli.gx3_reach import successors, has_value_edges, run_members
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def rung(header: str, args: str) -> str:
@@ -176,7 +181,64 @@ def test_a_cross_reference_without_edges_says_it_cannot_tell() -> None:
         assert "via MOV" not in text, text
 
 
+def test_physical_spans_survive_storage_and_real_consumers() -> None:
+    from test_gx3_block_range import operation_row
+    from test_gx3_shared_reach import write_program
+
+    for opcode, count, source_span, dest_span in (
+        ("DFMOV", 5, 2, 10), ("WTOB", 5, 3, 5),
+        ("BTOW", 5, 5, 3), ("BMOV", 5, 5, 5),
+        ("DMOV", None, 2, 2), ("DMOVP", None, 2, 2), ("EDMOV", None, 4, 4),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            root = work / "project"
+            args = "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}"
+            if count is not None:
+                args += f":c{{s=#:v={count}}}"
+            write_program(root, [("operation", operation_row(opcode, "D:D:K_1" if count is not None else "D:D", args))])
+            db = work / "xref.sqlite"
+            build(root, db)
+            row = next(row for row in edges(db) if row["opcode"] == opcode)
+            assert (row["source_range_len"], row["destination_range_len"]) == (source_span, dest_span), dict(row)
+            sources = value_sources(db)
+            assert f"D{200 + dest_span - 1}" in sources, sources
+            assert f"D{200 + dest_span}" not in sources, sources
+            con = sqlite3.connect(db)
+            con.row_factory = sqlite3.Row
+            try:
+                for device in ("D100", f"D{100 + source_span - 1}"):
+                    found = successors(con, device, has_value_edges(con))
+                    edge, basis = next((r, b) for r, b in found if r["device"] == "D200")
+                    assert basis == f"via {opcode}", (opcode, device, basis)
+                    assert len(run_members(edge)) == dest_span - 1
+                assert not successors(con, f"D{100 + source_span}", True)
+            finally:
+                con.close()
+
+
+def test_unknown_span_zero_is_not_serialized_as_one() -> None:
+    from test_gx3_block_range import operation_row
+    from test_gx3_shared_reach import write_program
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("dynamic", operation_row("BMOV", "D:D:D",
+            "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}:d{s=#:a=10:vt=nn}"))])
+        db = Path(tmp) / "xref.sqlite"
+        build(root, db)
+        row = next(row for row in edges(db) if row["source_device"] == "D100")
+        assert row["source_range_len"] == row["destination_range_len"] == 0, dict(row)
+        # Legacy range_count is not physical coverage; the two explicit
+        # extents must retain unknown even when that legacy value is one.
+        sources = value_sources(db)
+        assert "D201" not in sources
+        assert sources["D200"][0]["destination_range_len"] == 0
+
+
 def main() -> int:
+    test_physical_spans_survive_storage_and_real_consumers()
+    test_unknown_span_zero_is_not_serialized_as_one()
     test_a_transfer_records_one_directed_edge()
     test_a_block_transfer_keeps_its_count_and_width()
     test_a_read_modify_write_says_so()

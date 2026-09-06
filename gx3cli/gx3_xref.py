@@ -75,7 +75,8 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   device spans instead of assuming every (n) is already a device count.
 #   DFMOV, WTOB, BTOW and BK+ therefore change persisted coverage; indexed
 #   counted bases remain statically unexpanded.
-XREF_DECODER = "arg-decode-strefs-countspans-6"
+# v7 preserves independent physical spans in data_flow; count is not extent.
+XREF_DECODER = "arg-decode-strefs-flowspans-7"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
@@ -184,7 +185,7 @@ def flow_edge_rows(root: Path) -> list[tuple]:
                 edge.get("opcode", ""),
                 edge.get("source_arg_index"),
                 edge.get("destination_arg_index"),
-                int(edge.get("range_count") or 1),
+                int(edge.get("range_count", 1)),
                 int(edge.get("source_word_width") or 1),
                 int(edge.get("destination_word_width") or 1),
                 1 if edge.get("read_modify_write") else 0,
@@ -197,6 +198,12 @@ def flow_edge_rows(root: Path) -> list[tuple]:
                 edge.get("title", ""),
                 edge.get("source_comment", ""),
                 edge.get("destination_comment", ""),
+                int(edge["source_range_len"]),
+                int(edge["destination_range_len"]),
+                (_split_device(edge.get("source_device", "")) or ("", 0))[0],
+                (_split_device(edge.get("source_device", "")) or ("", 0))[1],
+                edge.get("source_detail", ""),
+                edge.get("destination_detail", ""),
             )
         )
     return rows
@@ -517,7 +524,13 @@ def build(args: argparse.Namespace) -> int:
             step integer,
             title text,
             source_comment text,
-            destination_comment text
+            destination_comment text,
+            source_range_len integer not null,
+            destination_range_len integer not null,
+            source_device_type text not null,
+            source_number integer not null,
+            source_detail text,
+            destination_detail text
         );
         """
     )
@@ -527,8 +540,10 @@ def build(args: argparse.Namespace) -> int:
             source_device, destination_device, opcode, source_arg_index,
             destination_arg_index, range_count, source_word_width,
             destination_word_width, read_modify_write, confidence, parse_status,
-            lddb, pos, pou, step, title, source_comment, destination_comment
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lddb, pos, pou, step, title, source_comment, destination_comment,
+            source_range_len, destination_range_len, source_device_type,
+            source_number, source_detail, destination_detail
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         flow_edge_rows(root),
     )
@@ -554,6 +569,7 @@ def build(args: argparse.Namespace) -> int:
         create index idx_members_span on xref_members(device_type, number);
         create index idx_members_src on xref_members(src_id);
         create index idx_flow_source on data_flow(source_device);
+        create index idx_flow_source_extent on data_flow(source_device_type, source_number);
         create index idx_flow_destination on data_flow(destination_device);
         create index idx_flow_row on data_flow(lddb, pos);
         create index idx_xref_device on xref(device);

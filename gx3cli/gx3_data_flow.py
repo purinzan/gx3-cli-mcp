@@ -78,6 +78,8 @@ class FlowRecord:
     source_range: str = ""
     destination_range: str = ""
     range_count: int = 1
+    source_range_len: int = 1
+    destination_range_len: int = 1
     source_word_width: int = 1
     destination_word_width: int = 1
     execution_condition: str = ""
@@ -266,10 +268,10 @@ def records_for_operation(
     records: list[FlowRecord] = []
     for source in reads:
         source_width = _operand_width(opcode, argc, source.arg_index)
-        source_span = max(0, int(source.range_len))
+        source_span = 0 if "indexed" in source.detail else max(0, int(source.range_len))
         for destination in writes:
             destination_width = _operand_width(opcode, argc, destination.arg_index)
-            destination_span = max(0, int(destination.range_len))
+            destination_span = 0 if "indexed" in destination.detail else max(0, int(destination.range_len))
             records.append(
                 FlowRecord(
                     record_kind="edge",
@@ -286,6 +288,8 @@ def records_for_operation(
                     source_range=_range_for(source.device, source_span),
                     destination_range=_range_for(destination.device, destination_span),
                     range_count=count,
+                    source_range_len=source_span,
+                    destination_range_len=destination_span,
                     source_word_width=source_width,
                     destination_word_width=destination_width,
                     execution_condition=condition,
