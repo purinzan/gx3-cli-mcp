@@ -143,26 +143,32 @@ def add_json(zf: zipfile.ZipFile, name: str, data: object, redact: Any) -> None:
     add_text(zf, name, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", redact)
 
 
-def structural_leak_table(table: RedactionMap) -> RedactionMap:
-    """Known secrets that are still forbidden in a structural inventory.
+def mask_safe_structural_names(payload: str, data: object) -> str:
+    """Hide intentional inventory names only while checking known secrets.
 
-    The generic redactor can learn format-defined names from another payload
-    such as doctor.txt and put them in the alias table. Those exact names are
-    deliberately retained by project_inventory(), so treating them as leaks at
-    this boundary makes the two policies contradict each other. Structural
-    stand-ins are safe for the same reason.
+    The generic redactor may learn a *substring* of a format-defined name from
+    another payload: for example ``LDDB.db`` from ``001_LDDB.db`` or ``CAB``
+    from ``SourceInfo.CAB``. Filtering only exact alias-table entries therefore
+    still calls the intentionally retained format name a leak.
 
-    Everything else remains in the check: project/customer/equipment names
-    already known to the alias table must still fail if they somehow survive
-    structural pseudonymization. IP and CJK checks are independent of the table
-    and remain active in assert_no_leaks().
+    Replace the exact structural path components in a temporary copy used for
+    the alias-table check. The archive payload itself is unchanged. Unknown
+    path components are already DIR_nnnn / FILE_nnnn, so no user-controlled
+    name is being exempted here.
     """
-    filtered = {
-        real: alias
-        for real, alias in table.real_to_alias.items()
-        if not FORMAT_NAMES.fullmatch(real) and not STRUCTURAL_ALIAS.fullmatch(real)
-    }
-    return RedactionMap(path=table.path, real_to_alias=filtered)
+    masked = payload
+    if not isinstance(data, list):
+        return masked
+    safe_components: set[str] = set()
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        for component in str(row.get("path", "")).split("/"):
+            if FORMAT_NAMES.fullmatch(component) or STRUCTURAL_ALIAS.fullmatch(component):
+                safe_components.add(component)
+    for component in sorted(safe_components, key=len, reverse=True):
+        masked = masked.replace(component, "<STRUCTURAL_NAME>")
+    return masked
 
 
 def add_structural_json(
@@ -180,13 +186,13 @@ def add_structural_json(
     or 001_LDDB.db, destroying the diagnostic information the structural pass
     deliberately retained.
 
-    We still run the leak assertion with only the intentionally-safe exact
-    format names removed from the known-secret set. If a CJK/IP/customer name
-    reaches this boundary despite the structural rules, fail the bundle instead
-    of silently publishing it.
+    IP/CJK checks run on the real payload. The known-alias check runs on a
+    temporary copy with only those intentional structural names masked, so a
+    customer/project/equipment secret still fails if it somehow survives.
     """
     payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    assert_no_leaks(payload, structural_leak_table(table))
+    assert_no_leaks(payload, None)
+    assert_no_leaks(mask_safe_structural_names(payload, data), table)
     zf.writestr(name, payload.encode("utf-8"))
 
 
