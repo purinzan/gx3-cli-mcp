@@ -127,7 +127,10 @@ def counts_for(con: sqlite3.Connection, devices: Iterable[str]) -> dict[str, dic
             )
         for row in con.execute(sql, window):
             entry = totals.setdefault(str(row["device"]), {"read": 0, "write": 0})
-            if row["access"] in entry:
+            if row["access"] == "both":
+                entry["read"] += int(row["n"])
+                entry["write"] += int(row["n"])
+            elif row["access"] in entry:
                 entry[row["access"]] += int(row["n"])
     return totals
 
