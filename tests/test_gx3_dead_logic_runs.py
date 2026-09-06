@@ -200,12 +200,12 @@ def test_real_cli_range_writer_never_becomes_a_constant() -> None:
             ("use", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0]),
             ("outside", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M112"})[0]),
         ])
-        env = dict(os.environ, PYTHONPATH=str(repo))
+        env = dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8")
 
         def cli(*args: str) -> str:
             result = subprocess.run(
                 [sys.executable, "-m", "gx3cli.gx3_cli", *args, "--root", str(root)],
-                cwd=tmp, env=env, capture_output=True, text=True,
+                cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8",
             )
             assert result.returncode == 0, (args, result.stdout, result.stderr)
             return result.stdout
