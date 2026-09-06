@@ -22,7 +22,7 @@ from pathlib import Path
 
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_label_resolve import (
-    EMPTY,
+    empty_resolver,
     load_label_resolver,
     split_label_token,
 )
@@ -136,7 +136,7 @@ def test_without_the_label_table_the_reference_is_kept_not_dropped() -> None:
     # it referred to, so an empty cross-reference cannot be mistaken for a
     # rung with nothing in it.
     data = _rung(("a", 2), ("c", 7))
-    ops, _status = parse_row_occurrences(data, EMPTY)
+    ops, _status = parse_row_occurrences(data, empty_resolver())
     found = [(occ.device, occ.detail) for _r, _o, occs, _c in ops for occ in occs]
     assert [name for name, _detail in found] == [f"_lid/{LABEL_ID}/2", f"_lid/{LABEL_ID}/7"]
     assert all(detail == "label (unresolved)" for _name, detail in found)
