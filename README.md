@@ -137,6 +137,7 @@ decrypted; export the folder from GX Works3 instead.
 
 - [User manual (JA)](docs/USER_MANUAL_JA.md) / [(EN)](docs/USER_MANUAL_EN.md)
 - [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md)
+- [Ladder practical tips (JA)](docs/LADDER_PRACTICAL_TIPS_JA.md) — field-oriented modification and review tips
 - [Security note (JA)](docs/SECURITY_JA.md) — local data handling, read-only MCP policy
 - [Validation matrix (JA)](docs/VALIDATION_MATRIX.md) — verified scope and limits
 - [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md) — repository map
