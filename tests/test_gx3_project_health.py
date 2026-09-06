@@ -9,11 +9,7 @@ from pathlib import Path
 
 from gx3cli.gx3_doctor import _project_health_args, main as doctor_main
 from gx3cli.gx3_lint import LintContext
-from gx3cli.gx3_project_health import (
-    build_report,
-    collect_io_comment_gaps,
-    finding_priority,
-)
+from gx3cli.gx3_project_health import build_report, collect_io_comment_gaps, finding_priority
 from gx3cli.gx3_synthetic_project import create_synthetic_project
 
 
@@ -68,14 +64,13 @@ def test_build_report_ranks_and_scores_dimensions() -> None:
     assert report["scores"]["Change safety"] < 100
     assert report["scores"]["Documentation"] < 100
     assert report["score_kind"].startswith("heuristic")
+    assert report["health"] != "INCOMPLETE"
 
 
 def test_io_comment_gap_only_flags_uncommented_physical_io() -> None:
     con = sqlite3.connect(":memory:")
     con.row_factory = sqlite3.Row
-    con.execute(
-        "create table xref(device text, device_type text, comment text, pou text, step integer)"
-    )
+    con.execute("create table xref(device text, device_type text, comment text, pou text, step integer)")
     con.executemany(
         "insert into xref values(?,?,?,?,?)",
         [
@@ -120,6 +115,8 @@ def test_doctor_project_health_mode_delegates_and_reports_partial_coverage() -> 
         assert report["mode"] == "project-health"
         assert report["analysis"]["total_checks"] >= 1
         assert report["analysis"]["inconclusive"]
+        assert report["health"] == "INCOMPLETE"
+        assert report["provisional_health"] is not None
         assert len(report["top_risks"]) <= 3
 
 
