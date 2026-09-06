@@ -29,8 +29,14 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from gx3cli.extract_gx3_extended_instruction_knowledge import element_meta, extract_elements, parse_header_ops
-from gx3cli.gx3_label_resolve import LabelResolver
+from gx3cli.extract_gx3_extended_instruction_knowledge import (
+    LABEL_TOKEN_PREFIX,
+    element_meta,
+    extract_elements,
+    header_tokens,
+    parse_header_ops,
+)
+from gx3cli.gx3_label_resolve import LabelRef, LabelResolver, split_label_token
 from gx3cli.gx3_ladder_logic import (
     DEVICE_ARG_RE,
     FlowElement,
@@ -83,6 +89,34 @@ class JumpSite:
         return {"pos": self.pos, "opcode": self.opcode, "condition_text": self.condition_text}
 
 
+def inferred_label_resolver(rows: list[LadderRow]) -> LabelResolver | None:
+    """Recover label names already resolved on the row occurrence boundary.
+
+    `trace-device` resolves LABEL occurrences before it asks this module to
+    reconstruct MC/CJ execution context. Older callers pass only rows, while
+    newer callers may pass the resolver explicitly. Re-reading LabelData here
+    would duplicate project discovery and a module-global resolver would leak
+    across MCP analyses, so the fallback uses only evidence already attached to
+    the rows.
+
+    Header label tokens and decoded LABEL occurrences are produced by the same
+    canonical operation walk and therefore keep the same order. A still-raw
+    `_lid/...` occurrence is deliberately skipped: absence of a name is not a
+    licence to invent one.
+    """
+    entries: dict[tuple[str, int], LabelRef] = {}
+    for row in rows:
+        tokens = [token for token in header_tokens(row.data) if token.startswith(LABEL_TOKEN_PREFIX)]
+        occurrences = [occ for occ in row.occurrences if occ.device_type == "LABEL"]
+        for token, occ in zip(tokens, occurrences):
+            parsed = split_label_token(token)
+            name = str(occ.device)
+            if parsed is None or not name or name.startswith(LABEL_TOKEN_PREFIX):
+                continue
+            entries.setdefault(parsed, LabelRef(name=name))
+    return LabelResolver(entries) if entries else None
+
+
 def control_elements(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> list[tuple[FlowElement, str]]:
@@ -131,6 +165,7 @@ def mc_relay_device(element: FlowElement) -> str:
 def build_mc_zones(
     rows: list[LadderRow], labels: LabelResolver | None = None
 ) -> dict[str, list[McZone]]:
+    labels = labels or inferred_label_resolver(rows)
     by_lddb: dict[str, list[LadderRow]] = defaultdict(list)
     for row in rows:
         by_lddb[row.lddb].append(row)
@@ -184,6 +219,7 @@ def apply_zone_conditions(logic: dict[str, Any], zones: list[McZone]) -> dict[st
 def build_jump_index(
     rows: list[LadderRow], labels: LabelResolver | None = None
 ) -> dict[str, list[JumpSite]]:
+    labels = labels or inferred_label_resolver(rows)
     by_lddb: dict[str, list[JumpSite]] = defaultdict(list)
     for row in rows:
         for element, _raw in control_elements(row, labels):
