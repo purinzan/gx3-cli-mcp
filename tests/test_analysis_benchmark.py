@@ -34,6 +34,9 @@ def main() -> int:
         # Two queries: 9 existing statements + one schema query and four
         # SQLite-internal table_info statements each. No data scan added.
         assert sample["warm_query"]["sql_statements"] == 28, sample
+        # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
+        # before constant proofs. These add two statements, not source reloads.
+        assert sample["trace"]["sql_statements"] == (25 if sample["case"] == "multi-pou" else 22), sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample
