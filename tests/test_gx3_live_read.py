@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import json
 import socket
+import tempfile
 import threading
+from pathlib import Path
 
+from gx3cli.gx3_ladder_print import load_live_values
 from gx3cli.gx3_live_read import (
+    LOG_REPLAY_SCOPE,
     build_3e_binary_read_frame,
+    build_change_points,
+    build_device_series,
+    build_log_snapshot,
     decode_bit_values,
     explain_request,
+    load_captured_log,
     parse_device,
     read_current_values,
 )
@@ -36,7 +45,7 @@ def serve_once(response_payload: bytes, seen: list[bytes]) -> tuple[str, int, th
     return host, port, thread
 
 
-def main() -> None:
+def test_live_read_protocol() -> None:
     d100 = parse_device("D100")
     assert d100.prefix == "D"
     assert d100.number == 100
@@ -78,7 +87,100 @@ def main() -> None:
     assert plan["request_hex"] == frame.hex(" ")
     assert explain_request(args)["device_code"] == "0xA8"
 
-    print("live-read checks passed")
+
+def test_csv_normalize_series_changes_and_snapshot() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        path = root / "capture.csv"
+        path.write_text(
+            "timestamp,device,value,value_type,source,project_fingerprint\n"
+            "2026-09-06T10:00:00Z,M1,0,bit,poll,abc\n"
+            "2026-09-06T10:00:00Z,D100,5,word,poll,abc\n"
+            "2026-09-06T10:00:00Z,D100,6,word,poll,abc\n"
+            "2026-09-06T10:00:01Z,M1,1,bit,poll,abc\n"
+            "2026-09-06T10:00:03Z,D100,9,word,poll,abc\n",
+            encoding="utf-8",
+        )
+        normalized = load_captured_log(path)
+        assert normalized["scope"] == LOG_REPLAY_SCOPE
+        assert normalized["metadata"]["input_records"] == 5
+        assert normalized["metadata"]["normalized_records"] == 4
+        assert normalized["metadata"]["duplicate_records_replaced"] == 1
+        rows = normalized["records"]
+        assert [row["timestamp"] for row in rows] == sorted(row["timestamp"] for row in rows)
+        first_d100 = next(row for row in rows if row["timestamp"] == "2026-09-06T10:00:00Z" and row["device"] == "D100")
+        assert first_d100["value"] == 6  # documented last-record-wins duplicate policy
+        assert first_d100["value_type"] == "word"
+
+        series = build_device_series(normalized, "m1")
+        assert list(series["devices"]) == ["M1"]
+        assert [row["value"] for row in series["devices"]["M1"]] == [False, True]
+
+        changes = build_change_points(normalized, "M1")["changes"]
+        assert len(changes) == 1
+        assert changes[0]["previous_value"] is False
+        assert changes[0]["value"] is True
+
+        snapshot = build_log_snapshot(normalized, "2026-09-06T10:00:00Z")
+        assert snapshot["values"] == {"D100": 6, "M1": False}
+        assert "D101" not in snapshot["values"]
+        assert snapshot["metadata"]["value_types"] == {"D100": "word", "M1": "bit"}
+        assert snapshot["metadata"]["carry_forward"] is False
+        assert snapshot["metadata"]["scan_synchronized"] is False
+        assert snapshot["project_fingerprint"] == "abc"
+
+        live_path = root / "live.json"
+        live_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        assert load_live_values(str(live_path)) == {"D100": 6, "M1": False}
+
+        # 10:00:02 is equally close to :01 and :03; ties deterministically use
+        # the earlier timestamp and do not fill D100 from the previous capture.
+        nearest = build_log_snapshot(normalized, "2026-09-06T10:00:02Z", mode="nearest")
+        assert nearest["timestamp"] == "2026-09-06T10:00:01Z"
+        assert nearest["values"] == {"M1": True}
+        assert "D100" not in nearest["values"]
+
+
+def test_json_types_and_fingerprint_mismatch_are_visible() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        path = root / "capture.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "metadata": {"source": "export", "project_fingerprint": "deadbeef"},
+                    "records": [
+                        {
+                            "timestamp": "2026-09-06T06:00:00-04:00",
+                            "device": "D20",
+                            "value": "0007",
+                            "value_type": "vendor-word",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        normalized = load_captured_log(path)
+        row = normalized["records"][0]
+        assert row["timestamp"] == "2026-09-06T10:00:00Z"
+        assert row["value"] == "0007"  # unknown vendor type is preserved, not guessed
+        assert row["value_type"] == "vendor-word"
+        assert row["source"] == "export"
+
+        project = root / "project"
+        project.mkdir()
+        (project / "CPU.PRM").write_bytes(b"synthetic parameters")
+        snapshot = build_log_snapshot(normalized, "2026-09-06T10:00:00Z", project_root=project)
+        assert snapshot["metadata"]["fingerprint_match"] is False
+        assert any("does not match" in warning for warning in snapshot["metadata"]["warnings"])
+
+
+def main() -> None:
+    test_live_read_protocol()
+    test_csv_normalize_series_changes_and_snapshot()
+    test_json_types_and_fingerprint_mismatch_are_visible()
+    print("live-read and captured-log replay checks passed")
 
 
 if __name__ == "__main__":
