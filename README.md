@@ -140,6 +140,7 @@ decrypted; export the folder from GX Works3 instead.
 - [Ladder practical tips (JA)](docs/LADDER_PRACTICAL_TIPS_JA.md) — field-oriented modification and review tips
 - [Security note (JA)](docs/SECURITY_JA.md) — local data handling, read-only MCP policy
 - [Validation matrix (JA)](docs/VALIDATION_MATRIX.md) — verified scope and limits
+- [GX Works3 feature matrix (JA)](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) — standard-feature coverage, gaps, and implementation priorities
 - [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md) — repository map
 - [Review questions (JA)](docs/REVIEW_QUESTIONS_JA.md) — the questions to ask a
   change before opening a pull request, and the bugs each of them found
