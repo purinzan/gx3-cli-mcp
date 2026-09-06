@@ -9,6 +9,7 @@ import platform
 import subprocess
 import sys
 import time
+import re
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -54,13 +55,66 @@ def run_cli_text(args: list[str], root: Path) -> str:
     )
 
 
+# File names this format fixes. They say nothing about the customer, and
+# keeping them is what makes the inventory useful: a missing UnitConfig.dat
+# or a project with no *_LDDB.db is the diagnosis.
+#
+# Only whole names, never a suffix with anything in front of it. A `.w3pa`
+# is a format-defined kind of file and `ProjectFalcon.w3pa` is a customer's
+# project name -- the first version of this kept the second because it
+# matched on the extension, and the name went straight into the bundle.
+FORMAT_NAMES = re.compile(
+    r"^(UnitConfig\.dat|LabelData\.db|CPU\.PRM|UNIT\.PRM|SYSTEM\.PRM"
+    r"|ConvertData|SourceInfo|_Project\.txc"
+    r"|[0-9A-Fa-f]+_(LDDB|DC|MilDB|StepInfo|DM|FBDDB|STDB)\.db"
+    r"|[0-9]+\.db)$"
+)
+
+
+def safe_component(component: str, index: dict[str, str], kind: str) -> str:
+    """A path component, or a stand-in for it.
+
+    The redactor works on text it can recognise -- addresses, Japanese, known
+    secrets, upper-case tokens. A folder called `CustomerAlpha` or
+    `BatteryLine5` is none of those, and the inventory listed every relative
+    path in the project, so a bundle meant to be safe to attach to a public
+    issue carried the customer's naming.
+
+    Names this format defines are kept, because they are what the inventory is
+    for. Everything else becomes a stable stand-in, so two entries under one
+    folder still read as being under one folder.
+    """
+    if FORMAT_NAMES.match(component):
+        return component
+    if component not in index:
+        index[component] = f"{kind}_{len(index) + 1:04d}"
+    return index[component]
+
+
 def project_inventory(root: Path) -> list[dict[str, object]]:
+    """What the project holds, without saying what anything is called.
+
+    Suffix, size and depth are kept: they are the diagnostic content. The
+    names are not, and no attempt is made here to decide which of them happen
+    to be harmless.
+    """
     rows: list[dict[str, object]] = []
+    folders: dict[str, str] = {}
+    files: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        rel = path.relative_to(root).as_posix()
-        rows.append({"path": rel, "suffix": path.suffix.lower(), "size": path.stat().st_size})
+        parts = path.relative_to(root).parts
+        safe = [safe_component(part, folders, "DIR") for part in parts[:-1]]
+        safe.append(safe_component(parts[-1], files, "FILE"))
+        rows.append(
+            {
+                "path": "/".join(safe),
+                "suffix": path.suffix.lower(),
+                "size": path.stat().st_size,
+                "depth": len(parts) - 1,
+            }
+        )
     return rows
 
 
@@ -113,6 +167,12 @@ def build_bundle(root: Path, out: Path) -> Path:
                 [
                     "GX3 redacted support bundle",
                     "This archive intentionally excludes LadderBlocks body data and the local alias table.",
+                    "Folder and file names are replaced with stand-ins (DIR_0001, FILE_0001);",
+                    "names this project format defines are kept, because they are the diagnosis.",
+                    "",
+                    "What remains, deliberately: file suffixes, sizes and nesting depth. Those",
+                    "are the diagnostic content, and a size can identify a file on its own.",
+                    "This is a reduction, not a guarantee that the archive holds no secret.",
                     "Use it for parser diagnostics only; do not treat it as a safety certification.",
                     "",
                 ]
