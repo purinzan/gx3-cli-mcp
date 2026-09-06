@@ -162,6 +162,14 @@ def test_st_xref_bridge(root: Path) -> None:
         assert d200 is not None and d200["access"] == "write", d200
         assert d100["access_basis"] == "structured-text-partial"
         assert d100["parse_status"] == "st-partial"
+        assert d100["pou"] == "MainST", d100
+
+        source = con.execute(
+            "select pou, source_location, coverage from st_sources where source_file='001_STDB.db'"
+        ).fetchone()
+        assert source is not None and source["pou"] == "MainST", source
+        assert source["source_location"] == "Source:rowid=1:Code", source
+        assert source["coverage"] == "partial", source
 
         refs = {
             (row["symbol"], row["access"])
@@ -179,6 +187,7 @@ def test_st_xref_bridge(root: Path) -> None:
     assert data["total_count"] == 0
     assert data["st_symbol_counts"]["writers"] == 1
     assert len(data["st_symbol_refs"]) == 1
+    assert data["st_symbol_refs"][0]["pou"] == "MainST"
     assert data["coverage"]["st"]["state"] == "partial"
     assert any("ST/inline-ST coverage is partial" in warning for warning in data["warnings"])
 
