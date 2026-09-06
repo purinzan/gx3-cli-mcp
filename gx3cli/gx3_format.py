@@ -154,6 +154,7 @@ _ST_RESERVED = {
     "BOOL", "BYTE", "WORD", "DWORD", "INT", "DINT", "UINT", "UDINT",
     "REAL", "LREAL", "TIME", "DATE", "STRING", "WSTRING",
 }
+_ST_POU_COLUMNS = {"pou", "pouname", "pou_name", "program", "programname", "program_name"}
 
 
 @dataclass(frozen=True)
@@ -311,13 +312,34 @@ def _decode_candidate_text(value: object) -> str:
     return ""
 
 
+def _row_pou(row: sqlite3.Row, columns: list[str], fallback: str) -> str:
+    """Use an explicit POU/program column when an STDB exposes one."""
+    for column in columns:
+        if column.casefold() not in _ST_POU_COLUMNS:
+            continue
+        value = row[column]
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (bytes, bytearray)):
+            for encoding in ("utf-8", "utf-16-le", "utf-16-be"):
+                try:
+                    text = bytes(value).decode(encoding).strip("\x00 \t\r\n")
+                except UnicodeError:
+                    continue
+                if text:
+                    return text
+    return fallback
+
+
 def enumerate_st_sources(root: Path, pou_by_file: dict[str, str] | None = None) -> list[STSource]:
     """Find readable ST text in STDBs without assuming one GX Works3 schema.
 
     STDB schemas vary. The bridge therefore enumerates SQLite text/blob cells
     and accepts only cells that look like ST (assignment/control syntax). The
-    table/row/column locator is kept as evidence. A database that cannot be
-    inspected is represented as a partial source instead of disappearing.
+    table/row/column locator is kept as evidence. When a row exposes an explicit
+    POU/program column, that value wins over the file-level fallback. A database
+    that cannot be inspected is represented as a partial source instead of
+    disappearing.
     """
     root = Path(root)
     pou_by_file = pou_by_file or {}
@@ -343,6 +365,7 @@ def enumerate_st_sources(root: Path, pou_by_file: dict[str, str] | None = None) 
                     continue
                 for row in rows:
                     rowid = int(row["__rowid__"])
+                    row_pou = _row_pou(row, columns, pou)
                     for column in columns:
                         text = _decode_candidate_text(row[column])
                         if ":=" not in text and not _ST_UNSUPPORTED_CONTROL_RE.search(text):
@@ -354,7 +377,7 @@ def enumerate_st_sources(root: Path, pou_by_file: dict[str, str] | None = None) 
                                 source_kind="st",
                                 source_file=path.name,
                                 source_location=f"{table}:rowid={rowid}:{column}",
-                                pou=pou,
+                                pou=row_pou,
                             )
                         )
         except sqlite3.Error as exc:
