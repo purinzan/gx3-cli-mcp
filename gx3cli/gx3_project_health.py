@@ -2,29 +2,20 @@ from __future__ import annotations
 
 """Project-wide maintainability Doctor for GX Works3 projects.
 
-This is deliberately an orchestration/reporting layer.  It reuses the existing
-lint/xref/index evidence and ranks it from the point of view of a maintainer who
-has inherited a project without the original author.  It does not claim that a
-low score proves the PLC program is unsafe or functionally wrong.
+This is an orchestration/reporting layer over existing lint/xref/index evidence.
+It ranks evidence for a maintainer inheriting a project without the original
+author.  Scores are navigation heuristics, not PLC safety certification.
 """
 
 import argparse
 import json
 import sqlite3
-import sys
 from collections import defaultdict
 from pathlib import Path
 
+from gx3cli.gx3_analysis_state import checked
 from gx3cli.gx3_cli import project_label_from_root
-from gx3cli.gx3_lint import (
-    CHECKS,
-    LintContext,
-    checked,
-    lite_db_path,
-    open_checked_xref,
-    open_optional,
-    xref_db_path,
-)
+from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_optional
 from gx3cli.gx3_project_paths import default_project_root, resolve_project_root
 from gx3cli.review_gx3_project import load_comments_for_root, load_rows
 
@@ -38,22 +29,16 @@ DOCTOR_CHECKS = (
     "link-range",
 )
 
-SEVERITY_SCORE = {
-    "critical": 120,
-    "high": 90,
-    "medium": 55,
-    "low": 25,
-    "info": 12,
-}
+DIMENSIONS = (
+    "Maintainability",
+    "Traceability",
+    "Change safety",
+    "Troubleshootability",
+    "Documentation",
+)
 
-SEVERITY_PENALTY = {
-    "critical": 12,
-    "high": 8,
-    "medium": 4,
-    "low": 2,
-    "info": 1,
-}
-
+SEVERITY_SCORE = {"critical": 120, "high": 90, "medium": 55, "low": 25, "info": 12}
+SEVERITY_PENALTY = {"critical": 12, "high": 8, "medium": 4, "low": 2, "info": 1}
 CHECK_BOOST = {
     "duplicate-coil": 22,
     "multi-writer": 24,
@@ -63,7 +48,6 @@ CHECK_BOOST = {
     "comment-conflict": 6,
     "unused-device": 0,
 }
-
 CHECK_DIMENSIONS = {
     "duplicate-coil": ("Maintainability", "Traceability", "Change safety"),
     "multi-writer": ("Maintainability", "Traceability", "Change safety"),
@@ -73,49 +57,30 @@ CHECK_DIMENSIONS = {
     "link-range": ("Traceability", "Change safety", "Troubleshootability"),
     "io-comment-gap": ("Documentation", "Troubleshootability"),
 }
-
-DIMENSIONS = (
-    "Maintainability",
-    "Traceability",
-    "Change safety",
-    "Troubleshootability",
-    "Documentation",
-)
-
 WHY = {
     "duplicate-coil": "one output has more than one ladder driver, so an edit can change which rung owns the final state",
     "multi-writer": "one device is written from several rungs/POUs, so ownership and change impact are distributed",
     "alarm-quality": "an alarm/fault path is hard to understand or clear from the project evidence alone",
-    "unused-device": "stale or one-way device usage increases the chance of mistaking legacy/spare logic for live logic",
-    "comment-conflict": "the same or conflicting comment text can make a maintainer follow or edit the wrong device",
-    "link-range": "a communication receive/link device is also written locally, which can hide the true value owner",
-    "io-comment-gap": "a physical I/O device has no comment, so its field meaning is not recoverable from the project alone",
+    "unused-device": "stale or one-way device usage can make legacy/spare logic look live",
+    "comment-conflict": "duplicate or conflicting comment text can lead a maintainer to the wrong device",
+    "link-range": "a communication receive/link device is also written locally, obscuring the true value owner",
+    "io-comment-gap": "a physical I/O address has no project comment, so its field meaning is not recoverable from the project alone",
 }
-
 NEXT_REVIEW = {
-    "duplicate-coil": "review every writer and the scan/execution order before changing this output",
-    "multi-writer": "identify the intended owner for each operating mode and verify all writers before editing",
-    "alarm-quality": "open the alarm rung and confirm trigger, hold and reset/clear behavior",
-    "unused-device": "confirm whether this is intentional spare/output-only/HMI usage before reusing or deleting it",
-    "comment-conflict": "compare each referenced rung and repair the comment only after device identity is confirmed",
-    "link-range": "verify the partner PLC/link refresh ownership before changing the local writer",
+    "duplicate-coil": "review every writer and execution order before changing this output",
+    "multi-writer": "identify the intended owner for each mode and verify all writers before editing",
+    "alarm-quality": "confirm trigger, hold and reset/clear behavior on the cited alarm rung",
+    "unused-device": "confirm spare/output-only/HMI usage before reusing or deleting the address",
+    "comment-conflict": "compare each cited rung and repair comments only after device identity is confirmed",
+    "link-range": "verify partner PLC/link-refresh ownership before changing the local writer",
     "io-comment-gap": "identify the field signal from drawings/I/O lists and add a project comment before modification",
 }
 
 
 def collect_io_comment_gaps(ctx: LintContext) -> list[dict[str, object]]:
-    """Missing comments on physical X/Y devices, deduplicated by device.
-
-    We intentionally do not turn every uncommented internal relay into a
-    finding.  Physical I/O is a small, high-value subset whose meaning usually
-    cannot be reconstructed safely from the address alone.
-    """
+    """Flag uncommented physical X/Y without flooding on internal relays."""
     if ctx.xref is None:
-        ctx.cannot_evaluate(
-            "io-comment-gap",
-            "no cross-reference database",
-            "gx3-cli xref build --root <project>",
-        )
+        ctx.cannot_evaluate("io-comment-gap", "no cross-reference database", "gx3-cli xref build --root <project>")
         return []
     rows = ctx.xref.execute(
         """
@@ -131,13 +96,12 @@ def collect_io_comment_gaps(ctx: LintContext) -> list[dict[str, object]]:
     for row in rows:
         if str(row["comment"] or "").strip():
             continue
-        device = str(row["device"])
         dev_type = str(row["device_type"])
         out.append(
             {
                 "check": "io-comment-gap",
                 "severity": "medium" if dev_type == "Y" else "info",
-                "device": device,
+                "device": str(row["device"]),
                 "comment": "",
                 "count": int(row["uses"] or 0),
                 "locations": f"{row['pou'] or '?'} st{row['step'] if row['step'] is not None else '?'}",
@@ -157,8 +121,7 @@ def finding_priority(finding: dict[str, object]) -> int:
         score += 18
     if not str(finding.get("comment") or "").strip():
         score += 4
-    count = int(finding.get("count") or 0)
-    score += min(count, 10)
+    score += min(int(finding.get("count") or 0), 10)
     return score
 
 
@@ -166,28 +129,22 @@ def normalize_finding(finding: dict[str, object]) -> dict[str, object]:
     item = dict(finding)
     check = str(item.get("check") or "")
     item["priority"] = finding_priority(item)
-    item["why_it_matters"] = WHY.get(check, "review this project evidence before changing the related logic")
+    item["why_it_matters"] = WHY.get(check, "review this evidence before changing the related logic")
     item["next_review"] = str(item.get("review_note") or NEXT_REVIEW.get(check, "review the cited ladder evidence"))
     return item
 
 
 def health_scores(findings: list[dict[str, object]]) -> dict[str, int]:
-    """Small heuristic scores for navigation, not a safety certification.
-
-    A check is capped so one noisy class cannot reduce every dimension to zero.
-    The actual findings and evidence remain the primary result.
-    """
+    """Heuristic navigation scores; each finding class is capped for noise."""
     by_check: dict[str, list[dict[str, object]]] = defaultdict(list)
     for finding in findings:
         by_check[str(finding.get("check") or "")].append(finding)
-
     penalty: dict[str, int] = defaultdict(int)
     for check, items in by_check.items():
-        raw = sum(SEVERITY_PENALTY.get(str(i.get("severity") or "info").lower(), 1) for i in items)
+        raw = sum(SEVERITY_PENALTY.get(str(item.get("severity") or "info").lower(), 1) for item in items)
         check_penalty = min(raw, 35)
         for dimension in CHECK_DIMENSIONS.get(check, ("Maintainability",)):
             penalty[dimension] += check_penalty
-
     return {dimension: max(0, 100 - min(penalty.get(dimension, 0), 100)) for dimension in DIMENSIONS}
 
 
@@ -208,39 +165,32 @@ def build_report(
     states: dict[str, object],
     top: int,
 ) -> dict[str, object]:
-    findings = [normalize_finding(f) for items in findings_by_check.values() for f in items]
+    findings = [normalize_finding(item) for items in findings_by_check.values() for item in items]
     findings.sort(
-        key=lambda item: (
-            -int(item["priority"]),
-            str(item.get("check") or ""),
-            str(item.get("device") or ""),
-        )
+        key=lambda item: (-int(item["priority"]), str(item.get("check") or ""), str(item.get("device") or ""))
     )
     scores = health_scores(findings)
     checks: dict[str, object] = {}
     inconclusive: list[str] = []
     for name, items in findings_by_check.items():
         state = states.get(name, checked())
-        state_dict = state.as_dict() if hasattr(state, "as_dict") else {"status": "unknown"}
         if not bool(getattr(state, "conclusive", True)):
             inconclusive.append(name)
+        state_dict = state.as_dict() if hasattr(state, "as_dict") else {"status": "unknown"}
+        severities = sorted({str(item.get("severity") or "info") for item in items})
         checks[name] = {
             "count": len(items),
-            "by_severity": dict(
-                sorted(
-                    {
-                        severity: sum(1 for item in items if str(item.get("severity") or "info") == severity)
-                        for severity in {str(item.get("severity") or "info") for item in items}
-                    }.items()
-                )
-            ),
+            "by_severity": {severity: sum(1 for item in items if str(item.get("severity") or "info") == severity) for severity in severities},
             **state_dict,
         }
 
+    provisional_health = health_label(scores)
+    health = "INCOMPLETE" if inconclusive else provisional_health
     return {
         "root": str(root),
         "mode": "project-health",
-        "health": health_label(scores),
+        "health": health,
+        "provisional_health": provisional_health if inconclusive else None,
         "score_kind": "heuristic-maintainability-navigation-not-safety-certification",
         "scores": scores,
         "analysis": {
@@ -265,11 +215,8 @@ def collect_project_health(
     label = project_label_from_root(root)
     comments = load_comments_for_root(root)
     rows = load_rows(root, comments)
-    xref_path = index_dir / f"{label}_xref.sqlite"
-    lite_path = index_dir / f"{label}.sqlite"
-
-    xref = open_checked_xref(xref_path, root)
-    lite = open_optional(lite_path)
+    xref = open_checked_xref(index_dir / f"{label}_xref.sqlite", root)
+    lite = open_optional(index_dir / f"{label}.sqlite")
     link = open_optional(link_db)
     ctx = LintContext(
         root=root,
@@ -281,14 +228,12 @@ def collect_project_health(
         project_label=label,
         refresh_csv=refresh_csv,
     )
-
     findings_by_check: dict[str, list[dict[str, object]]] = {}
     try:
         for name in DOCTOR_CHECKS:
             func = CHECKS.get(name, (None, ""))[0]
-            if func is None:
-                continue
-            findings_by_check[name] = func(ctx)
+            if func is not None:
+                findings_by_check[name] = func(ctx)
         findings_by_check["io-comment-gap"] = collect_io_comment_gaps(ctx)
         states = {name: ctx.states.get(name, checked()) for name in findings_by_check}
         return build_report(root, findings_by_check, states, top)
@@ -300,10 +245,11 @@ def collect_project_health(
 
 def print_text(report: dict[str, object]) -> None:
     print(f"PROJECT HEALTH: {report['health']}  (heuristic maintainability view)")
+    if report.get("provisional_health"):
+        print(f"Provisional from evaluated checks: {report['provisional_health']}")
     print("")
     for name in DIMENSIONS:
-        value = int(report["scores"][name])
-        print(f"{name:<20} {value:>3}/100")
+        print(f"{name:<20} {int(report['scores'][name]):>3}/100")
     analysis = report["analysis"]
     print(
         f"\nAnalysis coverage: {analysis['evaluated']}/{analysis['total_checks']} checks evaluated"
@@ -311,21 +257,15 @@ def print_text(report: dict[str, object]) -> None:
     )
     print(f"Total findings: {report['total_findings']}")
     print("\nTop risks")
-    top_risks = report["top_risks"]
-    if not top_risks:
+    if not report["top_risks"]:
         print("  none from the evaluated checks")
         return
-    for index, item in enumerate(top_risks, start=1):
-        severity = str(item.get("severity") or "info").upper()
-        check = str(item.get("check") or "")
-        device = str(item.get("device") or "-")
-        print(f"{index:>2}. {severity:<8} [{check}] {device}")
-        detail = str(item.get("detail") or "")
-        if detail:
-            print(f"    {detail}")
-        locations = str(item.get("locations") or "")
-        if locations:
-            print(f"    evidence: {locations}")
+    for index, item in enumerate(report["top_risks"], start=1):
+        print(f"{index:>2}. {str(item.get('severity') or 'info').upper():<8} [{item.get('check')}] {item.get('device') or '-'}")
+        if item.get("detail"):
+            print(f"    {item['detail']}")
+        if item.get("locations"):
+            print(f"    evidence: {item['locations']}")
         print(f"    why: {item['why_it_matters']}")
         print(f"    review: {item['next_review']}")
 
