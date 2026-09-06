@@ -42,3 +42,7 @@ _KEEP*/
 /desktop-shell/src-tauri/gen/
 /desktop-shell/src-tauri/resources/gx3/*
 !/desktop-shell/src-tauri/resources/gx3/README_PLACEHOLDER.txt
+
+# Local alias tables written by the redactor. They map real names to their
+# stand-ins, which is exactly what a redacted bundle exists to withhold.
+.gx3_redaction/
