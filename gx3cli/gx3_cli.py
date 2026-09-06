@@ -13,6 +13,9 @@ import sqlite3
 
 from gx3cli.gx3_project_paths import (
     LEGACY_ROOT_ENV,
+    candidate_roots,
+    first_env,
+    is_extracted_gx3_root,
     REPORT_URL,
     ROOT_ENV,
     ProjectRootError,
@@ -756,6 +759,57 @@ def print_command_help(args: list[str]) -> int:
     return 2
 
 
+# Commands that never analyse a project, so they must not be made to pick one.
+NO_PROJECT_COMMANDS = {"list", "context", "version", "help", "doctor"}
+
+
+def ambiguous_project(command: str, rest: list[str]) -> str:
+    """Refuse to guess which project, when more than one is in reach.
+
+    The auto-detection picks the newest extracted folder. With two projects
+    side by side that is a coin toss reported as an answer, and it sits
+    upstream of every fingerprint check: those prove an index belongs to the
+    root that was analysed, not that the root was the one meant.
+
+    Only when the caller said nothing. An explicit --root, PROJECT_ROOT, or a
+    project named on the command line all settle it, and asking for --help
+    settles it too.
+    """
+    if command in NO_PROJECT_COMMANDS:
+        return ""
+    if "--root" in rest or any(item.startswith("--root=") for item in rest):
+        return ""
+    if {"-h", "--help"} & set(rest):
+        return ""
+    if first_env(ROOT_ENV, LEGACY_ROOT_ENV):
+        return ""
+    if any(item.lower().endswith(".gx3") for item in rest):
+        return ""
+    # A project named positionally settles it too: `semantic-diff old new`
+    # says which projects it means and never consults the auto-detection.
+    for item in rest:
+        if item.startswith("-"):
+            continue
+        try:
+            if is_extracted_gx3_root(Path(item)):
+                return ""
+        except OSError:
+            continue
+
+    candidates = candidate_roots()
+    if len(candidates) < 2:
+        return ""
+    listed = chr(10).join(f"  {path}" for path in candidates[:10])
+    more = ""
+    if len(candidates) > 10:
+        more = chr(10) + f"  ... {len(candidates) - 10} more"
+    return (
+        "more than one project is here, and picking one for you would be a guess:"
+        + chr(10) + listed + more + chr(10)
+        + f"Name it: gx3-cli {command} --root <project>   (or set {ROOT_ENV})"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
@@ -776,6 +830,12 @@ def main(argv: list[str] | None = None) -> int:
 
     command = args[0]
     rest = args[1:]
+
+    ambiguity = ambiguous_project(command, rest)
+    if ambiguity:
+        print(ambiguity)
+        return 1
+
     try:
         if command == "list":
             list_commands()

@@ -57,11 +57,51 @@ class LabelRef:
         return " ".join(("label",) + tuple(parts))
 
 
+# What happened when the label table was asked for. Kept apart because the
+# answers differ: a project with no labels is complete, a project whose label
+# database would not open is not, and a run that cannot tell them apart reports
+# missing label names as "this project does not use labels".
+LABELS_ABSENT = "absent"
+LABELS_READ = "read"
+LABELS_UNREADABLE = "unreadable"
+# Opens, holds tables, and not the ones this reads. A label database from a
+# GX Works3 version or a CPU family this build does not know looks like this,
+# and refusing to analyse the ladder over it would cost more than it saves --
+# device-named logic is still readable. It is not "no labels" either.
+LABELS_UNKNOWN_SCHEMA = "unknown-schema"
+
+
 class LabelResolver:
     """Lookup from (label table id, row) to the label it names."""
 
-    def __init__(self, entries: dict[tuple[str, int], LabelRef]) -> None:
+    def __init__(
+        self,
+        entries: dict[tuple[str, int], LabelRef],
+        status: str = LABELS_READ,
+        reason: str = "",
+    ) -> None:
         self._entries = entries
+        self.status = status
+        self.reason = reason
+        # Tokens asked for and not found. A caller that shows a rung can say
+        # "this name could not be resolved" instead of printing the raw token
+        # as though it were the answer.
+        self.unresolved: set[str] = set()
+
+    @property
+    def usable(self) -> bool:
+        """Whether an empty answer from this means "no labels" or "unknown"."""
+        return self.status not in {LABELS_UNREADABLE, LABELS_UNKNOWN_SCHEMA}
+
+    @property
+    def fatal(self) -> bool:
+        """Whether continuing would produce a result with no sign of the gap.
+
+        A damaged file is fatal: nothing can be said about what it held. A
+        schema this build does not know is not -- the gap can be reported and
+        the rest of the analysis is still worth having.
+        """
+        return self.status == LABELS_UNREADABLE
 
     def __bool__(self) -> bool:
         return bool(self._entries)
@@ -77,7 +117,14 @@ class LabelResolver:
         parsed = split_label_token(token)
         if parsed is None:
             return None
-        return self.get(*parsed)
+        found = self.get(*parsed)
+        if found is None:
+            # Recorded rather than dropped: a rung that references a label the
+            # table does not hold is evidence about the table, and the only
+            # place it shows up otherwise is a name silently missing from a
+            # condition.
+            self.unresolved.add(token)
+        return found
 
 
 def split_label_token(token: str) -> tuple[str, int] | None:
@@ -93,27 +140,53 @@ def split_label_token(token: str) -> tuple[str, int] | None:
         return None
 
 
-EMPTY = LabelResolver({})
+EMPTY = LabelResolver({}, status=LABELS_ABSENT)
+
+
+def unreadable(reason: str) -> LabelResolver:
+    return LabelResolver({}, status=LABELS_UNREADABLE, reason=reason)
+
+
+def unknown_schema(reason: str) -> LabelResolver:
+    return LabelResolver({}, status=LABELS_UNKNOWN_SCHEMA, reason=reason)
 
 
 def load_label_resolver(root: Path) -> LabelResolver:
-    """Read LabelData.db under root. Empty resolver when there is none.
+    """Read LabelData.db under root, and say which of three things happened.
 
-    A project with no labels has no LabelData.db, and a project this cannot
-    read should lose its label names rather than fail the whole run, so every
-    failure here degrades to the empty resolver.
+    A project with no labels has no LabelData.db. A project whose LabelData.db
+    will not open has labels this run cannot see. Both used to return the same
+    empty resolver, so a database that failed to open produced conditions with
+    the label names quietly missing, reported as a complete answer.
+
+    Failing the whole run is still not right -- device-named logic is readable
+    without label names -- so the resolver carries what happened and the
+    callers decide.
     """
     path = Path(root) / "LabelData.db"
     if not path.exists():
         return EMPTY
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return EMPTY
+    except sqlite3.Error as error:
+        return unreadable(f"{path.name} could not be opened: {error}")
     try:
+        tables = {
+            str(row[0])
+            for row in con.execute("select name from sqlite_master where type='table'")
+        }
+        if not tables:
+            # An empty database file. There is genuinely nothing in it, which
+            # is the same answer as having no file at all.
+            return EMPTY
+        if "ColumnDataTbl" not in tables:
+            return unknown_schema(
+                f"{path.name} holds {len(tables)} tables and not the label tables "
+                "this build reads"
+            )
         return LabelResolver(_read_entries(con))
-    except sqlite3.Error:
-        return EMPTY
+    except sqlite3.Error as error:
+        return unreadable(f"{path.name} could not be read: {error}")
     finally:
         con.close()
 
