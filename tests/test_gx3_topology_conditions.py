@@ -319,10 +319,9 @@ def test_public_trace_row_filter_keeps_only_conditions_left_after_simplification
 def test_public_trace_dispatch_prunes_refs_before_canonical_bfs_queue() -> None:
     from gx3cli import gx3_trace_state as base
     from gx3cli.trace_gx3_device_dependencies import (
-        _ACTIVE_CONSTANT_FACTS,
-        _ACTIVE_PRUNE_STATS,
-        _condition_refs_dispatch,
+        _condition_refs_provider,
     )
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic
 
     logic = {
         "op": "or",
@@ -331,20 +330,65 @@ def test_public_trace_dispatch_prunes_refs_before_canonical_bfs_queue() -> None:
             _contact("X1", position="0,1"),
         ],
     }
-    assert base.condition_refs_from_logic is _condition_refs_dispatch
+    assert base.condition_refs_from_logic is condition_refs_from_logic
     stats: dict[str, int] = {}
-    facts_token = _ACTIVE_CONSTANT_FACTS.set({"M100": _fact("M100", False)})
-    stats_token = _ACTIVE_PRUNE_STATS.set(stats)
-    try:
-        refs = base.condition_refs_from_logic(logic)
-    finally:
-        _ACTIVE_PRUNE_STATS.reset(stats_token)
-        _ACTIVE_CONSTANT_FACTS.reset(facts_token)
+    refs = _condition_refs_provider({"M100": _fact("M100", False)}, stats)(logic)
+    assert len(base.condition_refs_from_logic(logic)) == 3
 
     assert [ref["device"] for ref in refs] == ["X1"], refs
     assert stats["raw_refs"] == 3, stats
     assert stats["kept_refs"] == 1, stats
     assert stats["raw_refs"] - stats["kept_refs"] == 2, stats
+
+
+def test_trace_inputs_are_loaded_once_and_calls_are_isolated() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import patch
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        roots = []
+        for index in range(2):
+            root = work / f"p{index}"
+            write_program(root, [("r", generate_rung({"device": f"X{index}"}, {"type": "coil", "device": "Y0"})[0])])
+            roots.append(root)
+
+        def trace(root):
+            return build_trace(root, "Y0", 4, 100, True, True)
+
+        with patch.object(base, "load_rows", wraps=base.load_rows) as rows, \
+             patch.object(base, "load_comments_for_root", wraps=base.load_comments_for_root) as comments, \
+             patch.object(base, "load_label_resolver", wraps=base.load_label_resolver) as labels:
+            trace(roots[0])
+            assert rows.call_count == comments.call_count == labels.call_count == 1
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(trace, roots))
+        for index, result in enumerate(results):
+            conditions = [c["device"] for r in result["driver_rows"] for c in r["conditions"]]
+            assert f"X{index}" in conditions and f"X{1-index}" not in conditions, conditions
+
+        inputs = base.load_trace_inputs(roots[0])
+        try:
+            base.build_trace(roots[1], "Y0", 4, 100, True, True, inputs=inputs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("inputs from another root accepted")
+
+        def nested_then_fail(node):
+            trace(roots[1])
+            raise RuntimeError("injected provider failure")
+
+        try:
+            base.build_trace(roots[0], "Y0", 4, 100, True, True, condition_refs_provider=nested_then_fail)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("provider was not called")
+        assert trace(roots[0])["driver_rows"]
 
 
 def test_postfilter_row_key_includes_the_driven_device() -> None:

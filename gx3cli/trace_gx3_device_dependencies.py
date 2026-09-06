@@ -9,8 +9,8 @@ question "what can make this coil turn on?": project constants proven by
 that collapse to FALSE/TRUE are removed, and only still-relevant upstream
 conditions remain in the returned trace.
 
-The public trace path also installs a context-local condition-ref dispatcher
-around the canonical engine.  Strict enable logic is simplified before the BFS
+The public trace path passes a call-local condition-ref provider explicitly
+to the canonical engine. Strict enable logic is simplified before the BFS
 adds upstream devices to its queue, so branches proven irrelevant are never
 expanded.  A post-pass still rewrites the returned Boolean expressions and
 attaches the constant evidence; the ladder decoder itself is not forked.
@@ -19,7 +19,6 @@ attaches the constant evidence; the ladder decoder itself is not forked.
 import json
 import sys
 from collections import Counter, deque
-from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -81,46 +80,26 @@ format_compact = base.format_compact
 build_parser = base.build_parser
 
 
-# ``gx3_trace_state`` binds condition_refs_from_logic as a module global. Keep
-# one dispatcher installed there and use ContextVar rather than temporary
-# monkeypatching: concurrent MCP trace calls then carry independent pruning
-# facts without changing each other's behaviour. Calls outside this facade see
-# the original function because the context variable is empty.
-_ORIGINAL_CONDITION_REFS = base.condition_refs_from_logic
-_ACTIVE_CONSTANT_FACTS: ContextVar[dict | None] = ContextVar(
-    "gx3_trace_constant_facts", default=None
-)
-_ACTIVE_PRUNE_STATS: ContextVar[dict[str, int] | None] = ContextVar(
-    "gx3_trace_prune_stats", default=None
-)
-
-
-def _condition_refs_dispatch(node: dict[str, Any]) -> list[dict[str, Any]]:
-    facts = _ACTIVE_CONSTANT_FACTS.get()
-    if not facts:
-        return _ORIGINAL_CONDITION_REFS(node)
-    raw = _ORIGINAL_CONDITION_REFS(node)
-    result = simplify_logic_for_trace(node, facts)
-    kept = _ORIGINAL_CONDITION_REFS(result.logic)
-    stats = _ACTIVE_PRUNE_STATS.get()
-    if stats is not None:
+def _condition_refs_provider(facts: dict, stats: dict[str, int]):
+    """A call-owned dependency, never installed into another module's globals."""
+    def references(node: dict[str, Any]) -> list[dict[str, Any]]:
+        if not facts:
+            return condition_refs_from_logic(node)
+        raw = condition_refs_from_logic(node)
+        result = simplify_logic_for_trace(node, facts)
+        kept = condition_refs_from_logic(result.logic)
         stats["calls"] = stats.get("calls", 0) + 1
         stats["raw_refs"] = stats.get("raw_refs", 0) + len(raw)
         stats["kept_refs"] = stats.get("kept_refs", 0) + len(kept)
         if result.constant_value is not None:
             stats["constant_rows"] = stats.get("constant_rows", 0) + 1
-    return kept
+        return kept
+    return references
 
 
-if base.condition_refs_from_logic is not _condition_refs_dispatch:
-    base.condition_refs_from_logic = _condition_refs_dispatch
-
-
-def _load_constant_context(root: Path):
-    comments = base.load_comments_for_root(root)
-    labels = base.load_label_resolver(root)
-    rows = base.load_rows(root, comments)
-    base.resolve_label_occurrences(rows, labels)
+def _load_constant_context(root: Path, inputs=None):
+    inputs = inputs if inputs is not None else base.load_trace_inputs(root)
+    rows = inputs.rows
     comm_prefix = base.default_comm_prefix()
     refresh_path = Path("outputs") / f"{comm_prefix}_refresh_areas.csv"
     # Keep compatibility with older/manual workflows that wrote the generated
@@ -235,6 +214,7 @@ def prune_trace_result(
     *,
     context=None,
     prequeue_stats: dict[str, int] | None = None,
+    comments=None,
 ) -> dict[str, Any]:
     if not trace.get("strict_logic"):
         trace["constant_pruning"] = {
@@ -243,7 +223,7 @@ def prune_trace_result(
         }
         return trace
 
-    comments = base.load_comments_for_root(root)
+    comments = comments if comments is not None else base.load_comments_for_root(root)
     context = context or _load_constant_context(root)
     trace["constant_pruning"] = context.summary()
     if not context.enabled:
@@ -336,29 +316,28 @@ def build_trace(
     include_reset: bool,
     strict_logic: bool,
 ) -> dict[str, Any]:
-    context = _load_constant_context(root) if strict_logic else None
+    inputs = base.load_trace_inputs(root)
+    context = _load_constant_context(root, inputs) if strict_logic else None
     prequeue_stats: dict[str, int] = {}
-    facts_token = _ACTIVE_CONSTANT_FACTS.set(
-        context.facts if context is not None and context.enabled else None
+    trace = base.build_trace(
+        root=root,
+        target_device=target_device,
+        max_depth=max_depth,
+        max_devices=max_devices,
+        include_reset=include_reset,
+        strict_logic=strict_logic,
+        inputs=inputs,
+        condition_refs_provider=_condition_refs_provider(
+            context.facts if context is not None and context.enabled else {},
+            prequeue_stats,
+        ),
     )
-    stats_token = _ACTIVE_PRUNE_STATS.set(prequeue_stats if strict_logic else None)
-    try:
-        trace = base.build_trace(
-            root=root,
-            target_device=target_device,
-            max_depth=max_depth,
-            max_devices=max_devices,
-            include_reset=include_reset,
-            strict_logic=strict_logic,
-        )
-    finally:
-        _ACTIVE_PRUNE_STATS.reset(stats_token)
-        _ACTIVE_CONSTANT_FACTS.reset(facts_token)
     return prune_trace_result(
         trace,
         root,
         context=context,
         prequeue_stats=prequeue_stats,
+        comments=inputs.comments,
     )
 
 

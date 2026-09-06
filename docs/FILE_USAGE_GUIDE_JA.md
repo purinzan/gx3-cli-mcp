@@ -135,7 +135,7 @@
 | `gx3_index_lite.py` | `index-lite`, `query-device`, `query-comment`, `query-external`, `query-cycle`, `device-map` | `gx3_run_command`, `gx3_device_map` | SQLite-first 検索の中核。 |
 | `gx3_xref.py` | `xref` | `gx3_xref_where_used`, `gx3_run_command` | writer/reader、下流影響、CSV export。 |
 | `gx3_data_flow.py` | `data-flow` | `gx3_data_flow`, `gx3_run_command` | 命令引数単位の source→destination value-flow。未知/部分解析は unresolved として保持する。 |
-| `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。 |
+| `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。呼出し単位のTraceInputsと条件参照providerを既存エンジンへ渡す。import時の他モジュール関数差替えは行わず、rows/comments/labelsを前処理・本体・後処理で共有する。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
 | `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。 |
 | `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
