@@ -311,8 +311,10 @@ TYPED_TOOLS: list[TypedTool] = [
         description=(
             "Inventory every alarm and fault device with what triggers it, whether it latches, any timer "
             "setpoint, and what resets it. Answers \"what raises this alarm and how is it cleared\" without "
-            "reading the ladder by hand. Reads the project; WRITES a CSV. An alarm with no reset condition "
-            "is worth flagging to the user: it cannot be cleared without a power cycle. Requires the xref DB."
+            "reading the ladder by hand. Reads the project; WRITES a CSV. Interpret clearing from the hold "
+            "type: a plain OUT clears when its enable logic goes false; SET-latched alarms require a reset "
+            "path, and self-hold circuits require their seal-in path to drop or reset logic to act. Do not "
+            "infer a power-cycle requirement merely from an empty RST list. Requires the xref DB."
         ),
         input_schema={
             "type": "object",
