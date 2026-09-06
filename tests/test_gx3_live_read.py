@@ -176,10 +176,56 @@ def test_json_types_and_fingerprint_mismatch_are_visible() -> None:
         assert any("does not match" in warning for warning in snapshot["metadata"]["warnings"])
 
 
+def test_mixed_capture_identity_is_rejected_before_deduplication() -> None:
+    from gx3cli.gx3_live_read import log_replay_main
+    from contextlib import redirect_stderr
+    import io
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "capture.json"
+        base = {"timestamp": "2026-09-06T10:00:00Z", "device": "M1", "value": False,
+                "source": "PLC-A", "project_fingerprint": "A"}
+        for changes in (
+            {"source": "PLC-B"}, {"project_fingerprint": "B"},
+            {"source": ""}, {"project_fingerprint": ""},
+            {"source": "PLC-B", "timestamp": "2026-09-06T10:00:01Z"},
+        ):
+            path.write_text(json.dumps({"records": [base, {**base, "value": True, **changes}]}), encoding="utf-8")
+            for mode in ("normalize", "series", "changes", "snapshot"):
+                args = [mode, str(path)]
+                if mode == "snapshot":
+                    args += ["--at", base["timestamp"]]
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    assert log_replay_main(args) == 2, (mode, changes)
+                assert "mixed capture identity" in stderr.getvalue()
+
+
+def test_capture_identity_inheritance_and_legacy_input() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "capture.json"
+        row = {"timestamp": "2026-09-06T10:00:00Z", "device": "M1", "value": False}
+        for metadata in ({}, {"source": "PLC-A", "project_fingerprint": "A"}):
+            path.write_text(json.dumps({"metadata": metadata, "records": [row, {**row, **metadata, "value": True}]}), encoding="utf-8")
+            result = load_captured_log(path)
+            assert result["metadata"]["duplicate_records_replaced"] == 1
+            assert result["records"][0]["value"] is True
+        csv = Path(tmp) / "capture.csv"
+        csv.write_text("timestamp,device,value,source\n2026-09-06T10:00:00Z,M1,0,PLC-A\n2026-09-06T10:00:01Z,M1,1,PLC-B\n", encoding="utf-8")
+        try:
+            load_captured_log(csv)
+        except ValueError as exc:
+            assert "mixed capture identity" in str(exc)
+        else:
+            raise AssertionError("mixed CSV accepted")
+
+
 def main() -> None:
     test_live_read_protocol()
     test_csv_normalize_series_changes_and_snapshot()
     test_json_types_and_fingerprint_mismatch_are_visible()
+    test_mixed_capture_identity_is_rejected_before_deduplication()
+    test_capture_identity_inheritance_and_legacy_input()
     print("live-read and captured-log replay checks passed")
 
 
