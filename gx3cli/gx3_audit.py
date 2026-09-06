@@ -16,7 +16,7 @@ from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
 from gx3cli.gx3_dead_logic import load_external_devices, propagate_constant_devices
 from gx3cli.gx3_external_inputs import load_refresh_areas
-from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_optional
+from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_checked_lite, open_optional
 from gx3cli.gx3_project_paths import (
     LEGACY_OUTPUT_PREFIX_ENV,
     OUTPUT_PREFIX_ENV,
@@ -357,21 +357,27 @@ def collect_project_health(
     label = project_label_from_root(root)
     comments = load_comments_for_root(root)
     rows = load_rows(root, comments)
-    xref = open_checked_xref(index_dir / f"{label}_xref.sqlite", root)
-    lite = open_optional(index_dir / f"{label}.sqlite")
-    link = open_optional(link_db)
-    ctx = LintContext(
-        root=root,
-        rows=rows,
-        comments=comments,
-        xref=xref,
-        lite=lite,
-        link=link,
-        project_label=label,
-        refresh_csv=refresh_csv,
-    )
-    findings_by_check: dict[str, list[dict[str, object]]] = {}
-    try:
+    with contextlib.ExitStack() as resources:
+        xref = open_checked_xref(index_dir / f"{label}_xref.sqlite", root)
+        if xref is not None:
+            resources.callback(xref.close)
+        lite = open_checked_lite(index_dir / f"{label}.sqlite", root)
+        if lite is not None:
+            resources.callback(lite.close)
+        link = open_optional(link_db)
+        if link is not None:
+            resources.callback(link.close)
+        ctx = LintContext(
+            root=root,
+            rows=rows,
+            comments=comments,
+            xref=xref,
+            lite=lite,
+            link=link,
+            project_label=label,
+            refresh_csv=refresh_csv,
+        )
+        findings_by_check: dict[str, list[dict[str, object]]] = {}
         for name in DOCTOR_CHECKS:
             func = CHECKS.get(name, (None, ""))[0]
             if func is not None:
@@ -384,10 +390,6 @@ def collect_project_health(
         )
         states = {name: ctx.states.get(name, checked()) for name in findings_by_check}
         return build_health_report(root, findings_by_check, states, top)
-    finally:
-        for con in (xref, lite, link):
-            if isinstance(con, sqlite3.Connection):
-                con.close()
 
 
 def print_project_health(report: dict[str, object]) -> None:
