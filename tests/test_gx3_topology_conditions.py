@@ -316,6 +316,37 @@ def test_public_trace_row_filter_keeps_only_conditions_left_after_simplification
     assert row["raw_enable_logic_text"] == "raw"
 
 
+def test_public_trace_dispatch_prunes_refs_before_canonical_bfs_queue() -> None:
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.trace_gx3_device_dependencies import (
+        _ACTIVE_CONSTANT_FACTS,
+        _ACTIVE_PRUNE_STATS,
+        _condition_refs_dispatch,
+    )
+
+    logic = {
+        "op": "or",
+        "args": [
+            {"op": "and", "args": [_contact("M100"), _contact("X0", position="1,0")]},
+            _contact("X1", position="0,1"),
+        ],
+    }
+    assert base.condition_refs_from_logic is _condition_refs_dispatch
+    stats: dict[str, int] = {}
+    facts_token = _ACTIVE_CONSTANT_FACTS.set({"M100": _fact("M100", False)})
+    stats_token = _ACTIVE_PRUNE_STATS.set(stats)
+    try:
+        refs = base.condition_refs_from_logic(logic)
+    finally:
+        _ACTIVE_PRUNE_STATS.reset(stats_token)
+        _ACTIVE_CONSTANT_FACTS.reset(facts_token)
+
+    assert [ref["device"] for ref in refs] == ["X1"], refs
+    assert stats["raw_refs"] == 3, stats
+    assert stats["kept_refs"] == 1, stats
+    assert stats["raw_refs"] - stats["kept_refs"] == 2, stats
+
+
 def main() -> int:
     tests = [
         (name, obj)
