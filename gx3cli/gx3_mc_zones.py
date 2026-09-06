@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import element_meta, extract_elements, parse_header_ops
+from gx3cli.gx3_label_resolve import LabelResolver
 from gx3cli.gx3_ladder_logic import (
     DEVICE_ARG_RE,
     FlowElement,
@@ -82,16 +83,21 @@ class JumpSite:
         return {"pos": self.pos, "opcode": self.opcode, "condition_text": self.condition_text}
 
 
-def control_elements(row: LadderRow) -> list[tuple[FlowElement, str]]:
+def control_elements(
+    row: LadderRow, labels: LabelResolver | None = None
+) -> list[tuple[FlowElement, str]]:
     """(FlowElement, raw element text) pairs for MC/MCR/jump ops in one row.
 
     Raw text is needed because the nesting argument N is not decodable as a
-    device: it is read positionally with DEVICE_ARG_RE.
+    device: it is read positionally with DEVICE_ARG_RE. The same label resolver
+    used by the project-level trace is passed into the canonical topology walk;
+    otherwise a label contact controlling MC/CJ would quietly fall back to its
+    raw ``_lid/...`` token while ordinary driver rows used the label name.
     """
     header_ops = parse_header_ops(row.data)
     if not any(hop.op in CONTROL_OPS for hop in header_ops):
         return []
-    non_wire = [el for el in positioned_elements(row) if not el.is_wire]
+    non_wire = [el for el in positioned_elements(row, labels) if not el.is_wire]
     raws: list[str] = []
     op_index = 0
     for raw in extract_elements(row.data):
@@ -122,7 +128,9 @@ def mc_relay_device(element: FlowElement) -> str:
     return ""
 
 
-def build_mc_zones(rows: list[LadderRow]) -> dict[str, list[McZone]]:
+def build_mc_zones(
+    rows: list[LadderRow], labels: LabelResolver | None = None
+) -> dict[str, list[McZone]]:
     by_lddb: dict[str, list[LadderRow]] = defaultdict(list)
     for row in rows:
         by_lddb[row.lddb].append(row)
@@ -132,9 +140,9 @@ def build_mc_zones(rows: list[LadderRow]) -> dict[str, list[McZone]]:
         zones: list[McZone] = []
         open_zones: list[McZone] = []
         for row in sorted(ladder_rows, key=lambda r: r.pos):
-            for element, raw in control_elements(row):
+            for element, raw in control_elements(row, labels):
                 if element.role in MC_OPS:
-                    condition = enable_logic_for_output(row, element)
+                    condition = enable_logic_for_output(row, element, labels)
                     zone = McZone(
                         lddb=lddb,
                         start_pos=row.pos,
@@ -173,13 +181,15 @@ def apply_zone_conditions(logic: dict[str, Any], zones: list[McZone]) -> dict[st
     return and_logic([*zone_condition_terms(zones), logic])
 
 
-def build_jump_index(rows: list[LadderRow]) -> dict[str, list[JumpSite]]:
+def build_jump_index(
+    rows: list[LadderRow], labels: LabelResolver | None = None
+) -> dict[str, list[JumpSite]]:
     by_lddb: dict[str, list[JumpSite]] = defaultdict(list)
     for row in rows:
-        for element, _raw in control_elements(row):
+        for element, _raw in control_elements(row, labels):
             if element.role not in JUMP_OPS:
                 continue
-            condition = enable_logic_for_output(row, element)
+            condition = enable_logic_for_output(row, element, labels)
             by_lddb[row.lddb].append(
                 JumpSite(
                     lddb=row.lddb,
