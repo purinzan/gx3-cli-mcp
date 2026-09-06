@@ -116,6 +116,7 @@
 | ファイル | CLI | MCP | 使いどころ |
 |---|---|---|---|
 | `gx3_mcp_server.py` | `gx3-mcp-server` | MCP 本体 | AI クライアントから GX3 解析 tool を呼ぶ。 |
+| `gx3_mcp_fs_guard.py` | internal | MCP subprocess only | MCP が起動した Python のファイル作成・変更を `GX3_MCP_OUTPUT_DIR` 内へ閉じ込め、外部 SQLite を読み取り専用にする。 |
 | `gx3_cli.py` | `gx3-cli` | `gx3_run_command` | CLI dispatcher、help/list、query 系ラッパー。 |
 | `gx3_doctor.py` | `doctor` | `gx3_run_command` | 解析対象、index、xref DB、link-map の状態確認。 |
 | `gx3_ladder_report.py` | `ladder-report` | `gx3_run_command` | オフラインで開ける単一HTML。中央にラダーSVG、左にデバイス・コメント検索、右に選択デバイスの読出・書込一覧と根拠。各デバイスに「この画面での件数」と「プロジェクト全体の件数」を併記し、描画本数が足りない場合は打切りとして表示する。実測値は扱わず、接点をONとして着色しない。`--all` は全プログラム分のページを相互リンク付きで出力し、他プログラムの読み書きへ移動できるようにする。リンク先ラングがページに無い場合はその旨を表示する。 |
@@ -216,6 +217,7 @@
 | ファイル | 検証対象 |
 |---|---|
 | `test_gx3_mcp_server.py` | MCP initialize/tools/list、変更系コマンド拒否。 |
+| `test_gx3_mcp_filesystem.py` | #94 の filesystem sandbox。既存ファイル上書き、相対 traversal、symlink、xref/index-lite の出力 alias、typed tool を実 MCP 呼び出しで検査する。 |
 | `test_gx3_data_flow.py` | MOV/DMOV/BMOV、read-modify-write、未知/部分解析の value-flow 回帰。 |
 | `test_gx3_dependency_flow_topology.py` | dependency-flow が暗黙 horizontal gap、左母線推定、driver sink 越しの逆流を依存に混ぜないこと。 |
 | `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |

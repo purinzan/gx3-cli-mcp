@@ -18,6 +18,7 @@ pointed at via `root`.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -79,6 +80,7 @@ parse JSON internally.
 MAX_TIMEOUT_SECONDS = 300
 DEFAULT_TIMEOUT_SECONDS = 90
 MAX_OUTPUT_CHARS = 40000
+MCP_SANDBOX_ENV = "GX3_MCP_SANDBOX_ROOT"
 
 # Commands that modify PLC project files. Some backing modules stay in the
 # package because analyzers reuse their parsers, but these command names are
@@ -455,8 +457,8 @@ GENERIC_TOOL = {
     "description": (
         "Escape hatch: run any MCP-allowed, project-read-only GX3 CLI command "
         "with explicit arguments. Project-mutating commands and local demo "
-        "generation commands are rejected. "
-        "Prefer the typed tools above when one fits."
+        "generation commands are rejected. Local artifacts are confined to "
+        "GX3_MCP_OUTPUT_DIR. Prefer the typed tools above when one fits."
     ),
     "inputSchema": {
         "type": "object",
@@ -497,16 +499,78 @@ def list_tools_result() -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+def _output_dir() -> Path:
+    raw = os.environ.get("GX3_MCP_OUTPUT_DIR")
+    path = Path(raw).expanduser() if raw else Path(tempfile.gettempdir()) / "gx3-mcp-output"
+    path.mkdir(parents=True, exist_ok=True)
+    return path.resolve(strict=False)
+
+
+def _absolute_from(base: Path, value: str) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    return str(path.resolve(strict=False))
+
+
+def _absolutize_existing_arg(arg: str, base: Path) -> str:
+    if arg.startswith("--") and "=" in arg:
+        name, value = arg.split("=", 1)
+        if value:
+            candidate = Path(value).expanduser()
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            try:
+                if candidate.exists():
+                    return name + "=" + str(candidate.resolve(strict=False))
+            except OSError:
+                pass
+        return arg
+    if arg.startswith("-") or not arg:
+        return arg
+    candidate = Path(arg).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    try:
+        if candidate.exists():
+            return str(candidate.resolve(strict=False))
+    except OSError:
+        pass
+    return arg
+
+
+def _prepare_child_args(args: list[str], root: str | None, base: Path) -> tuple[list[str], str | None]:
+    prepared = [_absolutize_existing_arg(arg, base) for arg in args]
+    root_path: str | None = None
+    if root:
+        root_text = str(root)
+        root_path = _absolute_from(base, root_text)
+        prepared = [root_path if arg == root_text else arg for arg in prepared]
+        prepared = [
+            "--root=" + root_path if arg == "--root=" + root_text else arg
+            for arg in prepared
+        ]
+    return prepared, root_path
+
+
+def _bootstrap_sitecustomize(output_dir: Path) -> Path:
+    bootstrap = Path(tempfile.mkdtemp(prefix=".mcp-bootstrap-", dir=output_dir))
+    (bootstrap / "sitecustomize.py").write_text(
+        "from gx3cli.gx3_mcp_fs_guard import install_from_env\ninstall_from_env()\n",
+        encoding="utf-8",
+    )
+    return bootstrap
+
+
 def _spill(text: str, command: str) -> str:
-    spill_dir = Path(os.environ.get("GX3_MCP_OUTPUT_DIR") or (Path(tempfile.gettempdir()) / "gx3-mcp-output"))
-    spill_dir.mkdir(parents=True, exist_ok=True)
+    spill_dir = _output_dir()
     path = spill_dir / f"{command}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.txt"
     path.write_text(text, encoding="utf-8")
     head = text[:MAX_OUTPUT_CHARS]
     return (
         head
         + f"\n\n... [output truncated: {len(text)} chars total; full output written to {path}. "
-        "For a stable location, re-run the command with an explicit output path (e.g. -o).]"
+        "MCP-generated files are restricted to this output directory.]"
     )
 
 
@@ -519,24 +583,52 @@ def run_cli(command: str, args: list[str], root: str | None, timeout_seconds: in
         raise ValueError(f"command '{command}' connects to external equipment and is disabled on the MCP server")
     if command not in READ_ONLY_COMMANDS:
         raise ValueError(f"unknown or non-allowed command: {command}")
+    if getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "MCP filesystem sandbox bootstrap is unavailable in the frozen build; "
+            "refusing command execution rather than running without the write boundary"
+        )
 
-    env = python_env(root)  # sets PYTHONPATH for the package + PROJECT_ROOT/GX3_ROOT
+    caller_cwd = Path.cwd()
+    output_dir = _output_dir()
+    tmp_dir = output_dir / ".tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    prepared_args, root_path = _prepare_child_args(args, root, caller_cwd)
+    bootstrap = _bootstrap_sitecustomize(output_dir)
+
+    # Do not call python_env(root) here: resolving a .gx3 may create its cache in
+    # the parent MCP process before the child sandbox exists. The child receives
+    # the selected root through environment/arguments and performs all access
+    # after sitecustomize has installed the write guard.
+    env = python_env(None)
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    if root:
-        root_path = str(Path(str(root)).expanduser())
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env[MCP_SANDBOX_ENV] = str(output_dir)
+    env["GX3_MCP_OUTPUT_DIR"] = str(output_dir)
+    env["TMPDIR"] = str(tmp_dir)
+    env["TEMP"] = str(tmp_dir)
+    env["TMP"] = str(tmp_dir)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(bootstrap) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+    if root_path:
         env[ROOT_ENV] = root_path
         env[LEGACY_ROOT_ENV] = root_path
 
-    completed = subprocess.run(
-        cli_argv([command, *args]),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            cli_argv([command, *prepared_args]),
+            env=env,
+            cwd=str(output_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            check=False,
+        )
+    finally:
+        shutil.rmtree(bootstrap, ignore_errors=True)
+
     body = "\n".join(
         part
         for part in [f"exit_code={completed.returncode}", completed.stdout.strip(), completed.stderr.strip()]
