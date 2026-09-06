@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
-from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, SEMANTICS, checked, not_evaluated
+from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, SEMANTICS, UNSUPPORTED, checked, not_evaluated, worst
+from gx3cli.gx3_format import build_format_inventory
 from gx3cli.gx3_index_lite import external_sources_from, open_existing
 from gx3cli.gx3_ladder_logic import (
     condition_refs_from_logic,
@@ -245,12 +246,46 @@ def check_constant_st_coverage(con: sqlite3.Connection) -> None:
         ))
 
 
+def check_constant_source_coverage(
+    rows: list[LadderRow], con: sqlite3.Connection, root: Path | None = None,
+) -> None:
+    """Known gaps in any source can invalidate every exclusive-writer proof.
+
+    root=None is only a supplied-row/index scope, not a whole-project audit.
+    Project-aware consumers must supply their selected root.
+    """
+    gaps: list[AnalysisState] = []
+    try:
+        check_constant_st_coverage(con)
+    except ConstantProofUnavailable as exc:
+        gaps.append(exc.analysis)
+    partial_rows = [row for row in rows if row.parse_status != "exact"]
+    if partial_rows:
+        gaps.append(AnalysisState(
+            PARTIAL, stage=DECODE,
+            reason="unparsed LD rows may contain competing writers outside the candidate rung",
+            next_step="inspect the listed ladder rows and parse-gaps before relying on constant pruning",
+            detail={"rows": [{"lddb": row.lddb, "pos": row.pos, "block_id": row.block_id,
+                              "parse_status": row.parse_status} for row in partial_rows]},
+        ))
+    if root is not None and build_format_inventory(root).fbddb_count:
+        gaps.append(AnalysisState(
+            UNSUPPORTED, stage=DECODE,
+            reason="FBD programs are not decoded; competing writers cannot be excluded",
+            next_step="inspect FBD programs in GX Works3 before relying on project-wide constants",
+            detail={"files": sorted(path.name for path in root.glob("*_FBDDB.db"))},
+        ))
+    if gaps:
+        raise ConstantProofUnavailable(worst(gaps))
+
+
 def propagate_constant_devices(
     rows: list[LadderRow],
     con: sqlite3.Connection,
     *,
     externals: dict[str, str] | None = None,
     refresh_areas: list | None = None,
+    root: Path | None = None,
 ) -> tuple[dict[str, ConstantFact], list[dict[str, object]]]:
     """Prove project-wide constants for ordinary single-writer bit coils.
 
@@ -260,7 +295,7 @@ def propagate_constant_devices(
     are also excluded. Resolved MC/CALL enable conditions are folded into the
     rung condition through the existing execution-context model.
     """
-    check_constant_st_coverage(con)
+    check_constant_source_coverage(rows, con, root)
     externals = externals or {}
     refresh_areas = refresh_areas or []
     writers = _writer_rows(con)
@@ -645,7 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = load_rows(root, comments)
         try:
             facts, propagated = propagate_constant_devices(
-                rows, con, externals=externals, refresh_areas=refresh_areas,
+                rows, con, externals=externals, refresh_areas=refresh_areas, root=root,
             )
         except ConstantProofUnavailable as exc:
             constant_state = exc.analysis

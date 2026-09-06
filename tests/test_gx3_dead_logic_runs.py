@@ -452,6 +452,69 @@ def test_missing_st_coverage_is_not_proof_of_no_st_writers() -> None:
             raise AssertionError("missing source coverage was accepted as empty")
 
 
+def test_fbd_source_prevents_project_wide_constant_proof() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("off", generate_rung(
+            {"device": "SM401"}, {"type": "coil", "device": "M100"})[0])])
+        # The FBD decoder is not available. Do not pretend that an unread
+        # program container proves absence of competing writers.
+        with closing(sqlite3.connect(root / "002_FBDDB.db")) as fbd, fbd:
+            fbd.execute("create table SyntheticProgram (body text)")
+            fbd.execute("insert into SyntheticProgram values ('uninterpreted program')")
+        prepare(root)
+        rows = load_rows(root, load_comments_for_root(root))
+        previous = Path.cwd()
+        try:
+            os.chdir(tmp)
+            context = load_trace_constant_context(root, rows, [])
+        finally:
+            os.chdir(previous)
+        assert not context.enabled and "FBD" in context.reason, context
+        assert "M100" not in context.facts, context
+
+
+def test_source_gaps_preserve_all_reasons_and_block_other_exact_rungs() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_dead_logic import ConstantProofUnavailable
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        bad_row = generate_rung({"device": "X0"}, {"type": "coil", "device": "M200"})[0]
+        assert bad_row.endswith("]}}")
+        bad_row = bad_row[:-3] + ":e{s=ce{op=uninterpreted}:pos=4,0}]}}"
+        write_program(root, [
+            ("off", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("unknown", bad_row),
+        ])
+        with closing(sqlite3.connect(root / "002_STDB.db")) as st, st:
+            st.execute("create table Source(Code text)")
+            st.execute("insert into Source values ('IF X0 THEN M100 := TRUE; END_IF;')")
+        with closing(sqlite3.connect(root / "003_FBDDB.db")) as fbd, fbd:
+            fbd.execute("create table SyntheticProgram(body text)")
+        built = prepare(root)
+        rows = load_rows(root, load_comments_for_root(root))
+        assert rows[0].parse_status == "exact" and rows[1].parse_status == "partial", rows
+        with closing(sqlite3.connect(built.xref.path)) as con:
+            con.row_factory = sqlite3.Row
+            try:
+                propagate_constant_devices(rows, con, root=root)
+            except ConstantProofUnavailable as exc:
+                state = json.loads(json.dumps(exc.analysis.as_dict()))
+                assert len(state["constraints"]) == 3, state
+                reasons = " ".join(item["reason"] for item in state["constraints"])
+                assert all(kind in reasons for kind in ("LD", "ST", "FBD")), state
+            else:
+                raise AssertionError("an exact candidate hid gaps elsewhere in the project")
+
+
 def main() -> int:
     tests = [
         (name, obj)
