@@ -22,6 +22,7 @@ from gx3cli.gx3_exec_config import program_file_names
 from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_program_map import PouInfo, load_program_map
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_xref import open_xref_db
 from gx3cli.gx3_xref_read import has_members, occurrences_of
 from gx3cli.gx3_xref import default_db_path, normalize_device
 from gx3cli.gx3_instruction_table import is_edge_triggered
@@ -220,10 +221,12 @@ def sync_pou_order(db_path: Path, orders: dict[str, PouOrder]) -> None:
     con.close()
 
 
-def open_xref(db_path: Path) -> sqlite3.Connection:
+def open_xref(db_path: Path, root: Path | None = None) -> sqlite3.Connection:
     if not db_path.exists():
         raise SystemExit(f"xref db not found: {db_path} (run: gx3_cli.py xref build)")
-    con = sqlite3.connect(db_path)
+    # Checked against the project asked about: stale-read findings from
+    # another project's cross-reference are not findings about this one.
+    con = open_xref_db(db_path, read_only=True, root=root)
     con.row_factory = sqlite3.Row
     return con
 
@@ -734,7 +737,7 @@ def main(argv: list[str] | None = None) -> int:
     orders = build_pou_order(root)
     if not args.no_sync_db:
         sync_pou_order(db_path, orders)
-    con = open_xref(db_path)
+    con = open_xref(db_path, Path(args.root) if getattr(args, 'root', '') else None)
     try:
         if args.all:
             return command_all(args, con, orders)

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from gx3cli.gx3_exec_config import read_units
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
-from gx3cli.gx3_xref import default_db_path
+from gx3cli.gx3_xref import default_db_path, open_xref_db
 
 
 AXIS_RE = re.compile(r"\[(\d+)\]")
@@ -125,7 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     xref_path = Path(args.db or default_db_path(root))
     if not xref_path.exists():
         raise SystemExit(f"xref db not found: {xref_path} (run: gx3_cli.py xref build)")
-    con = sqlite3.connect(xref_path)
+    # Checked against this project: buffer-memory access from another one's
+    # cross-reference read as this project's motion map.
+    con = open_xref_db(xref_path, read_only=True, root=root)
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """

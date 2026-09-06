@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
-from gx3cli.gx3_xref import default_db_path, normalize_device
+from gx3cli.gx3_xref import default_db_path, normalize_device, open_xref_db
 from gx3cli.gx3_xref_read import device_match
 
 
@@ -39,12 +39,16 @@ TIMER_UNITS_S = {"OUT__16": 0.1, "OUTH__16": 0.01}
 
 
 def open_db(args: argparse.Namespace) -> sqlite3.Connection:
+    """Open the cross-reference, checked against the project it is about.
+
+    Opened raw, this reported alarms from one project beside comments from
+    another and finished cleanly. The check has existed on `open_xref_db` all
+    along; this command had a --root in hand and did not pass it.
+    """
     path = Path(args.db or default_db_path(Path(args.root)))
     if not path.exists():
         raise SystemExit(f"xref db not found: {path} (run: gx3_cli.py xref build)")
-    con = sqlite3.connect(path)
-    con.row_factory = sqlite3.Row
-    return con
+    return open_xref_db(path, read_only=True, root=Path(args.root) if args.root else None)
 
 
 def row_conditions(con: sqlite3.Connection, lddb: str, pos: int, self_device: str) -> tuple[list[str], bool]:
