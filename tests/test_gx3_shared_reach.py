@@ -5,7 +5,7 @@ from __future__ import annotations
 #76's point is that the callers each grew their own traversal, so a correction
 landed in one of them and not the others: value-flow edges reached
 `xref downstream` and not `change-impact`, block-instruction spans reached
-neither, and the exact limit reporting fixed twice.
+neither, and the exact limit reporting was fixed twice.
 
 These are the reproductions from that issue, and a check that the two callers
 now agree about the same specimen. Not that their output matches -- they answer
@@ -91,6 +91,7 @@ def test_a_block_write_is_followed_through_the_middle_of_its_run() -> None:
         attach_reach(changes, db, max_depth=3, max_nodes=50, root=work / "new")
         reached = {item["device"] for change in changes for item in change.reaches}
         assert "D900" in reached, reached
+        # And the evidence says which device carried it there.
         step = next(
             item
             for change in changes
@@ -101,7 +102,12 @@ def test_a_block_write_is_followed_through_the_middle_of_its_run() -> None:
 
 
 def test_a_reordered_pair_of_rungs_is_a_change() -> None:
-    """#76: two rungs writing one coil, swapped. Contents identical."""
+    """#76: two rungs writing one coil, swapped. Contents identical.
+
+    The comparison keyed on GUID and rung data, so a swap produced no
+    difference at all and the run printed "no change that can alter
+    behaviour" -- about two rungs driving the same output in the other order.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         first = ("_guid/one", coil("a", 1, 100))
@@ -116,6 +122,9 @@ def test_a_reordered_pair_of_rungs_is_a_change() -> None:
 
 
 def test_renumbering_positions_is_not_an_execution_change() -> None:
+    # Positions are rewritten whenever anything above them is edited. Calling
+    # that an execution change would put a finding on nearly every diff, and a
+    # finding that is always there is not read.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         rungs = [("_guid/one", coil("a", 1, 100)), ("_guid/two", coil("a", 2, 100))]
@@ -141,12 +150,16 @@ def test_a_cross_reference_of_another_project_is_refused() -> None:
         else:
             raise AssertionError("a cross-reference of another project was accepted")
 
+        # The right one is still accepted.
         own = build_xref(work / "new", work / "own.sqlite")
         state = attach_reach(changes, own, max_depth=2, max_nodes=50, root=work / "new")
         assert state.state in {"checked", "truncated"}, state
 
 
 def test_both_callers_walk_the_same_graph() -> None:
+    # They answer different questions and print differently. What has to match
+    # is the set of devices reachable from one device, because that is one
+    # question with one answer.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(
@@ -181,6 +194,9 @@ def test_both_callers_walk_the_same_graph() -> None:
 
 
 def test_a_transfer_outranks_sharing_a_rung_as_the_basis() -> None:
+    # Both are true of a transfer, and "they share a rung" says much less. When
+    # the two lists were merged by order, whichever row came back first
+    # decided, and every entry read "same-rung".
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "p", [("_guid/m", rung("MOV:D:D", "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}"))])
@@ -204,6 +220,13 @@ DYNAMIC_BMOV_EDITED = rung("BMOV:D:D:D", "d{s=#:a=310:vt=nn}:d{s=#:a=400:vt=nn}:
 
 
 def test_a_run_whose_length_lives_in_a_device_is_not_treated_as_settled() -> None:
+    """`BMOV D300 D400 D10` writes as many words as D10 holds when it runs.
+
+    The instruction was read correctly, so this is not a decoding gap; how far
+    the run reaches is a value the running program has. Reported as "checked"
+    it claimed the write was D400 and nothing else, which is true only if D10
+    happens to hold 1.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "old", [("_guid/b", DYNAMIC_BMOV)])
@@ -235,6 +258,14 @@ def test_a_constant_run_stays_settled() -> None:
 
 
 def test_the_specimen_from_the_issue_passes_unaltered() -> None:
+    """`BMOV D300 D400 K4` then `MOV D401 D900`, asked about D301.
+
+    No hand-written rows: the instruction is decoded, the cross-reference is
+    built from it, and the walk starts at a device that appears nowhere in the
+    program text. Every hop of this was missing at some point -- the source run
+    was not recorded, the walk matched names only, and a write covering a run
+    was followed one device wide.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "p", [("_guid/b", BMOV), ("_guid/m", MOV_FROM_MIDDLE)])
@@ -246,12 +277,19 @@ def test_the_specimen_from_the_issue_passes_unaltered() -> None:
             for start in ("D300", "D301", "D302", "D303"):
                 reached = {step.device for step in reach(con, start, 4, 50).steps}
                 assert "D900" in reached, (start, reached)
+            # One past the end of the run is not in it.
             assert "D900" not in {step.device for step in reach(con, "D304", 4, 50).steps}
         finally:
             con.close()
 
 
 def test_a_fill_does_not_get_its_source_expanded() -> None:
+    """FMOV repeats one word; BMOV copies a run. Same operand spelling.
+
+    The rule is per instruction for exactly this reason, and the test is here
+    so that a later "simplification" that keys on the operand shape fails
+    rather than quietly inventing reads for every fill in a project.
+    """
     from gx3cli.gx3_arg_decode import parse_row_occurrences
 
     fill = rung("FMOV:D:D:K_1", "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:c{s=#:v=4}")
@@ -268,11 +306,14 @@ def test_a_fill_does_not_get_its_source_expanded() -> None:
 
     assert spans(copy)["D300"] == ("read", 4), spans(copy)
     assert spans(fill)["D300"] == ("read", 1), spans(fill)
+    # Both write a run of four; only the copy reads one.
     assert spans(copy)["D400"] == ("write", 4), spans(copy)
     assert spans(fill)["D400"] == ("write", 4), spans(fill)
 
 
 def test_a_write_covering_a_run_is_followed_across_the_whole_run() -> None:
+    # The walk added the device the instruction names and stopped there, so a
+    # reader of the second word of a block write was one hop out of view.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "p", [("_guid/b", BMOV), ("_guid/m", MOV_FROM_MIDDLE)])
@@ -289,6 +330,17 @@ def test_a_write_covering_a_run_is_followed_across_the_whole_run() -> None:
 
 
 def test_the_walk_matches_a_device_inside_a_recorded_run() -> None:
+    """Asking about the middle of a run finds the rung that covers it.
+
+    A run is stored once, under its first device, with its length beside it, so
+    matching on the name alone answers "nothing uses D301" about a device a
+    rung reads every scan.
+
+    The row here is written by hand on purpose: it pins the walk's own contract
+    -- match a run wherever one is recorded -- independently of which
+    instructions record one. Real BMOV rows now exercise the same path, in the
+    test above.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "p", [("_guid/m", MOV_FROM_MIDDLE)])
