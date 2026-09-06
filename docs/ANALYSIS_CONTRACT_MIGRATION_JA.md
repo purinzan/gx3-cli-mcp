@@ -38,6 +38,11 @@ xref/liteの明示buildはgx3_index_buildの一時SQLiteへ書込み、開始時
 残し、入力/出力のWALや入力DBへの出力を拒否する。STDB内容だけの途中変更も検証。
 全readerの実行中変更検出、外部CSVのprovenance、複数索引の同時公開は未完。
 
+定数証明の共通入口は供給された全LD行の未解析状態と選択rootのFBDも確認する。
+別ラングの未解析writerを候補行のexactで隠さない。ST/LD/FBD同時gapの3制約を
+JSONへ残す実builder回帰を追加。全CLI consumerはrootを渡す。全入力の途中変更、
+空デコードをexactとする既存ケース、実行順・初期値・外部証拠は別の残件。
+
 通常OUTの定数証明は、保存されたST/inline-ST coverageがpartialなら停止する。
 STDBの未対応IFに隠れたwriterを実builderで再現し、trace/dead-logic/Doctorに
 decode段階の制約とsource位置を伝える。coverage表欠損も未評価でありSTなしではない。

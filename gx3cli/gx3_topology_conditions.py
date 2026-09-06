@@ -117,6 +117,7 @@ def load_trace_constant_context(
             con,
             externals=externals,
             refresh_areas=refresh_areas,
+            root=root,
         )
     except ConstantProofUnavailable as exc:
         return TraceConstantContext({}, False, str(exc), exc.analysis)

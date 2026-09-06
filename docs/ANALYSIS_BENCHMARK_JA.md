@@ -189,6 +189,17 @@ coldのSQLは全caseで+2（保存指紋を公開前に読む照会）。DB open
 coldの時間・Python peak・累積RSSは既存予算内。大規模入力では追加hash I/Oの影響が
 増えうるため、一般的な高速化とは扱わない。固定検体のhash読込み予算を回帰テストに追加。
 
+## LD/FBDを含む定数証明scopeの確認
+
+`8edcee6b1e2aee714cb91a47b7710c4895c99276`→`32bdda4967df42a6928b982bd02c749c5b0e3508`。
+同じv2 harness・固定6検体・各3回、前後を順次測定。入力hash全一致。
+trace中央値msはsmall 7.42→9.37、wide 50.43→53.30、deep 66.66→67.63、
+large-span 7.37→8.28、multi-pou 67.90→68.90、ld-st 67.97→67.84。
+SQLは22（multi-pou25）、open・loader・入力hash読込み回数およびPython peakの
+中央値は変更なし。既存形式一覧のファイル列挙と供給済みLD行の状態走査は追加される。
+traceの時間/Python peak/累積RSSは既存予算内だが、特に小検体では列挙コストが見える。
+新たな大規模入力・Windowsの速度保証や一律の高速化とは扱わない。
+
 ## semantic-diff要約の重複解読
 
 `8edcee6b1e2aee714cb91a47b7710c4895c99276`→`a6644aeaae0d759dcb2b428352af46b7bf5036be`。
