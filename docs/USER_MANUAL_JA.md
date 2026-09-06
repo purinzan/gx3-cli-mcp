@@ -208,6 +208,10 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+入力指紋はST/FBD、初期・保持値、ユニット設定を含むプロジェクト直下のDBと、
+SourceInfo・Config・モーション等の入力も対象にします。依存ファイル定義の更新により、
+以前の索引は再構築が必要です。生成した索引やCSVはプロジェクト入力と分けて保存してください。
+
 - 解析結果は参考情報です。実設備への変更判断は GX Works3 と現場の検証で確認してください。
 - 一部コマンドは CSV、Markdown、ZIP、SQLite DB などをローカルに生成します。
 - `live-read` は実設備に TCP 接続します。現場ルール、PLC 設定、ネットワーク権限を確認してから使ってください。
