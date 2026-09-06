@@ -57,6 +57,15 @@ def build_xref(root: Path, db: Path) -> None:
         assert xref_main(["--root", str(root), "--db", str(db), "build"]) == 0
 
 
+def write_index_root(db: Path, root: Path) -> None:
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    con.execute("create table meta(key text primary key, value text not null)")
+    con.execute("insert into meta(key, value) values ('root', ?)", (str(root),))
+    con.commit()
+    con.close()
+
+
 def foreign_xref_fixture(work: Path) -> tuple[Path, Path, Path]:
     one = work / "one"
     two = work / "two"
@@ -97,8 +106,6 @@ def test_two_projects_side_by_side_stop_the_run() -> None:
         assert result.returncode != 0, result.stdout
         body = result.stdout + result.stderr
         assert "more than one project" in body, body
-        # Both are named, so the reader can choose rather than guess at what
-        # the tool was choosing between.
         assert "_extracted_one" in body and "_extracted_two" in body, body
 
 
@@ -109,10 +116,7 @@ def test_naming_the_project_settles_it() -> None:
         assert run_cli(work, ["metrics", "--root", str(work / "_extracted_one")]).returncode == 0
 
 
-def test_help_and_version_never_ask_for_a_project() -> None:
-    # The addendum's trap: argparse evaluates `default=default_project_root()`
-    # before parsing, so a check placed there would break --help and even an
-    # explicit --root.
+def test_help_and_global_version_never_ask_for_a_project() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         two_projects(work)
@@ -121,15 +125,40 @@ def test_help_and_version_never_ask_for_a_project() -> None:
         assert run_cli(work, ["list"]).returncode == 0
 
 
+def test_project_version_command_does_require_a_project() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        two_projects(work)
+        previous = Path.cwd()
+        os.chdir(work)
+        try:
+            message = ambiguous_project("version", [])
+            assert "more than one project" in message, message
+            assert ambiguous_project("version", ["--root", str(work / "_extracted_one")]) == ""
+        finally:
+            os.chdir(previous)
+
+
 def test_a_project_named_positionally_settles_it_too() -> None:
-    # `semantic-diff old new` says which projects it means and never consults
-    # the auto-detection.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         two_projects(work)
         assert ambiguous_project(
             "semantic-diff", [str(work / "_extracted_one"), str(work / "_extracted_two")]
         ) == ""
+
+
+def test_an_unrelated_gx3_argument_does_not_bypass_root_ambiguity() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        two_projects(work)
+        previous = Path.cwd()
+        os.chdir(work)
+        try:
+            message = ambiguous_project("metrics", ["--output", "report.gx3"])
+            assert "more than one project" in message, message
+        finally:
+            os.chdir(previous)
 
 
 def test_one_project_is_never_ambiguous() -> None:
@@ -140,6 +169,77 @@ def test_one_project_is_never_ambiguous() -> None:
         os.chdir(work)
         try:
             assert ambiguous_project("metrics", []) == ""
+        finally:
+            os.chdir(previous)
+
+
+def test_base_root_plus_child_root_is_ambiguous() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work, [("_guid/a", coil("a", 1, 100))])
+        write_program(work / "_extracted_child", [("_guid/a", coil("a", 2, 200))])
+        previous = Path.cwd()
+        os.chdir(work)
+        try:
+            message = ambiguous_project("metrics", [])
+            assert "more than one project" in message, message
+            assert str(work.resolve()) in message
+            assert "_extracted_child" in message
+        finally:
+            os.chdir(previous)
+
+
+def test_multiple_index_roots_stop_the_run_without_local_project_folders() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        top = Path(tmp)
+        work = top / "cli"
+        work.mkdir()
+        one = top / "remote_one"
+        two = top / "remote_two"
+        write_program(one, [("_guid/a", coil("a", 1, 100))])
+        write_program(two, [("_guid/a", coil("a", 2, 200))])
+        write_index_root(work / ".gx3_index" / "one.sqlite", one)
+        write_index_root(work / ".gx3_index" / "two.sqlite", two)
+
+        result = run_cli(work, ["metrics"])
+        body = result.stdout + result.stderr
+        assert result.returncode != 0, body
+        assert "more than one project" in body, body
+        assert "remote_one" in body and "remote_two" in body, body
+
+
+def test_environment_root_settles_ambiguity() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        two_projects(work)
+        previous = Path.cwd()
+        old_project = os.environ.get("PROJECT_ROOT")
+        old_legacy = os.environ.get("GX3_ROOT")
+        os.chdir(work)
+        os.environ["PROJECT_ROOT"] = str(work / "_extracted_one")
+        os.environ.pop("GX3_ROOT", None)
+        try:
+            assert ambiguous_project("metrics", []) == ""
+        finally:
+            os.chdir(previous)
+            if old_project is None:
+                os.environ.pop("PROJECT_ROOT", None)
+            else:
+                os.environ["PROJECT_ROOT"] = old_project
+            if old_legacy is None:
+                os.environ.pop("GX3_ROOT", None)
+            else:
+                os.environ["GX3_ROOT"] = old_legacy
+
+
+def test_no_project_command_is_not_blocked_by_neighboring_projects() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        two_projects(work)
+        previous = Path.cwd()
+        os.chdir(work)
+        try:
+            assert ambiguous_project("live-read", ["--ip", "127.0.0.1", "--device", "D0", "--dry-run"]) == ""
         finally:
             os.chdir(previous)
 
@@ -226,9 +326,6 @@ def test_no_label_database_is_not_a_failure() -> None:
 
 
 def test_a_schema_this_build_does_not_know_is_reported_not_fatal() -> None:
-    # A label database from another GX Works3 version opens and holds tables
-    # this does not read. Refusing to analyse the ladder over that costs more
-    # than it saves; calling it "no labels" is the bug.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         write_program(work / "p", [("_guid/a", coil("a", 1, 100))])
@@ -258,7 +355,6 @@ def test_an_unresolved_label_token_is_remembered() -> None:
     resolver.unresolved.clear()
     assert resolver.resolve_token("_lid/TableA/7") is None
     assert "_lid/TableA/7" in resolver.unresolved
-    # Not a label token at all: nothing to record.
     assert resolver.resolve_token("D100") is None
     assert "D100" not in resolver.unresolved
 
@@ -266,9 +362,15 @@ def test_an_unresolved_label_token_is_remembered() -> None:
 def main() -> int:
     test_two_projects_side_by_side_stop_the_run()
     test_naming_the_project_settles_it()
-    test_help_and_version_never_ask_for_a_project()
+    test_help_and_global_version_never_ask_for_a_project()
+    test_project_version_command_does_require_a_project()
     test_a_project_named_positionally_settles_it_too()
+    test_an_unrelated_gx3_argument_does_not_bypass_root_ambiguity()
     test_one_project_is_never_ambiguous()
+    test_base_root_plus_child_root_is_ambiguous()
+    test_multiple_index_roots_stop_the_run_without_local_project_folders()
+    test_environment_root_settles_ambiguity()
+    test_no_project_command_is_not_blocked_by_neighboring_projects()
     test_device_dictionary_rejects_another_projects_xref()
     test_link_map_rejects_another_projects_xref()
     test_cross_where_used_rejects_a_swapped_linked_xref()
