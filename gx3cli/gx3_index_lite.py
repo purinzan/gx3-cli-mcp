@@ -465,6 +465,20 @@ def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
     return con
 
 
+def external_sources_from(con: sqlite3.Connection) -> dict[str, str]:
+    """Read known saved boundary classifications; errors are not an empty set.
+
+    The caller owns the already-validated connection. Even an empty result is
+    only about saved classifications, not proof of all real external writers.
+    """
+    return {
+        str(device): f"{kind}/{group}"
+        for device, kind, group in con.execute(
+            "select device, source_kind, semantic_group from external_sources"
+        )
+    }
+
+
 def print_rows(rows: list[sqlite3.Row], columns: list[str]) -> None:
     if not rows:
         print("no rows")

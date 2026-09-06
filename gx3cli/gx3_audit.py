@@ -14,7 +14,8 @@ from pathlib import Path
 
 from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
-from gx3cli.gx3_dead_logic import load_external_devices, propagate_constant_devices
+from gx3cli.gx3_dead_logic import propagate_constant_devices
+from gx3cli.gx3_index_lite import external_sources_from
 from gx3cli.gx3_external_inputs import load_refresh_areas
 from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_checked_lite, open_optional
 from gx3cli.gx3_project_paths import (
@@ -146,14 +147,20 @@ def collect_constant_chains(
             "no cross-reference database",
             "gx3-cli xref build --root <project>",
         )
-    if ctx.lite is None or not index_db.exists():
+    if ctx.lite is None:
         return ctx.cannot_evaluate(
             "constant-chain",
             "external/HMI/communication boundary evidence is unavailable from index-lite",
             "gx3-cli index-lite build --root <project>",
         )
 
-    externals = load_external_devices(index_db)
+    try:
+        externals = external_sources_from(ctx.lite)
+    except sqlite3.Error as exc:
+        return ctx.cannot_evaluate(
+            "constant-chain", f"external boundary evidence cannot be read: {exc}",
+            "rebuild index-lite for this project",
+        )
     refresh_areas: list = []
     if refresh_csv:
         refresh_path = Path(refresh_csv)
