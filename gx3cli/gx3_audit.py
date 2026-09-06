@@ -32,6 +32,11 @@ DOCTOR_CHECKS = (
     "comment-conflict",
     "link-range",
 )
+# link-range needs a separately built cross-project link map. Its absence means
+# cross-PLC ownership was not checked, but it should not make a single-project
+# maintainability diagnosis unusable. Core xref/index/ladder checks still block
+# the overall verdict when they cannot run.
+SUPPLEMENTAL_DOCTOR_CHECKS = {"link-range"}
 DIMENSIONS = (
     "Maintainability",
     "Traceability",
@@ -182,18 +187,22 @@ def build_health_report(
             "by_severity": {severity: sum(1 for item in items if str(item.get("severity") or "info") == severity) for severity in severities},
             **state_dict,
         }
+    core_inconclusive = [name for name in inconclusive if name not in SUPPLEMENTAL_DOCTOR_CHECKS]
+    supplemental_inconclusive = [name for name in inconclusive if name in SUPPLEMENTAL_DOCTOR_CHECKS]
     provisional_health = health_label(scores)
     return {
         "root": str(root),
         "mode": "project-health",
-        "health": "INCOMPLETE" if inconclusive else provisional_health,
-        "provisional_health": provisional_health if inconclusive else None,
+        "health": "INCOMPLETE" if core_inconclusive else provisional_health,
+        "provisional_health": provisional_health if core_inconclusive else None,
         "score_kind": "heuristic-maintainability-navigation-not-safety-certification",
         "scores": scores,
         "analysis": {
             "evaluated": len(findings_by_check) - len(inconclusive),
             "total_checks": len(findings_by_check),
             "inconclusive": inconclusive,
+            "core_inconclusive": core_inconclusive,
+            "supplemental_inconclusive": supplemental_inconclusive,
         },
         "checks": checks,
         "total_findings": len(findings),
@@ -243,15 +252,17 @@ def collect_project_health(
 def print_project_health(report: dict[str, object]) -> None:
     print(f"PROJECT HEALTH: {report['health']}  (heuristic maintainability view)")
     if report.get("provisional_health"):
-        print(f"Provisional from evaluated checks: {report['provisional_health']}")
+        print(f"Provisional from evaluated core checks: {report['provisional_health']}")
     print("")
     for name in DIMENSIONS:
         print(f"{name:<20} {int(report['scores'][name]):>3}/100")
     analysis = report["analysis"]
-    print(
-        f"\nAnalysis coverage: {analysis['evaluated']}/{analysis['total_checks']} checks evaluated"
-        + (f"; inconclusive: {', '.join(analysis['inconclusive'])}" if analysis["inconclusive"] else "")
-    )
+    coverage = f"\nAnalysis coverage: {analysis['evaluated']}/{analysis['total_checks']} checks evaluated"
+    if analysis["core_inconclusive"]:
+        coverage += f"; core inconclusive: {', '.join(analysis['core_inconclusive'])}"
+    if analysis["supplemental_inconclusive"]:
+        coverage += f"; supplemental not evaluated: {', '.join(analysis['supplemental_inconclusive'])}"
+    print(coverage)
     print(f"Total findings: {report['total_findings']}")
     print("\nTop risks")
     if not report["top_risks"]:
