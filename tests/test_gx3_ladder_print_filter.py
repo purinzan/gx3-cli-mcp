@@ -1,15 +1,11 @@
-"""Regression tests for ladder-print section/pos/device filtering.
-
-These test the pure filter functions on synthetic entries, so they need no
-extracted project. Key regression: an empty-title statement row (invisible in
-the printed output) must NOT end a --section selection early.
-"""
+"""Regression tests for ladder-print filtering and shared snapshot evaluation."""
 
 import json
 import tempfile
 from pathlib import Path
 
 from gx3cli.gx3_ladder_print import load_live_values, scan_sections, truthy_live_value, select_entries
+from gx3cli.gx3_snapshot_explain import build_explanation, evaluate_logic, explain_driver_row, load_snapshot
 
 
 def entry(blocktype, pos, title=None, devices=(), lines=None):
@@ -34,6 +30,105 @@ def build_entries():
         entry(0, 200, devices=["Y5511"]),    # 6 rung
         entry(5, 210, lines=["END"]),        # 7 end block
     ]
+
+
+def contact(device: str, role: str = "a", ct_code: str = "") -> dict:
+    return {"op": "contact", "device": device, "role": role, "ct_code": ct_code, "position": "0,0"}
+
+
+def test_snapshot_logic_uses_ladder_print_contact_semantics() -> None:
+    values = {"X1": True, "X2": False}
+    state, leaves = evaluate_logic(
+        {"op": "and", "args": [contact("X1", "a"), contact("X2", "b")]}, values
+    )
+    assert state == "pass", (state, leaves)
+    assert [leaf["condition"] for leaf in leaves] == ["pass", "pass"], leaves
+
+    state, leaves = evaluate_logic(
+        {"op": "or", "args": [contact("X2", "a"), contact("X1", "a")]}, values
+    )
+    assert state == "pass", (state, leaves)
+    assert [leaf["condition"] for leaf in leaves] == ["block", "pass"], leaves
+
+
+def test_snapshot_missing_unknown_and_edge_are_not_false() -> None:
+    state, leaves = evaluate_logic(contact("M999", "a"), {})
+    assert state == "missing"
+    assert leaves[0]["condition"] == "missing"
+
+    state, leaves = evaluate_logic({"op": "predicate", "opcode": ">"}, {"D0": 10})
+    assert state == "unknown"
+    assert leaves[0]["condition"] == "unknown"
+
+    state, leaves = evaluate_logic(contact("M10", "a", "p"), {"M10": True})
+    assert state == "unknown"
+    assert "previous-scan" in str(leaves[0]["reason"])
+
+    # A definite blocker proves an AND false even when another value is absent;
+    # missing is never silently converted to False.
+    state, _ = evaluate_logic(
+        {"op": "and", "args": [contact("M10", "a"), contact("M11", "a")]},
+        {"M10": False},
+    )
+    assert state == "block"
+
+
+def test_stateful_trace_is_scoped_to_current_write_condition() -> None:
+    row = {
+        "row_id": "001:10",
+        "device": "M100",
+        "lddb": "001_LDDB.db",
+        "pos": 10,
+        "parse_status": "exact",
+        "driver_roles": ["SET"],
+        "driver_effects": ["ON/set"],
+        "conditions": [{"device": "X1", "role": "a", "position": "0,0"}],
+        "enable_logic": contact("X1", "a"),
+        "enable_logic_text": "[X1]",
+        "logic_stats": {},
+        "execution_guards": [],
+        "temporal_predicates": [{"kind": "latch_set", "requires_runtime_state": True}],
+    }
+    explained = explain_driver_row(row, {"X1": True})
+    assert explained["current_enable_condition"] == "pass"
+    assert explained["historical_root_cause_supported"] is False
+    assert any("stateful/temporal" in warning for warning in explained["warnings"])
+
+    row["execution_guards"] = [{"kind": "conditional_jump_unresolved"}]
+    explained = explain_driver_row(row, {"X1": True})
+    assert explained["current_enable_condition"] == "unknown"
+
+
+def test_snapshot_metadata_and_fingerprint_mismatch() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        snapshot = root / "snapshot.json"
+        snapshot.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-09-06T10:00:00-04:00",
+                    "source": "captured-test",
+                    "project_fingerprint": "deadbeef",
+                    "values": {"X1": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+        values, metadata = load_snapshot(snapshot)
+        assert values == {"X1": True}
+        assert metadata["timestamp"] == "2026-09-06T10:00:00-04:00"
+        assert metadata["source"] == "captured-test"
+
+        # Give the folder a real analysis identity. Fingerprint validation runs
+        # before trace construction, so an intentional mismatch is rejected
+        # even if the rest of this tiny folder is not a valid GX3 project.
+        (root / "CPU.PRM").write_bytes(b"synthetic CPU parameters")
+        try:
+            build_explanation(root, "M100", snapshot)
+        except SystemExit as exc:
+            assert "does not match" in str(exc)
+        else:
+            raise AssertionError("fingerprint mismatch was not rejected")
 
 
 def main():
@@ -82,7 +177,12 @@ def main():
         )
         assert load_live_values(str(path)) == {"X1A": True, "M10": False}
 
-    print("all ladder-print filter checks passed")
+    test_snapshot_logic_uses_ladder_print_contact_semantics()
+    test_snapshot_missing_unknown_and_edge_are_not_false()
+    test_stateful_trace_is_scoped_to_current_write_condition()
+    test_snapshot_metadata_and_fingerprint_mismatch()
+
+    print("all ladder-print filter and snapshot explanation checks passed")
 
 
 if __name__ == "__main__":
