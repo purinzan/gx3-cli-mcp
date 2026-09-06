@@ -159,6 +159,7 @@ def test_schema_is_checked_before_reuse_and_only_broken_artifact_is_rebuilt() ->
     from gx3cli.gx3_xref import open_xref_db
     from gx3cli.gx3_index_lite import open_existing
     from gx3cli.gx3_workspace import UNREADABLE
+    from gx3cli.gx3_dead_logic import load_external_devices
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -168,12 +169,15 @@ def test_schema_is_checked_before_reuse_and_only_broken_artifact_is_rebuilt() ->
                                           (built.index, LITE_COLUMNS, open_existing)):
             backup = work / f"{artifact.kind}-backup.sqlite"
             shutil.copy2(artifact.path, backup)
+            boundaries = load_external_devices(backup, project) if artifact.kind == "index" else None
             for table in tables:
                 shutil.copy2(backup, artifact.path)
                 with closing(sqlite3.connect(artifact.path)) as con, con:
                     con.execute(f'drop table "{table}"')
                 state = getattr(locate(project), artifact.kind)
                 assert state.state == UNREADABLE and table in state.detail, state
+                if artifact.kind == "index" and table != "external_sources":
+                    assert load_external_devices(artifact.path, project) == boundaries
                 if table == "data_flow":
                     # Only full workspace reuse needs value flow. Basic xref
                     # investigation still works with that capability absent.

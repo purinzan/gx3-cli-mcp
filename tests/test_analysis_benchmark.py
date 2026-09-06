@@ -30,7 +30,9 @@ def main() -> int:
             assert values["wall_seconds"] > 0 and values["python_peak_bytes"] > 0, values
             rss = values["process_peak_rss_bytes_after_phase"]
             assert rss is None or rss > 0, values
-        assert sample["warm_query"]["sql_statements"] == 18, sample
+        # Two queries: 9 existing statements + one schema query and four
+        # SQLite-internal table_info statements each. No data scan added.
+        assert sample["warm_query"]["sql_statements"] == 28, sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample

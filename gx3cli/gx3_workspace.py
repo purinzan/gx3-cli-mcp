@@ -124,7 +124,7 @@ def meta_of(path: Path) -> dict[str, str] | None:
 
 
 def _metadata_and_schema(path: Path, kind: str | None = None) -> tuple[dict[str, str] | None, list[str]]:
-    """Read identity and structure on one handle; no validation/reopen gap."""
+    """Read metadata and structure from the same open database."""
     if not path.exists():
         return None, []
     try:
