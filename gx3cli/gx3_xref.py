@@ -61,7 +61,12 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   each. Coverage changed, so a database built by the previous decoder holds
 #   fewer members than this build would find and must not be reused: the
 #   fingerprint is the same input, and the answer would still be narrower.
-XREF_DECODER = "arg-decode-4"
+#
+#   arg-decode-5: counted operands record documented physical-device spans
+#   instead of assuming every (n) is already a device count. DFMOV, WTOB,
+#   BTOW and BK+ therefore change persisted coverage, while indexed counted
+#   bases remain statically unexpanded.
+XREF_DECODER = "arg-decode-5"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
