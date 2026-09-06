@@ -70,7 +70,12 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   arg-decode-strefs-5: supported simple ST/inline-ST assignments contribute
 #   read/write evidence. The database also records unresolved ST sources and
 #   label-only references so absence can be reported as partial, not complete.
-XREF_DECODER = "arg-decode-strefs-5"
+#
+#   arg-decode-strefs-countspans-6: counted operands use documented physical
+#   device spans instead of assuming every (n) is already a device count.
+#   DFMOV, WTOB, BTOW and BK+ therefore change persisted coverage; indexed
+#   counted bases remain statically unexpanded.
+XREF_DECODER = "arg-decode-strefs-countspans-6"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:

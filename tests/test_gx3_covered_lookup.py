@@ -28,22 +28,39 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gx3cli.gx3_data_flow import build_report
 from gx3cli.gx3_index_lite import main as lite_main
 from gx3cli.gx3_xref_read import occurrences_of
+from test_gx3_block_range import operation_row
 from test_gx3_lint_block_runs import bmov, mov
 from test_gx3_shared_reach import build_xref, write_program
+
+
+def build_lite(root: Path, out: Path) -> Path:
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert lite_main(["build", "--root", str(root), "--out", str(out)]) == 0
+    return out
 
 
 def both_indexes(work: Path) -> tuple[Path, Path, Path]:
     """One project, one BMOV run, built into the cross-reference and the index."""
     write_program(work / "p", [("_guid/b", bmov(300, 400, 4)), ("_guid/m", mov(401, 900))])
     xref = build_xref(work / "p", work / "x.sqlite")
-    with contextlib.redirect_stdout(io.StringIO()):
-        assert (
-            lite_main(["build", "--root", str(work / "p"), "--out", str(work / "lite.sqlite")])
-            == 0
-        )
-    return work / "p", xref, work / "lite.sqlite"
+    lite = build_lite(work / "p", work / "lite.sqlite")
+    return work / "p", xref, lite
+
+
+def counted_indexes(work: Path) -> tuple[Path, Path, Path]:
+    """DFMOV K5: ten physical destination words from one counted operation."""
+    row = operation_row(
+        "DFMOV",
+        "D:D:K_1",
+        "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}:c{s=#:v=5}",
+    )
+    write_program(work / "p", [("_guid/dfmov", row)])
+    xref = build_xref(work / "p", work / "x.sqlite")
+    lite = build_lite(work / "p", work / "lite.sqlite")
+    return work / "p", xref, lite
 
 
 def ask_lite(lite: Path, root: Path, device: str) -> tuple[int, str]:
@@ -124,6 +141,28 @@ def test_one_past_the_end_is_still_not_found() -> None:
         assert "not found" in body, body
 
 
+def test_counted_physical_span_matches_xref_lite_and_value_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root, xref, lite = counted_indexes(work)
+
+        assert "DFMOV" in ask_xref(xref, "D209"), ask_xref(xref, "D209")
+        assert ask_xref(xref, "D210") == [], ask_xref(xref, "D210")
+
+        code, body = ask_lite(lite, root, "D209")
+        assert code == 0, body
+        assert "D200" in body and "DFMOV" in body and "length=10" in body, body
+        code, body = ask_lite(lite, root, "D210")
+        assert code == 1 and "not found" in body, body
+
+        report = build_report(root, opcode="DFMOV")
+        edges = report["edges"]
+        assert len(edges) == 1, edges
+        edge = edges[0]
+        assert edge["source_range"] == "D100..D101", edge
+        assert edge["destination_range"] == "D200..D209", edge
+
+
 def test_the_json_form_carries_named_and_covered_semantics() -> None:
     import json
 
@@ -158,6 +197,7 @@ def main() -> int:
     test_named_and_covered_evidence_survive_together()
     test_a_device_the_ladder_names_answers_as_before()
     test_one_past_the_end_is_still_not_found()
+    test_counted_physical_span_matches_xref_lite_and_value_flow()
     test_the_json_form_carries_named_and_covered_semantics()
     print("covered lookup checks passed")
     return 0
