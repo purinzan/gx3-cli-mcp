@@ -149,6 +149,25 @@ def test_a_project_with_no_label_table_loads_an_empty_resolver() -> None:
         assert labels.resolve_token(f"_lid/{LABEL_ID}/2") is None
 
 
+def test_absent_projects_do_not_share_unresolved_label_evidence() -> None:
+    """A long-lived MCP server must not carry Project A's misses into Project B."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        first = work / "first"
+        second = work / "second"
+        first.mkdir()
+        second.mkdir()
+
+        resolver_a = load_label_resolver(first)
+        token = f"_lid/{LABEL_ID}/999"
+        assert resolver_a.resolve_token(token) is None
+        assert token in resolver_a.unresolved
+
+        resolver_b = load_label_resolver(second)
+        assert resolver_b is not resolver_a
+        assert resolver_b.unresolved == set()
+
+
 def main() -> int:
     # Collected rather than listed, so a test added later cannot be left out.
     tests = [
