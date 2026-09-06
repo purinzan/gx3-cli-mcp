@@ -135,7 +135,7 @@
 | `gx3_index_lite.py` | `index-lite`, `query-device`, `query-comment`, `query-external`, `query-cycle`, `device-map` | `gx3_run_command`, `gx3_device_map` | SQLite-first 検索の中核。 |
 | `gx3_xref.py` | `xref` | `gx3_xref_where_used`, `gx3_run_command` | writer/reader、下流影響、CSV export。 |
 | `gx3_data_flow.py` | `data-flow` | `gx3_data_flow`, `gx3_run_command` | 命令引数単位の source→destination value-flow。未知/部分解析は unresolved として保持する。 |
-| `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。 |
+| `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。呼出し単位のTraceInputsと条件参照providerを既存エンジンへ渡す。import時の他モジュール関数差替えは行わず、rows/comments/labelsを前処理・本体・後処理で共有する。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
 | `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。 |
 | `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
@@ -192,7 +192,7 @@
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_project_config.py` | ラダー以外のプロジェクト情報を1コマンドで読む。CPU・ユニット構成・アドレス・接続方法・モジュール設定・モーションと、読めないものとその理由を出す。md ではなく実行して得る形にしてある。 |
 | `gx3_input_identity.py` | 解析対象の入力（ラダー・コメント・ラベル・ユニット設定・CPUパラメータ）をまとめて指紋化する。成果物がどの入力から作られたかを記録・照合し、別プロジェクトの索引で答えることを防ぐ。 |
-| `gx3_analysis_state.py` | 結果の状態を表す共通語彙（確認済み / 一部未解釈 / 未対応 / 打切り / 評価不能 / 実測値なし）と理由・次の手順。「検出0件」と「評価できなかった」を区別するための土台。 |
+| `gx3_analysis_state.py` | 結果の状態を表す共通語彙（確認済み / 一部未解釈 / 未対応 / 打切り / 評価不能 / 実測値なし）と理由・次の手順。「検出0件」と「評価できなかった」を区別するための土台。集約時は代表状態に加えて個々の制約を constraints に保持し、JSON往復や再集約でも段階・理由・位置を失わない。 |
 | `gx3_module_params.py` | インテリジェント機能ユニットの設定を読む。ProfileTableInfo で記述子テーブルと設定値テーブルを判別し、既定値から変更された設定だけを型名・スロット・バッファU番号とともに出す。 |
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |

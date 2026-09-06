@@ -6,8 +6,9 @@ import re
 import sqlite3
 import sys
 from collections import Counter, defaultdict, deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_hmi_build_info import CommentInfo
@@ -588,6 +589,22 @@ def simple_occ_record(occ: DeviceOcc, comments: dict[tuple[str, int], CommentInf
     }
 
 
+@dataclass
+class TraceInputs:
+    root: Path
+    comments: Any
+    labels: LabelResolver
+    rows: list[LadderRow]
+
+
+def load_trace_inputs(root: Path) -> TraceInputs:
+    comments = load_comments_for_root(root)
+    labels = load_label_resolver(root)
+    rows = load_rows(root, comments)
+    resolve_label_occurrences(rows, labels)
+    return TraceInputs(Path(root).resolve(), comments, labels, rows)
+
+
 def build_trace(
     root: Path,
     target_device: str,
@@ -595,11 +612,15 @@ def build_trace(
     max_devices: int,
     include_reset: bool,
     strict_logic: bool,
+    *,
+    inputs: TraceInputs | None = None,
+    condition_refs_provider: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    comments = load_comments_for_root(root)
-    labels = load_label_resolver(root)
-    rows = load_rows(root, comments)
-    resolve_label_occurrences(rows, labels)
+    inputs = inputs if inputs is not None else load_trace_inputs(root)
+    if inputs.root != Path(root).resolve():
+        raise ValueError("trace inputs belong to a different project root")
+    comments, labels, rows = inputs.comments, inputs.labels, inputs.rows
+    refs_for_logic = condition_refs_provider or condition_refs_from_logic
     drivers = driver_index(rows, include_reset=include_reset)
     counts = occurrence_counts(rows)
     # Pass the same per-project resolver into the control-flow layer explicitly.
@@ -711,7 +732,7 @@ def build_trace(
                 enable_logic_stats = logic_stats(enable_logic)
                 condition_records = [
                     logic_condition_record(ref, comments, drivers, device, row, refresh_areas, unit_io_areas)
-                    for ref in condition_refs_from_logic(enable_logic)
+                    for ref in refs_for_logic(enable_logic)
                 ]
             else:
                 conditions = row_conditions(row)
