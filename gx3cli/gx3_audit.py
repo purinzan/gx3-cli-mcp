@@ -12,8 +12,10 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from gx3cli.gx3_analysis_state import checked
+from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
+from gx3cli.gx3_dead_logic import load_external_devices, propagate_constant_devices
+from gx3cli.gx3_external_inputs import load_refresh_areas
 from gx3cli.gx3_lint import CHECKS, LintContext, open_checked_xref, open_optional
 from gx3cli.gx3_project_paths import (
     LEGACY_OUTPUT_PREFIX_ENV,
@@ -52,6 +54,7 @@ CHECK_BOOST = {
     "link-range": 28,
     "alarm-quality": 14,
     "io-comment-gap": 12,
+    "constant-chain": 20,
     "comment-conflict": 6,
     "unused-device": 0,
 }
@@ -63,6 +66,7 @@ CHECK_DIMENSIONS = {
     "comment-conflict": ("Documentation", "Traceability"),
     "link-range": ("Traceability", "Change safety", "Troubleshootability"),
     "io-comment-gap": ("Documentation", "Troubleshootability"),
+    "constant-chain": ("Maintainability", "Traceability", "Change safety", "Troubleshootability"),
 }
 WHY = {
     "duplicate-coil": "one output has more than one ladder driver, so an edit can change which rung owns the final state",
@@ -72,6 +76,7 @@ WHY = {
     "comment-conflict": "duplicate or conflicting comment text can lead a maintainer to the wrong device",
     "link-range": "a communication receive/link device is also written locally, obscuring the true value owner",
     "io-comment-gap": "a physical I/O address has no project comment, so its field meaning is not recoverable from the project alone",
+    "constant-chain": "a control device or physical output is provably stuck ON/OFF through ordinary ladder logic, so downstream branches may never behave as a maintainer expects",
 }
 NEXT_REVIEW = {
     "duplicate-coil": "review every writer and execution order before changing this output",
@@ -81,6 +86,7 @@ NEXT_REVIEW = {
     "comment-conflict": "compare each cited rung and repair comments only after device identity is confirmed",
     "link-range": "verify partner PLC/link-refresh ownership before changing the local writer",
     "io-comment-gap": "identify the field signal from drawings/I/O lists and add a project comment before modification",
+    "constant-chain": "review the full causal chain and every affected A/B contact before changing or deleting the cited logic",
 }
 
 
@@ -117,6 +123,90 @@ def collect_io_comment_gaps(ctx: LintContext) -> list[dict[str, object]]:
             }
         )
     return out
+
+
+def collect_constant_chains(
+    ctx: LintContext,
+    *,
+    index_db: Path,
+    refresh_csv: str = "",
+) -> list[dict[str, object]]:
+    """Turn dead-logic's proven constants into ranked Doctor evidence.
+
+    One Doctor finding represents one proven constant device/output. Contact
+    consequences are summarized onto that finding instead of emitting a row for
+    every A/B use, which keeps Top risks actionable on large projects.
+    """
+    if ctx.xref is None:
+        ctx.cannot_evaluate(
+            "constant-chain",
+            "no cross-reference database",
+            "gx3-cli xref build --root <project>",
+        )
+        return []
+
+    externals = load_external_devices(index_db)
+    refresh_areas = load_refresh_areas(Path(refresh_csv)) if refresh_csv else []
+    _facts, propagated = propagate_constant_devices(
+        ctx.rows,
+        ctx.xref,
+        externals=externals,
+        refresh_areas=refresh_areas,
+    )
+
+    contact_effects: dict[str, dict[str, int]] = defaultdict(lambda: {"dead": 0, "redundant": 0})
+    for item in propagated:
+        category = str(item.get("category") or "")
+        device = str(item.get("device") or "")
+        if not device:
+            continue
+        if category == "dead-contact":
+            contact_effects[device]["dead"] += 1
+        elif category == "redundant-contact":
+            contact_effects[device]["redundant"] += 1
+
+    findings: list[dict[str, object]] = []
+    for item in propagated:
+        category = str(item.get("category") or "")
+        if category not in {"constant-output", "constant-device"}:
+            continue
+        device = str(item.get("device") or "")
+        effects = contact_effects.get(device, {"dead": 0, "redundant": 0})
+        state = str(item.get("constant_state") or "")
+        depth = int(item.get("chain_depth") or 0)
+        severity = "high" if category == "constant-output" else ("medium" if depth >= 2 else "low")
+        effect_text = (
+            f"; downstream contacts: {effects['dead']} always-false, "
+            f"{effects['redundant']} always-true"
+        )
+        findings.append(
+            {
+                "check": "constant-chain",
+                "severity": severity,
+                "device": device,
+                "comment": str(item.get("comment") or ""),
+                "count": 1 + effects["dead"] + effects["redundant"],
+                "locations": str(item.get("where") or ""),
+                "detail": f"{device} is proven {state}{effect_text}",
+                "constant_state": state,
+                "chain": str(item.get("chain") or ""),
+                "chain_depth": depth,
+                "roots": str(item.get("roots") or ""),
+                "dead_contacts": effects["dead"],
+                "redundant_contacts": effects["redundant"],
+                "review_note": NEXT_REVIEW["constant-chain"],
+            }
+        )
+
+    partial_rows = [row for row in ctx.rows if row.parse_status and row.parse_status != "exact"]
+    if partial_rows:
+        ctx.states["constant-chain"] = AnalysisState(
+            PARTIAL,
+            reason=f"{len(partial_rows)} ladder rows were not fully interpreted; constants through those rows remain unknown",
+            next_step="gx3-cli parse-gaps --root <project>",
+            stage=DECODE,
+        )
+    return findings
 
 
 def finding_priority(finding: dict[str, object]) -> int:
@@ -241,6 +331,11 @@ def collect_project_health(
             if func is not None:
                 findings_by_check[name] = func(ctx)
         findings_by_check["io-comment-gap"] = collect_io_comment_gaps(ctx)
+        findings_by_check["constant-chain"] = collect_constant_chains(
+            ctx,
+            index_db=index_dir / f"{label}.sqlite",
+            refresh_csv=refresh_csv,
+        )
         states = {name: ctx.states.get(name, checked()) for name in findings_by_check}
         return build_health_report(root, findings_by_check, states, top)
     finally:
@@ -274,6 +369,8 @@ def print_project_health(report: dict[str, object]) -> None:
             print(f"    {item['detail']}")
         if item.get("locations"):
             print(f"    evidence: {item['locations']}")
+        if item.get("chain"):
+            print(f"    chain: {item['chain']}")
         print(f"    why: {item['why_it_matters']}")
         print(f"    review: {item['next_review']}")
 
