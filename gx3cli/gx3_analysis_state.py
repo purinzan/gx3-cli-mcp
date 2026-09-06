@@ -24,7 +24,8 @@ A result carries why, and what to do about it, because "not evaluated" without
 the missing prerequisite just moves the puzzle to the reader.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import json
 
 
 CHECKED = "checked"
@@ -111,6 +112,7 @@ class AnalysisState:
     detail: dict[str, object] = field(default_factory=dict)
     # Which of the five stages stopped this. Empty when nothing did.
     stage: str = ""
+    constraints: list[dict[str, object]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.state not in STATES:
@@ -157,6 +159,8 @@ class AnalysisState:
             out["next_step"] = self.next_step
         if self.detail:
             out["detail"] = dict(self.detail)
+        if self.constraints:
+            out["constraints"] = [dict(item) for item in self.constraints]
         return out
 
     def line(self, subject: str = "", ja: bool = False) -> str:
@@ -217,19 +221,25 @@ def from_dict(data: object) -> AnalysisState:
     next_step = str(data.get("next_step") or "")
     stage = str(data.get("stage") or "")
     detail = data.get("detail")
+    raw_constraints = data.get("constraints")
+    constraints = (
+        [dict(item) for item in raw_constraints if isinstance(item, dict)]
+        if isinstance(raw_constraints, list) else []
+    )
     if state == CHECKED:
-        return checked(detail if isinstance(detail, dict) else None)
+        return replace(checked(detail if isinstance(detail, dict) else None), constraints=constraints)
     if state == NO_MEASUREMENT:
-        return no_measurement(
+        return replace(no_measurement(
             reason, next_step or "capture the value this answer depends on",
             detail if isinstance(detail, dict) else None,
-        )
+        ), constraints=constraints)
     return AnalysisState(
         state,
         reason=reason,
         next_step=next_step,
         stage=stage if stage in STAGES else DISCOVERY,
         detail=detail if isinstance(detail, dict) else {},
+        constraints=constraints,
     )
 
 
@@ -245,7 +255,23 @@ def worst(states: list[AnalysisState]) -> AnalysisState:
         return AnalysisState(
             NOT_EVALUATED, reason="nothing was examined", stage=DISCOVERY
         )
-    return max(states, key=lambda s: order[s.state])
+    selected = max(states, key=lambda s: order[s.state])
+    constraints: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for state in states:
+        candidates = list(state.constraints)
+        if not state.conclusive:
+            own = state.as_dict()
+            own.pop("constraints", None)
+            candidates.append(own)
+        for item in candidates:
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+            if key not in seen:
+                seen.add(key)
+                constraints.append(dict(item))
+    # Keep the established representative state/reason while preserving other
+    # stages and their evidence, including after nested summary/JSON roundtrips.
+    return replace(selected, constraints=constraints)
 
 
 def summarise(states: dict[str, AnalysisState]) -> dict[str, object]:

@@ -226,7 +226,27 @@ def test_trace_constant_pruning_is_disabled_for_malformed_index_lite() -> None:
     assert "index-lite unavailable for constant pruning" in context.reason, context.reason
 
 
+def test_all_constraints_survive_nested_json_summaries() -> None:
+    import json
+    from gx3cli.gx3_analysis_state import from_dict, DECODE, SEMANTICS, REACH
+
+    states = [
+        AnalysisState(PARTIAL, reason="unknown instruction", stage=DECODE, detail={"pos": 1}),
+        AnalysisState(PARTIAL, reason="unknown execution guard", stage=SEMANTICS, detail={"pos": 2}),
+        AnalysisState(TRUNCATED, reason="depth budget", stage=REACH, detail={"pos": 3}),
+    ]
+    combined = worst(states)
+    assert combined.state == PARTIAL
+    assert {c["stage"] for c in combined.constraints} == {DECODE, SEMANTICS, REACH}
+    restored = from_dict(json.loads(json.dumps(combined.as_dict())))
+    nested = worst([restored, *states])
+    assert len(nested.constraints) == 3, nested.as_dict()
+    assert {c["detail"]["pos"] for c in nested.constraints} == {1, 2, 3}
+    assert all(not state.constraints for state in states), "aggregation mutated inputs"
+
+
 def main() -> int:
+    test_all_constraints_survive_nested_json_summaries()
     test_a_state_says_why_and_what_to_do()
     test_an_unknown_state_is_refused()
     test_one_check_that_did_not_run_makes_the_set_inconclusive()
