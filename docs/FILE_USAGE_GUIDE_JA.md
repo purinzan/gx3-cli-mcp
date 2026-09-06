@@ -53,6 +53,7 @@
 | `test_gx3_covered_lookup.py` | 同一の検体を xref と index-lite の両方に通し、範囲に覆われたデバイスがどちらでも見つかること、覆われたデバイスを「独立した occurrence」として水増ししないこと、範囲外は従来どおり未検出であることを検査する。 |
 | `test_gx3_health_scoring.py` | Doctor の点数が「調べていない」を「問題なし」として出さないことを検査する。検査が1つも評価されなければ全次元が `--` かつ `NOT ASSESSED`、その次元を担う検査が欠けていれば数字を出さない。評価数が少ない実行が多い実行より高い点にならないこと、link-range（補助検査）の欠如では次元を空にしないことも併せて検査する。 |
 | `test_gx3_topology_conditions.py` | 並列接点が OR として報告されること（`&` にしない）、直列＋分岐の形が保たれること、b接点が保たれること、出力ごとに条件が分かれること、配線を読めない場合は「接点の一覧であり配線は未読」と明示すること、timing-chart も同じ経路を通ることを検査する。 |
+| `test_gx3_live_read_states.py` | #147 `live-read` の2つのオフラインモード（`explain` / `replay`）がコマンドから実際に到達できること、フラグ先頭の従来呼び出しが変わらないことを検査する。さらにスナップショットに値が無いデバイスが `NO_MEASUREMENT` として構築されること（この状態はこれまで構築箇所がゼロだった）、値が揃えば `checked` になること、駆動行が無ければ `not_evaluated` になること、JSON をまたいだ状態が読み戻せること、知らない形が `checked` に化けないことを検査する。 |
 | `test_gx3_bundle_names.py` | support-bundle が顧客名・設備名をフォルダ/ファイル名から漏らさないことを、合成ツリーから**実際にZIPを生成して**エントリ名と全テキストpayloadで検査する。拡張子・サイズ・階層は診断情報として残ること、対応表を含めないことも確認する。 |
 | `test_gx3_input_trust.py` | #97 複数プロジェクトがあるとき自動選択せず候補を挙げて停止すること（`--help`・`--version`・明示 root・位置引数指定は従来どおり動く）、#88 xref を生 connect せず入力指紋を検証すること、#90 LabelData の「無い」「読めない」「知らないスキーマ」を区別することを検査する。 |
 | `test_gx3_xref_reader_boundary.py` | 新しい読み手が生の `where device=?` を書いたら落ちること、member 索引が範囲の全デバイスを持つこと、範囲途中を問えば命令が見つかり範囲外では見つからないこと、member 表が無いDBでも落ちずに縮退すること、長さ不明の範囲は先頭1件のみになることを検査する。さらに #96 の語幅（DMOV=2語、EDMOV=4語）が occurrence に載ること、ブロック件数と語幅を二重に掛けないこと、デコーダ版が後退していないことを検査する。 |
@@ -148,7 +149,7 @@
 | `extract_hmi_build_info.py` | `hmi-build-info` | `gx3_run_command` | HMI/操作、単動/手動出力候補。 |
 | `extract_comm_refresh_areas.py` | `comm-refresh` | `gx3_run_command` | 通信ユニットとリフレッシュ範囲。 |
 | `gx3_comm_detail.py` | `comm-detail` | `gx3_run_command` | 詳細通信候補と AJ65BT-R2N 設定。 |
-| `gx3_live_read.py` | `live-read` | CLI only | 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する。`--dry-run` / `--explain-frame` は接続せず送信予定 frame を表示する。 |
+| `gx3_live_read.py` | `live-read` | CLI only | 3つのモードを持つ。(1) 既定: 明示指定した PLC から MC Protocol/SLMP 3E binary で現在値を read-only 取得する（`--dry-run` / `--explain-frame` は接続せず送信予定 frame を表示）。(2) `live-read explain <device> --snapshot <file>`: 採取済みスナップショットに対して静的トレースの成立条件を突き合わせる。(3) `live-read replay <normalize/series/changes/snapshot> <log>`: 採取済み CSV/JSON ログをオフラインで読む。(2)(3) は接続を開かない。いずれも結果は共有の解析状態（`analysis`）で語る。 |
 | `gx3_w3pa_probe.py` | `w3pa-probe` | `gx3_run_command` | `.w3pa` パラメータ文字列、modules、IP、device candidates。 |
 | `gtx_probe.py` | `gtx-probe` | `gx3_run_command` | GT Designer3 `.gtx` HMI project containers。 |
 | `gx3_dm_probe.py` | `dm-probe` | `gx3_run_command` | `_DM.db` の初期値/保持値。 |

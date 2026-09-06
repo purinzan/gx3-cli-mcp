@@ -89,6 +89,26 @@ gx3-cli live-read --ip <PLC_IP> --port 5000 --device M100 --count 16 --type bit 
 gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json
 ```
 
+### Reading captured data offline
+
+`live-read` has two modes that never open a connection. Both read files that
+were captured earlier.
+
+```bash
+gx3-cli live-read explain M100 --root project.gx3 --snapshot live.json
+gx3-cli live-read replay changes captured_log.csv
+gx3-cli live-read modes
+```
+
+`explain` matches captured values against the enable conditions the static
+trace produced. The answer comes back in the same analysis state every other
+command uses: a device the snapshot holds no value for is reported as
+`no measured value; file only`, together with how that value would be obtained,
+so the rows that did evaluate cannot be read as the whole answer.
+
+One snapshot answers for the instant it was captured, not for the cause of a
+past stop or trip.
+
 ## MCP
 
 Use the MCP server from AI clients that support stdio MCP servers:

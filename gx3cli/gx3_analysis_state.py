@@ -117,7 +117,21 @@ class AnalysisState:
             raise ValueError(f"unknown analysis state: {self.state}")
         if self.stage and self.stage not in STAGES:
             raise ValueError(f"unknown analysis stage: {self.stage}")
-        if self.state != CHECKED and not self.stage:
+        # NO_MEASUREMENT is the one state the five stages cannot describe. They
+        # are stages of reading the project file, and this state says the file
+        # was read through to the end -- what is missing is a value that only a
+        # running PLC has. Naming a stage here would point the reader at the
+        # decoder when the answer is to capture the value.
+        #
+        # The rule behind the stage requirement is that a result which is not
+        # "checked" has to say what to do about it, so this state carries that
+        # obligation as next_step instead of dropping it.
+        if self.state == NO_MEASUREMENT:
+            if not self.next_step:
+                raise ValueError(
+                    f"'{NO_MEASUREMENT}' has to say how the value would be obtained: set next_step"
+                )
+        elif self.state != CHECKED and not self.stage:
             raise ValueError(
                 f"a result that is not '{CHECKED}' has to say which stage stopped it: {self.state}"
             )
@@ -168,6 +182,55 @@ def not_evaluated(reason: str, next_step: str = "", stage: str = DISCOVERY) -> A
 
 def checked(detail: dict[str, object] | None = None) -> AnalysisState:
     return AnalysisState(CHECKED, detail=detail or {})
+
+
+def no_measurement(
+    reason: str, next_step: str, detail: dict[str, object] | None = None
+) -> AnalysisState:
+    """The file was read; the question needs a value the file does not hold.
+
+    Distinct from NOT_EVALUATED, which says a prerequisite was missing and the
+    check never ran, and from PARTIAL, which says the input could not be fully
+    interpreted. Here everything readable was read and the answer still depends
+    on a measurement.
+    """
+    return AnalysisState(
+        NO_MEASUREMENT, reason=reason, next_step=next_step, detail=detail or {}
+    )
+
+
+def from_dict(data: object) -> AnalysisState:
+    """Read back a state that crossed a JSON boundary.
+
+    Results are handed between commands as dicts, and a consumer that wants to
+    fold one into its own summary had to compare strings to do it. An
+    unrecognised or absent state reads as "not evaluated" rather than as
+    "checked", so a shape this does not understand cannot pass for a clean
+    result.
+    """
+    if not isinstance(data, dict):
+        return not_evaluated("no analysis state was reported")
+    state = str(data.get("state") or "")
+    if state not in STATES:
+        return not_evaluated(f"unrecognised analysis state: {state or '(none)'}")
+    reason = str(data.get("reason") or "")
+    next_step = str(data.get("next_step") or "")
+    stage = str(data.get("stage") or "")
+    detail = data.get("detail")
+    if state == CHECKED:
+        return checked(detail if isinstance(detail, dict) else None)
+    if state == NO_MEASUREMENT:
+        return no_measurement(
+            reason, next_step or "capture the value this answer depends on",
+            detail if isinstance(detail, dict) else None,
+        )
+    return AnalysisState(
+        state,
+        reason=reason,
+        next_step=next_step,
+        stage=stage if stage in STAGES else DISCOVERY,
+        detail=detail if isinstance(detail, dict) else {},
+    )
 
 
 def worst(states: list[AnalysisState]) -> AnalysisState:
