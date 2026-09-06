@@ -38,6 +38,9 @@ NAMES = ("CustomerAlpha", "BatteryLine5", "ProjectFalcon", "supplierModuleX")
 
 def a_project(work: Path) -> Path:
     root = work / "CustomerAlpha"
+    # write_program creates a real 001_LDDB.db. Keep that database intact:
+    # support-bundle also runs parse-gap analysis, so replacing it with dummy
+    # bytes would test a corrupt fixture rather than the redaction boundary.
     write_program(root, [("_guid/a", coil("a", 1, 100))])
     (root / "BatteryLine5").mkdir()
     (root / "BatteryLine5" / "supplierModuleX.dat").write_bytes(b"x")
@@ -45,7 +48,6 @@ def a_project(work: Path) -> Path:
     (root / "UnitConfig.dat").write_bytes(b"z")
     (root / "SourceInfo.CAB").write_bytes(b"cab")
     (root / "CPU.PRM").write_bytes(b"cpu")
-    (root / "001_LDDB.db").write_bytes(b"db")
     return root
 
 
