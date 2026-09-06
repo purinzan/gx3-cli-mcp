@@ -162,6 +162,10 @@ JSONでは各 `results` 要素に `total_counts`、`total_count`、`returned_cou
 `limit`、`truncated`、`warnings` を返します。既存の `writers` / `readers` / `refs`
 配列は表示対象の行です。該当0件でもJSONを返し、終了コードは従来どおり1です。
 
+read/write両方の引数は `writers` と `readers` の両方に含めます。
+`total_counts` の両項目に数えますが、`total_count` / `returned_count` は元の参照を
+1件として数えます。そのため分類別件数の合計と総参照件数は一致しない場合があります。
+
 インデックス修飾によって検索対象へ到達する可能性は、該当0件の場合も警告します。
 総件数は静的に特定できた参照の件数であり、実行時に到達する全アドレスを保証しません。
 
