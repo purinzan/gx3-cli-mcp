@@ -54,7 +54,7 @@ CHECK_BOOST = {
     "link-range": 28,
     "alarm-quality": 14,
     "io-comment-gap": 12,
-    "constant-chain": 30,
+    "constant-chain": 0,
     "comment-conflict": 6,
     "unused-device": 0,
 }
@@ -66,7 +66,9 @@ CHECK_DIMENSIONS = {
     "comment-conflict": ("Documentation", "Traceability"),
     "link-range": ("Traceability", "Change safety", "Troubleshootability"),
     "io-comment-gap": ("Documentation", "Troubleshootability"),
-    "constant-chain": ("Maintainability", "Traceability", "Change safety", "Troubleshootability"),
+    # A static constant chain is often an intentional disable/interlock pattern.
+    # Keep it visible, but do not lower project-health scores by itself.
+    "constant-chain": (),
 }
 WHY = {
     "duplicate-coil": "one output has more than one ladder driver, so an edit can change which rung owns the final state",
@@ -76,7 +78,7 @@ WHY = {
     "comment-conflict": "duplicate or conflicting comment text can lead a maintainer to the wrong device",
     "link-range": "a communication receive/link device is also written locally, obscuring the true value owner",
     "io-comment-gap": "a physical I/O address has no project comment, so its field meaning is not recoverable from the project alone",
-    "constant-chain": "a physical output is statically forced to one state through a cross-rung constant chain; this may be intentional disablement or legacy logic, but it changes what can ever operate",
+    "constant-chain": "this is a static logic observation, not a defect by itself; deliberate disable/interlock patterns commonly produce constant ON/OFF paths",
 }
 NEXT_REVIEW = {
     "duplicate-coil": "review every writer and execution order before changing this output",
@@ -86,7 +88,7 @@ NEXT_REVIEW = {
     "comment-conflict": "compare each cited rung and repair comments only after device identity is confirmed",
     "link-range": "verify partner PLC/link-refresh ownership before changing the local writer",
     "io-comment-gap": "identify the field signal from drawings/I/O lists and add a project comment before modification",
-    "constant-chain": "review the root constant and every rung in the causal chain; verify that the permanent output state is intentional before modification",
+    "constant-chain": "verify whether the permanent state is intentional before modifying or removing the chain",
 }
 
 
@@ -131,11 +133,12 @@ def collect_constant_chains(
     index_db: Path,
     refresh_csv: str = "",
 ) -> list[dict[str, object]]:
-    """Promote proven physical-output constant chains into Doctor Top risks.
+    """Expose proven physical-output constant chains as Doctor observations.
 
-    Detailed internal M/L/B device and contact findings stay in dead-logic. The
-    Doctor view stays selective and ranks the project-wide consequence: a
-    physical Y that the saved project can prove will always be ON or OFF.
+    Detailed internal M/L/B device and contact findings stay in dead-logic. A
+    physical Y that is statically constant remains useful handover evidence, but
+    constant state alone is not treated as a Top risk because intentional
+    disable/interlock patterns commonly look exactly like this.
     """
     if ctx.xref is None:
         return ctx.cannot_evaluate(
@@ -181,7 +184,7 @@ def collect_constant_chains(
         findings.append(
             {
                 "check": "constant-chain",
-                "severity": "high",
+                "severity": "info",
                 "device": device,
                 "comment": str(item.get("comment") or ""),
                 "count": 1,
@@ -277,6 +280,8 @@ def build_health_report(
     core_inconclusive = [name for name in inconclusive if name not in SUPPLEMENTAL_DOCTOR_CHECKS]
     supplemental_inconclusive = [name for name in inconclusive if name in SUPPLEMENTAL_DOCTOR_CHECKS]
     provisional_health = health_label(scores)
+    observations = [item for item in findings if str(item.get("check") or "") == "constant-chain"]
+    risk_findings = [item for item in findings if str(item.get("check") or "") != "constant-chain"]
     return {
         "root": str(root),
         "mode": "project-health",
@@ -293,7 +298,10 @@ def build_health_report(
         },
         "checks": checks,
         "total_findings": len(findings),
-        "top_risks": findings[: max(0, top)],
+        "risk_findings": len(risk_findings),
+        "observation_findings": len(observations),
+        "top_risks": risk_findings[: max(0, top)],
+        "observations": observations,
     }
 
 
@@ -358,17 +366,29 @@ def print_project_health(report: dict[str, object]) -> None:
     print(f"Total findings: {report['total_findings']}")
     print("\nTop risks")
     if not report["top_risks"]:
-        print("  none from the evaluated checks")
+        print("  none from the evaluated risk checks")
+    else:
+        for index, item in enumerate(report["top_risks"], start=1):
+            print(f"{index:>2}. {str(item.get('severity') or 'info').upper():<8} [{item.get('check')}] {item.get('device') or '-'}")
+            if item.get("detail"):
+                print(f"    {item['detail']}")
+            if item.get("locations"):
+                print(f"    evidence: {item['locations']}")
+            print(f"    why: {item['why_it_matters']}")
+            print(f"    review: {item['next_review']}")
+
+    observations = report.get("observations") or []
+    print("\nStatic constant observations")
+    if not observations:
+        print("  none from the evaluated constant-chain check")
         return
-    for index, item in enumerate(report["top_risks"], start=1):
-        print(f"{index:>2}. {str(item.get('severity') or 'info').upper():<8} [{item.get('check')}] {item.get('device') or '-'}")
-        if item.get("detail"):
-            print(f"    {item['detail']}")
+    for index, item in enumerate(observations, start=1):
+        print(f"{index:>2}. [{item.get('check')}] {item.get('device') or '-'} {item.get('constant_state') or ''}")
         if item.get("locations"):
             print(f"    evidence: {item['locations']}")
         if item.get("chain"):
             print(f"    chain: {item['chain']}")
-        print(f"    why: {item['why_it_matters']}")
+        print(f"    note: {item['why_it_matters']}")
         print(f"    review: {item['next_review']}")
 
 
