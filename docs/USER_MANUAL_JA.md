@@ -208,6 +208,12 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+dead-logic / trace / Doctorのconstant-chainは、保存された外部境界分類の共通readerを使います。
+境界DBが未取得・壊れている・別入力・必要表欠損なら、「外部デバイス0件」とみなさず、
+境界に依存する判定や定数pruningを未評価にします。dead-logicはCSVに加えて
+`<prefix>_analysis.json`に評価状態を出力します。正常な空の分類表とは区別しますが、
+正常に読めた場合でも、実設備の全外部writerや実行時の定数を保証するものではありません。
+
 lintとDoctorのproject-healthもlite索引の入力指紋・device naming版を検証します。
 別入力・指紋欠損・旧版のlite索引は拒否し、欠損している場合は従来どおり依存する検査を未評価にします。
 liteの照会は読取り専用で開き、失敗した場合も先に開いた解析DBを閉じます。

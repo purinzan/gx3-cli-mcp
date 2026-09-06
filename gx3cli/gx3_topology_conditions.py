@@ -23,12 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, propagate_constant_devices
-from gx3cli.gx3_index_lite import (
-    DEVICE_NAMING,
-    check_input as check_lite_input,
-    connect as connect_lite_index,
-)
+from gx3cli.gx3_dead_logic import ConstantFact, lite_db_path, load_external_devices, propagate_constant_devices
 from gx3cli.gx3_ladder_logic import (
     and_logic,
     condition_refs_from_logic,
@@ -75,37 +70,17 @@ def _load_external_boundaries(root: Path) -> tuple[dict[str, str] | None, str]:
     writers". In those cases the caller disables pruning and keeps the normal
     trace instead.
 
-    This opens the DB locally instead of calling ``open_existing`` because that
-    legacy helper can raise before closing its connection on an old/malformed
-    index. Windows keeps that file locked, which turns a safe rejection into a
-    resource leak. Validation here is equivalent, with an unconditional close.
+    Use the same validated reader as dead-logic. It closes the handle on every
+    path, and a failed table read cannot become an empty boundary set.
     """
     path = lite_db_path(root)
     if not path.exists():
         return None, f"index-lite database not found: {path}"
 
-    con = None
     try:
-        con = connect_lite_index(path)
-        row = con.execute("select value from meta where key='device_naming'").fetchone()
-        if row is None or row["value"] != DEVICE_NAMING:
-            return None, (
-                "index-lite unavailable for constant pruning: index was built by an "
-                "older/incompatible version; rebuild index-lite"
-            )
-        check_lite_input(path, con, root)
-        rows = con.execute(
-            "select device, source_kind, semantic_group from external_sources"
-        ).fetchall()
-        return {
-            str(row["device"]): f"{row['source_kind']}/{row['semantic_group']}"
-            for row in rows
-        }, ""
+        return load_external_devices(path, root), ""
     except (Exception, SystemExit) as exc:
         return None, f"index-lite unavailable for constant pruning: {exc}"
-    finally:
-        if con is not None:
-            con.close()
 
 
 def load_trace_constant_context(

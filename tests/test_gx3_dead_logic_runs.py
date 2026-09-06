@@ -8,6 +8,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import shutil
+import csv
+import io
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 from gx3cli.gx3_dead_logic import (
@@ -232,6 +236,75 @@ def test_unresolved_or_unindexed_ranges_cannot_prove_ownership() -> None:
         facts, _ = propagate_constant_devices([_row({"device": "SM401"}, "M100", 10, "p")], con)
         assert "M100" not in facts, (span, detail, access, facts)
         con.close()
+
+
+def test_external_boundary_failures_are_not_empty_evidence() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.gx3_audit import collect_constant_chains
+    from gx3cli.gx3_lint import LintContext
+    from gx3cli.review_gx3_project import load_comments_for_root, load_rows
+
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "project"
+        write_program(root, [
+            ("_guid/off", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("_guid/on", generate_rung({"not": {"device": "M100"}}, {"type": "coil", "device": "Y0"})[0]),
+        ])
+        built = prepare(root)
+        backup = work / "backup.sqlite"
+        shutil.copy2(built.index.path, backup)
+        comments = load_comments_for_root(root)
+        rows = load_rows(root, comments)
+        env = dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8")
+        for case in ("valid", "empty", "missing-table", "corrupt", "foreign", "missing"):
+            shutil.copy2(backup, built.index.path)
+            if case in {"empty", "missing-table", "foreign"}:
+                with closing(sqlite3.connect(built.index.path)) as con, con:
+                    if case == "empty":
+                        con.execute("delete from external_sources")
+                    elif case == "missing-table":
+                        con.execute("drop table external_sources")
+                    else:
+                        con.execute("update meta set value='foreign-input' where key='input_sha256'")
+            elif case == "corrupt":
+                built.index.path.write_bytes(b"not a database")
+            elif case == "missing":
+                built.index.path.unlink()
+            result = subprocess.run([
+                sys.executable, "-m", "gx3cli.gx3_dead_logic", "--root", str(root),
+                "--db", str(built.xref.path), "--lite-db", str(built.index.path),
+                "--output-dir", str(work / "out"), "--prefix", case,
+            ], cwd=work, env=env, capture_output=True, text=True, encoding="utf-8")
+            assert result.returncode == 0, (case, result.stdout, result.stderr)
+            state = json.loads((work / "out" / f"{case}_analysis.json").read_text(encoding="utf-8"))
+            expected = case in {"valid", "empty"}
+            assert state["boundary_dependent_checks_evaluated"] is expected, (case, state)
+            assert state["constant_propagation_evaluated"] is expected, (case, state)
+            if case == "empty":
+                assert state["external_boundary"]["detail"]["devices"] == 0, state
+            if not expected:
+                assert state["external_boundary"]["state"] == "not_evaluated", state
+                with (work / "out" / f"{case}.csv").open(encoding="utf-8-sig") as handle:
+                    findings = list(csv.DictReader(handle))
+                assert not any(item["category"] in {"constant-output", "constant-device", "const-off-contact"} for item in findings), findings
+            previous = Path.cwd()
+            try:
+                os.chdir(work)
+                context = load_trace_constant_context(root, rows, [])
+            finally:
+                os.chdir(previous)
+            assert context.enabled is expected, (case, context)
+            if case == "missing-table":
+                with closing(sqlite3.connect(built.xref.path)) as xref, closing(sqlite3.connect(built.index.path)) as lite:
+                    xref.row_factory = lite.row_factory = sqlite3.Row
+                    ctx = LintContext(root, rows, comments, xref=xref, lite=lite)
+                    with redirect_stdout(io.StringIO()):
+                        assert collect_constant_chains(ctx, index_db=built.index.path) == []
+                    assert not ctx.states["constant-chain"].conclusive
 
 
 def main() -> int:

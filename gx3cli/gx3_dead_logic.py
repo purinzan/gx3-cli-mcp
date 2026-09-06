@@ -10,6 +10,8 @@ cases remain unknown instead of being guessed.
 
 import argparse
 import csv
+import json
+from contextlib import closing
 import re
 import sqlite3
 import sys
@@ -19,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
+from gx3cli.gx3_analysis_state import checked, not_evaluated
+from gx3cli.gx3_index_lite import external_sources_from, open_existing
 from gx3cli.gx3_ladder_logic import (
     condition_refs_from_logic,
     enable_logic_for_output,
@@ -75,20 +79,10 @@ def lite_db_path(root: Path) -> Path:
     return Path(".gx3_index") / f"{label}.sqlite"
 
 
-def load_external_devices(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    out: dict[str, str] = {}
-    try:
-        for device, kind, group in con.execute(
-            "select device, source_kind, semantic_group from external_sources"
-        ):
-            out[str(device)] = f"{kind}/{group}"
-    except sqlite3.Error:
-        pass
-    con.close()
-    return out
+def load_external_devices(path: Path, root: Path | None = None) -> dict[str, str]:
+    """Compatibility wrapper over the validated reader; unavailable raises."""
+    with closing(open_existing(path, root=root)) as con:
+        return external_sources_from(con)
 
 
 def runs_read_by_the_program(con) -> dict[str, list[tuple[int, int]]]:
@@ -434,7 +428,17 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    externals = load_external_devices(Path(args.lite_db) if args.lite_db else lite_db_path(root))
+    boundary_path = Path(args.lite_db) if args.lite_db else lite_db_path(root)
+    try:
+        externals = load_external_devices(boundary_path, root)
+        boundary_state = checked({"scope": "known saved external classifications", "devices": len(externals)})
+    except (OSError, sqlite3.Error, SystemExit) as exc:
+        externals = {}
+        boundary_state = not_evaluated(
+            f"external boundary evidence unavailable: {exc}",
+            "rebuild index-lite for this project and retry",
+        )
+    print(boundary_state.line("external-boundary"))
     print(f"external/HMI/comm boundary devices known: {len(externals)}")
 
     refresh_csv = Path(args.refresh_csv) if args.refresh_csv else Path("outputs") / f"{default_comm_prefix()}_refresh_areas.csv"
@@ -480,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 1) contacts on never-written internal bit devices ------------------------
     for device, s in sorted(stats.items()):
+        if not boundary_state.conclusive:
+            continue
         if s["device_type"] not in INTERNAL_BIT_TYPES:
             continue
         if s["writes"] or s["refs"]:
@@ -544,6 +550,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3) written but never read ------------------------------------------------
     for device, s in sorted(stats.items()):
+        if not boundary_state.conclusive:
+            continue
         if s["reads"] or s["refs"]:
             continue
         if read_by_a_run(read_runs, str(s["device_type"]), device):
@@ -579,6 +587,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4) SET without RST ------------------------------------------------------
     for device, s in sorted(stats.items()):
+        if not boundary_state.conclusive:
+            continue
         if s["sets"] and not s["rsts"] and s["device_type"] in INTERNAL_BIT_TYPES:
             if device in externals:
                 continue
@@ -594,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     # 5) project-wide constants ------------------------------------------------
-    if not args.no_constant_propagation:
+    if not args.no_constant_propagation and boundary_state.conclusive:
         comments = load_comments_for_root(root)
         rows = load_rows(root, comments)
         facts, propagated = propagate_constant_devices(
@@ -644,6 +654,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"devices skipped as network-refreshed (visible to remote stations): {refreshed_skipped}")
     print(f"devices read only as part of a block or digit-specified run: {covered_by_run}")
     print(f"csv: {out}")
+    state_path = out_dir / f"{prefix}_analysis.json"
+    state_path.write_text(json.dumps({
+        "root": str(root),
+        "external_boundary": boundary_state.as_dict(),
+        "boundary_dependent_checks_evaluated": boundary_state.conclusive,
+        "constant_propagation_evaluated": boundary_state.conclusive and not args.no_constant_propagation,
+        "scope": "saved-project static observations, not PLC runtime guarantees",
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"analysis: {state_path}")
     con.close()
     return 0
 
