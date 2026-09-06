@@ -313,6 +313,11 @@ def _call_sites(
 ) -> list[CallSite]:
     sites: list[CallSite] = []
     for row in rows:
+        # CALL is uncommon even in large projects. The cheap header walk keeps
+        # a 6,000-rung project from paying full printable/topology decoding on
+        # every ordinary row merely to discover that it contains no call.
+        if not any(hop.op in CALL_OPS for hop in parse_header_ops(row.data)):
+            continue
         printed, _verticals, _wires = parse_rung(row, labels)
         flows = [element for element in positioned_elements(row, labels) if not element.is_wire]
         for op in printed:
@@ -378,14 +383,12 @@ def _call_context(
     # entries. A P label used only by CJ is a jump destination, not evidence of
     # a callable P..RET scope.
     wanted: set[tuple[str, int]] = set()
-    ecalls_by_pointer: dict[int, list[CallSite]] = defaultdict(list)
     for site in sites:
         if site.pointer is None:
             continue
         if site.opcode == "CALL":
             wanted.add((site.lddb, site.pointer))
         else:
-            ecalls_by_pointer[site.pointer].append(site)
             for lddb, pointer in pointer_defs:
                 if pointer == site.pointer:
                     wanted.add((lddb, pointer))
@@ -398,11 +401,9 @@ def _call_context(
 
     scopes_by_target: dict[tuple[str, int], list[SubroutineScope]] = defaultdict(list)
     scopes_by_pointer: dict[int, list[SubroutineScope]] = defaultdict(list)
-    scope_by_key: dict[tuple[str, int, int], SubroutineScope] = {}
     for scope in scopes:
         scopes_by_target[(scope.lddb, scope.pointer)].append(scope)
         scopes_by_pointer[scope.pointer].append(scope)
-        scope_by_key[scope.key] = scope
 
     unresolved_reason: dict[tuple[str, int, int], set[str]] = defaultdict(set)
     incoming: dict[tuple[str, int, int], list[CallSite]] = defaultdict(list)
@@ -463,7 +464,7 @@ def _call_context(
         sites_here = incoming.get(scope.key, [])
         for site in sites_here:
             parent = containing_scope(site.lddb, site.pos)
-            if parent is None or parent.key == scope.key and site.pos < scope.start_pos:
+            if parent is None:
                 terms.append(site.condition)
                 continue
             parent_logic = invocation(parent)
