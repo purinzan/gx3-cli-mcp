@@ -448,7 +448,8 @@ def root_of(args: argparse.Namespace) -> Path | None:
 def open_existing(path: Path, root: Path | None = None) -> sqlite3.Connection:
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
-    con = connect(path)
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
     try:
         row = con.execute("select value from meta where key='device_naming'").fetchone()
         if row is None or row["value"] != DEVICE_NAMING:

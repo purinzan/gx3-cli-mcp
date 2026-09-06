@@ -212,6 +212,10 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+lintとDoctorのproject-healthもlite索引の入力指紋・device naming版を検証します。
+別入力・指紋欠損・旧版のlite索引は拒否し、欠損している場合は従来どおり依存する検査を未評価にします。
+liteの照会は読取り専用で開き、失敗した場合も先に開いた解析DBを閉じます。
+
 `xref` / `index-lite` の照会で `--root` を指定した場合、DB側の入力指紋が未記録、またはrootに解析入力がない場合は照合不能として拒否します。古いDBは入力を復元したうえで再構築してください。rootを指定しないDB単独照会は互換性のため残しますが、特定プロジェクトとの一致は保証しません。
 
 入力指紋はST/FBD、初期・保持値、ユニット設定を含むプロジェクト直下のDBと、

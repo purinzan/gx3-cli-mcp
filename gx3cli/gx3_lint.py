@@ -38,7 +38,7 @@ from typing import Callable
 from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations
 from gx3cli.gx3_analysis_state import AnalysisState, checked, not_evaluated, summarise
 from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
-from gx3cli.gx3_index_lite import default_db_path as lite_db_path
+from gx3cli.gx3_index_lite import default_db_path as lite_db_path, open_existing
 from gx3cli.gx3_project_paths import (
     default_comm_prefix,
     default_output_prefix,
@@ -1119,6 +1119,13 @@ def open_optional(path: Path) -> sqlite3.Connection | None:
     return con
 
 
+def open_checked_lite(path: Path, root: Path) -> sqlite3.Connection | None:
+    """Missing evidence is optional; foreign or unverified evidence is rejected."""
+    if not path.exists():
+        return None
+    return open_existing(path, root=root)
+
+
 def run_checks(ctx: LintContext, checks: list[str], prefix: str) -> dict[str, object]:
     summary: dict[str, object] = {"root": str(ctx.root), "checks": {}, "outputs": []}
     total = 0
@@ -1201,7 +1208,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.root)
     status_out = sys.stderr if args.format == "json" else sys.stdout
-    with contextlib.redirect_stdout(status_out):
+    with contextlib.redirect_stdout(status_out), contextlib.ExitStack() as resources:
         print(f"lint root: {root}")
         print("loading ladder rows and comments ...")
         comments = load_comments_for_root(root)
@@ -1215,13 +1222,22 @@ def main(argv: list[str] | None = None) -> int:
             if args.refresh_csv
             else Path("outputs") / f"{default_comm_prefix()}_refresh_areas.csv"
         )
+        xref = open_checked_xref(xref_path, root)
+        if xref is not None:
+            resources.callback(xref.close)
+        lite = open_checked_lite(lite_path, root)
+        if lite is not None:
+            resources.callback(lite.close)
+        link = open_optional(link_path) if link_path else None
+        if link is not None:
+            resources.callback(link.close)
         ctx = LintContext(
             root=root,
             rows=rows,
             comments=comments,
-            xref=open_checked_xref(xref_path, root),
-            lite=open_optional(lite_path),
-            link=open_optional(link_path) if link_path else None,
+            xref=xref,
+            lite=lite,
+            link=link,
             project_label=project_label_from_root(root),
             refresh_csv=str(refresh_path),
         )
