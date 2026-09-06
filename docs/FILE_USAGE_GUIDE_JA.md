@@ -1,5 +1,7 @@
 # ファイル別利用ガイド
 
+`gx3cli/gx3_index_build.py`: xref/lite構築前後の入力確認と一時SQLiteからの原子的な公開。
+
 このガイドは、初めて見る人や AI エージェントが「どのファイルを直接読むべきか」「どの CLI/MCP 入口を使うべきか」を判断するための索引です。通常はソースを直接読む前に `gx3-cli list`、`gx3-cli help <command>`、MCP `tools/list` を確認してください。
 
 ## まず使う入口

@@ -223,11 +223,138 @@ def test_lint_and_health_reject_foreign_lite_and_close_open_xref() -> None:
         moved.rename(xref)
 
 
+def test_builds_preserve_existing_index_when_inputs_change_or_population_fails() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli import gx3_xref as xref, gx3_index_lite as lite
+
+    for module, method, population in ((xref, xref.build, "_populate_xref"),
+                                       (lite, lite.build_index, "_populate_index")):
+        for failure in ("LDDB", "STDB", "before-stamp", "exception"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "project"
+                output = Path(tmp) / "index.sqlite"
+                write_program(root, [("_guid/off", generate_rung(
+                    {"device": "SM401"}, {"type": "coil", "device": "M100"})[0])])
+                with closing(sqlite3.connect(root / "002_STDB.db")) as st, st:
+                    st.execute("create table Source(Code text)")
+                    st.execute("insert into Source values ('D100 := D101;')")
+                argv = (["--root", str(root), "--db", str(output), "build"] if module is xref else
+                        ["build", "--root", str(root), "--out", str(output), "--comm-dir", tmp])
+                args = module.build_parser().parse_args(argv)
+                with redirect_stdout(io.StringIO()):
+                    method(args)
+                before = output.read_bytes()
+                original = getattr(module, population)
+                handles = []
+
+                def mutate_after_population(call_args, con):
+                    handles.append(con)
+                    if failure == "before-stamp":
+                        loader_name = "read_ladder_rows" if module is xref else "load_rows"
+                        loader = getattr(module, loader_name)
+
+                        def change_after_load(*load_args, **load_kwargs):
+                            loaded = loader(*load_args, **load_kwargs)
+                            with closing(sqlite3.connect(root / "001_LDDB.db")) as source, source:
+                                source.execute("update LadderBlocks set data=replace(data, 'a=100', 'a=101')")
+                            return loaded
+
+                        with patch.object(module, loader_name, side_effect=change_after_load):
+                            result = original(call_args, con)
+                        # This mixed artifact's stored fingerprint would pass
+                        # the former reader validation without the pre-check.
+                        assert con.execute("select value from meta where key='input_sha256'").fetchone()[0] == fingerprint(root)
+                        return result
+                    result = original(call_args, con)
+                    if failure == "exception":
+                        raise RuntimeError("injected population failure")
+                    path = root / ("001_LDDB.db" if failure == "LDDB" else "002_STDB.db")
+                    with closing(sqlite3.connect(path)) as source, source:
+                        source.execute("update LadderBlocks set data=replace(data, 'a=100', 'a=101')" if failure == "LDDB" else
+                                       "update Source set Code='D100 := D102;'")
+                    return result
+
+                with patch.object(module, population, side_effect=mutate_after_population), redirect_stdout(io.StringIO()):
+                    try:
+                        method(args)
+                    except (RuntimeError, SystemExit) as exc:
+                        assert "failure" in str(exc) or "changed" in str(exc), exc
+                    else:
+                        raise AssertionError("mixed input was published")
+                assert output.read_bytes() == before
+                assert not list(output.parent.glob("*.building"))
+                try:
+                    handles[0].execute("select 1")
+                except sqlite3.ProgrammingError:
+                    pass
+                else:
+                    raise AssertionError("staged build handle leaked")
+                with redirect_stdout(io.StringIO()):
+                    method(args)
+                with closing(sqlite3.connect(output)) as con:
+                    assert con.execute("select value from meta where key='input_sha256'").fetchone()[0] == fingerprint(root)
+
+
+def test_atomic_build_keeps_new_failures_absent_and_respects_active_wal() -> None:
+    from gx3cli.gx3_index_build import atomic_index_build
+    from test_gx3_shared_reach import write_program
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [])
+        output = Path(tmp) / "index.sqlite"
+        try:
+            with atomic_index_build(root, output):
+                raise RuntimeError("new build fails")
+        except RuntimeError:
+            pass
+        assert not output.exists()
+
+        def populate(con):
+            con.execute("create table meta(key text, value text)")
+            con.execute("insert into meta values ('input_sha256', ?)", (fingerprint(root),))
+
+        with atomic_index_build(root, output) as con:
+            populate(con)
+        with closing(sqlite3.connect(output)) as reader:
+            reader.execute("pragma journal_mode=WAL")
+            reader.execute("select * from meta").fetchall()
+            before = output.read_bytes()
+            try:
+                with atomic_index_build(root, output) as con:
+                    populate(con)
+            except SystemExit as exc:
+                assert "WAL" in str(exc), exc
+            else:
+                raise AssertionError("active WAL artifact replaced")
+            assert output.read_bytes() == before
+        assert not list(Path(tmp).glob("*.building"))
+        source = root / "001_LDDB.db"
+        source_before = source.read_bytes()
+        try:
+            with atomic_index_build(root, source):
+                raise AssertionError("source file was accepted as output")
+        except SystemExit as exc:
+            assert "overlaps" in str(exc), exc
+        assert source.read_bytes() == source_before
+        with closing(sqlite3.connect(source)) as writer:
+            writer.execute("pragma journal_mode=WAL")
+            writer.execute("select * from LadderBlocks").fetchall()
+            try:
+                with atomic_index_build(root, output):
+                    raise AssertionError("active source WAL was omitted from the fingerprint")
+            except SystemExit as exc:
+                assert "project input" in str(exc) and "WAL" in str(exc), exc
+
+
 def main() -> int:
     test_lint_and_health_reject_foreign_lite_and_close_open_xref()
     test_three_artefacts_of_one_project_agree_on_the_input()
     test_an_artefact_from_a_changed_project_no_longer_agrees()
     test_scan_order_rejects_a_foreign_xref_before_syncing_it()
+    test_builds_preserve_existing_index_when_inputs_change_or_population_fails()
+    test_atomic_build_keeps_new_failures_absent_and_respects_active_wal()
     print("same input across artefacts checks passed")
     return 0
 

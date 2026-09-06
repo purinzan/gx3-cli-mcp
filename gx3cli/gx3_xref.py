@@ -375,9 +375,18 @@ def collect_st_evidence(
 
 
 def build(args: argparse.Namespace) -> int:
+    from gx3cli.gx3_index_build import atomic_index_build
+
     root = Path(args.root)
     out = Path(args.db or default_db_path(root))
-    out.parent.mkdir(parents=True, exist_ok=True)
+    with atomic_index_build(root, out) as con:
+        result = _populate_xref(args, con)
+    print(f"xref written: {out}")
+    return result
+
+
+def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
+    root = Path(args.root)
 
     print(f"loading program map from {root} ...")
     pm = load_program_map(root)
@@ -397,7 +406,6 @@ def build(args: argparse.Namespace) -> int:
     print("parsing ladder rows ...")
     rows_by_db = read_ladder_rows(root)
 
-    con = sqlite3.connect(out)
     con.executescript(
         """
         drop table if exists xref;
@@ -606,8 +614,6 @@ def build(args: argparse.Namespace) -> int:
     stamp_decoder(con, root)
     con.execute("analyze")
     con.commit()
-    con.close()
-    print(f"xref written: {out}")
     print(f"rows={row_count} occurrences={len(records)}")
     if st_source_rows:
         print(
