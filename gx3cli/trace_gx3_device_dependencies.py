@@ -111,40 +111,58 @@ def device_key(device: str) -> tuple[str, int]:
     return parse_device(device)
 
 
-# What a driver row's own execution meaning depends on, beyond the contacts
-# folded into its condition. Each of these makes the printed condition an
-# answer to a narrower question than the reader is asking.
 TEMPORAL_DEVICE_TYPES = {"T", "ST", "C", "LT", "LC", "LST"}
 TIMER_DEVICE_TYPES = {"T", "ST", "LT", "LST"}
 COUNTER_DEVICE_TYPES = {"C", "LC"}
 
 
 def semantic_gaps(driver_rows: list[dict]) -> list[str]:
-    """What the conditions do not account for, in the words of the constructs.
+    """What the listed conditions do not account for.
 
-    `trace-device` folds contacts into a Boolean condition. That is the right
-    answer for a coil, and it is not the whole answer for anything that carries
-    state or decides whether a rung runs at all:
-
-    a jump above the row  the rung may be skipped entirely, and the targets are
-                          not resolved, so which rungs are bypassed is unknown
-    SET / RST             the condition shown is when the device is set, not
-                          when it stays set; the reset is elsewhere
-    PLS / PLF             the write happens on an edge, not while the condition
-                          holds
-    a timer or counter    the driven contact means "done", which is the
-                          condition plus elapsed time or counts
-
-    The machine-readable counterpart is kept on each driver row as
-    `temporal_predicates` / `execution_guards`. Runtime state is still not
-    invented, so these constructs remain a SEMANTICS limitation.
+    Local Boolean topology is only one layer. Stateful instructions, unresolved
+    control flow, and project-level execution zones are kept distinct so a
+    structurally exact rung cannot silently become a semantically complete
+    project answer.
     """
     gaps: list[str] = []
-    if any(row.get("cj_upstream") for row in driver_rows):
+
+    call_guards = [
+        site
+        for row in driver_rows
+        for site in (row.get("cj_upstream") or [])
+        if str(site.get("opcode", "")) == "CALL_CONTEXT"
+    ]
+    jump_guards = [
+        site
+        for row in driver_rows
+        for site in (row.get("cj_upstream") or [])
+        if str(site.get("opcode", "")) != "CALL_CONTEXT"
+    ]
+    if call_guards:
+        reasons = []
+        for site in call_guards:
+            reason = str(site.get("reason") or site.get("condition_text") or "call target unresolved")
+            if reason not in reasons:
+                reasons.append(reason)
+        sample = "; ".join(reasons[:3])
+        if len(reasons) > 3:
+            sample += f" (+{len(reasons) - 3} more)"
+        gaps.append(f"CALL/ECALL invocation context is unresolved: {sample}")
+    if jump_guards:
         gaps.append(
             "a conditional jump above a driver row may bypass it; jump targets are "
             "not resolved"
         )
+
+    # Flat mode intentionally lists occurrences rather than deriving topology.
+    # If project-level execution zones exist, saying `checked` would imply those
+    # omitted CALL/MC constraints were part of the answer. They are not.
+    if any(not row.get("strict_logic") and row.get("mc_zones") for row in driver_rows):
+        gaps.append(
+            "project execution context (MC/CALL) exists but flat trace does not fold it; "
+            "rerun with --strict-logic for the project-level write-execution predicate"
+        )
+
     roles = {role for row in driver_rows for role in (row.get("driver_roles") or [])}
     if {"SET", "RST"} & roles:
         gaps.append("SET/RST: the condition shown is when it changes, not when it holds")
@@ -173,20 +191,7 @@ def trace_state(
     gaps: list[str] | None = None,
     label_gaps: list[str] | None = None,
 ) -> AnalysisState:
-    """What this trace is worth, in the words every command uses.
-
-    Five things can be true at once and they are ranked by what to do next:
-
-        decode      part of a driver row or a label identity was not recovered
-        topology    a condition was too large to fold into one expression
-        semantics   the condition is right and does not say what makes the
-                    rung run, or what makes the value persist
-        reach       the search stopped before it was exhausted
-
-    Structural `parse_status='exact'` is intentionally not proof of semantic
-    correctness. A row can have an exact operation/element shape and still have
-    an unresolved label or an unmodelled timer, counter, edge, latch or jump.
-    """
+    """What this trace is worth, in the common analysis-state vocabulary."""
     found: list[tuple[str, str, str, str]] = []
     if partial_rows:
         found.append((
@@ -251,14 +256,7 @@ def device_comment(device: str, comments: dict[tuple[str, int], CommentInfo]) ->
 
 
 def resolve_label_occurrences(rows: list[LadderRow], labels: LabelResolver) -> None:
-    """Give row-level occurrences the same label identity as canonical decode.
-
-    `review_gx3_project.load_rows()` predates LabelData support and therefore
-    leaves `_lid/...` as the occurrence identity. Trace uses those occurrences
-    to build its driver index. Resolve only the label occurrences here; the
-    ladder topology itself is rebuilt below through `row_logic_analysis(...,
-    labels)` so both views share the same resolver without duplicating a parser.
-    """
+    """Give row-level occurrences the same label identity as canonical decode."""
     for row in rows:
         for occ in row.occurrences:
             if occ.device_type != "LABEL" or not str(occ.device).startswith("_lid/"):
@@ -378,28 +376,28 @@ def temporal_predicates(
 
 
 def execution_guards(row_jumps: list[Any]) -> list[dict[str, Any]]:
-    """Control-flow facts known above this row; unresolved means exactly that."""
-    return [
-        {
-            "kind": "conditional_jump_unresolved",
+    """Machine-readable unresolved execution context for this row."""
+    out: list[dict[str, Any]] = []
+    for site in row_jumps:
+        is_call = site.opcode == "CALL_CONTEXT"
+        record: dict[str, Any] = {
+            "kind": "call_context_unresolved" if is_call else "conditional_jump_unresolved",
             "opcode": site.opcode,
             "pos": site.pos,
             "condition": site.condition_text,
             "target_resolved": False,
         }
-        for site in row_jumps
-    ]
+        if getattr(site, "reason", ""):
+            record["reason"] = site.reason
+        if getattr(site, "start_pos", None) is not None:
+            record["scope_start_pos"] = site.start_pos
+            record["scope_end_pos"] = site.end_pos
+        out.append(record)
+    return out
 
 
 def driver_index(rows: list[LadderRow], include_reset: bool = True) -> dict[str, list[LadderRow]]:
-    """Rows that decide a device's value, by device.
-
-    A coil drives a bit. A word device is not driven -- a value is put into it
-    -- so filtering on coil roles alone meant `trace-device D900` answered
-    "driver_rows=0, truncated=False": nothing decides this, as a complete
-    answer, about a device a MOV writes every scan. An instruction that writes
-    is as much the reason a device holds what it holds as a coil is.
-    """
+    """Rows that decide a device's value, by device."""
     roles = DRIVER_ROLES if include_reset else ON_DRIVER_ROLES
     index: dict[str, list[LadderRow]] = defaultdict(list)
     for row in rows:
@@ -568,8 +566,11 @@ def build_trace(
     resolve_label_occurrences(rows, labels)
     drivers = driver_index(rows, include_reset=include_reset)
     counts = occurrence_counts(rows)
-    mc_zones = build_mc_zones(rows)
-    jump_index = build_jump_index(rows)
+    # Pass the same per-project resolver into the control-flow layer explicitly.
+    # Its row-evidence fallback remains for older callers, but trace never needs
+    # hidden process-global state or a second LabelData read.
+    mc_zones = build_mc_zones(rows, labels)
+    jump_index = build_jump_index(rows, labels)
     comm_prefix = default_comm_prefix()
     refresh_areas = load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
     unit_io_areas = load_unit_io_areas(Path(f"{comm_prefix}_units.csv"))
@@ -934,6 +935,33 @@ def format_cross_links(links: list[dict[str, str]], limit: int = 3) -> str:
     return shown + (f" +{more}" if more > 0 else "")
 
 
+def format_execution_zone(zone: dict[str, Any], indent: str = "") -> str:
+    end = zone.get("end_pos")
+    if zone.get("kind") == "call_invocation":
+        pointer = zone.get("pointer")
+        return (
+            f"{indent}call_invocation: P{pointer} "
+            f"pos {zone.get('start_pos')}..{end if end is not None else 'END'} "
+            f"condition={zone.get('condition_text')}"
+        )
+    return (
+        f"{indent}mc_zone: N{zone.get('nesting')} relay={zone.get('relay') or '?'} "
+        f"pos {zone.get('start_pos')}..{end if end is not None else 'END'} "
+        f"condition={zone.get('condition_text')}"
+    )
+
+
+def format_execution_guard(site: dict[str, Any], indent: str = "") -> str:
+    if site.get("opcode") == "CALL_CONTEXT":
+        reason = site.get("reason") or site.get("condition_text") or "unresolved call context"
+        return f"{indent}call_context: {reason} (row execution not fully resolved)"
+    return (
+        f"{indent}cj_upstream: {site.get('opcode')}@{site.get('pos')} "
+        f"condition={site.get('condition_text')} "
+        "(jump target not resolved; row execution not guaranteed)"
+    )
+
+
 def format_text(trace: dict[str, Any]) -> str:
     lines: list[str] = []
     target = trace["target"]
@@ -963,7 +991,7 @@ def format_text(trace: dict[str, Any]) -> str:
     if trace.get("strict_logic"):
         lines.append("Note: enable_logic is the topology-derived condition from the left rail to the target output.")
     else:
-        lines.append("Note: conditions is a flat device list. Use --strict-logic for topology-derived AND/OR.")
+        lines.append("Note: conditions is a flat device list. Use --strict-logic for topology-derived AND/OR and execution-zone folding.")
     if trace["stats"].get("partial_driver_rows", 0):
         lines.append(
             "Warning: trace includes partial-parse driver rows; conditions/instruction refs may be incomplete. "
@@ -1005,18 +1033,9 @@ def format_text(trace: dict[str, Any]) -> str:
                     f"device={predicate.get('device', '')} runtime_state_required"
                 )
             for zone in row.get("mc_zones", []):
-                end = zone.get("end_pos")
-                lines.append(
-                    f"{indent}    mc_zone: N{zone.get('nesting')} relay={zone.get('relay') or '?'} "
-                    f"pos {zone.get('start_pos')}..{end if end is not None else 'END'} "
-                    f"condition={zone.get('condition_text')}"
-                )
+                lines.append(format_execution_zone(zone, f"{indent}    "))
             for site in row.get("cj_upstream", []):
-                lines.append(
-                    f"{indent}    cj_upstream: {site.get('opcode')}@{site.get('pos')} "
-                    f"condition={site.get('condition_text')} "
-                    "(jump target not resolved; row execution not guaranteed)"
-                )
+                lines.append(format_execution_guard(site, f"{indent}    "))
             if row["conditions"]:
                 lines.append(f"{indent}    conditions:")
                 for cond in row["conditions"]:
@@ -1226,12 +1245,25 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
                     f"    temporal: {predicate.get('kind')} device={predicate.get('device', '')}"
                 )
             for zone in row.get("mc_zones", []):
-                label_mc = "MCゾーン内" if ja else "inside MC zone"
-                lines.append(f"    {label_mc}: N{zone.get('nesting')} relay={zone.get('relay') or '?'} condition={zone.get('condition_text')}")
-            if row.get("cj_upstream"):
-                sites = ", ".join(f"{s.get('opcode')}@{s.get('pos')}" for s in row.get("cj_upstream", []))
-                label_cj = "上流に条件ジャンプあり(実行保証なし)" if ja else "conditional jump upstream (execution not guaranteed)"
-                lines.append(f"    {label_cj}: {sites}")
+                if zone.get("kind") == "call_invocation":
+                    call_label = "CALL呼出条件" if ja else "CALL invocation"
+                    lines.append(
+                        f"    {call_label}: P{zone.get('pointer')} condition={zone.get('condition_text')}"
+                    )
+                else:
+                    label_mc = "MCゾーン内" if ja else "inside MC zone"
+                    lines.append(
+                        f"    {label_mc}: N{zone.get('nesting')} relay={zone.get('relay') or '?'} "
+                        f"condition={zone.get('condition_text')}"
+                    )
+            for site in row.get("cj_upstream", []):
+                if site.get("opcode") == "CALL_CONTEXT":
+                    call_gap = "CALL呼出文脈未解決" if ja else "CALL invocation unresolved"
+                    reason = site.get("reason") or site.get("condition_text") or ""
+                    lines.append(f"    {call_gap}: {reason}")
+                else:
+                    label_cj = "上流に条件ジャンプあり(実行保証なし)" if ja else "conditional jump upstream (execution not guaranteed)"
+                    lines.append(f"    {label_cj}: {site.get('opcode')}@{site.get('pos')}")
         if len(active_rows) > row_limit:
             lines.append(f"  ... {len(active_rows) - row_limit} {label['more_active']}")
         lines.append("")
@@ -1239,6 +1271,10 @@ def format_compact(trace: dict[str, Any], row_limit: int = 8, condition_limit: i
         lines.append(f"{label['driver_rows']}:")
         for row in fallback_rows[:row_limit]:
             lines.append(f"  - {format_row_summary(row)}")
+            for site in row.get("cj_upstream", []):
+                if site.get("opcode") == "CALL_CONTEXT":
+                    reason = site.get("reason") or site.get("condition_text") or ""
+                    lines.append(f"    CALL invocation unresolved: {reason}")
         if len(fallback_rows) > row_limit:
             lines.append(f"  ... {len(fallback_rows) - row_limit} {label['more_rows']}")
         lines.append("")
