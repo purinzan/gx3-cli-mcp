@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Workspace health check for the GX3 analysis CLI."""
+"""Workspace health check plus project maintainability Doctor mode."""
 
 import argparse
 import importlib.util
@@ -94,7 +94,12 @@ def check_runtime(checks: list[Check], index_dir: Path) -> None:
     add(checks, "platform", "OK", platform.platform())
     add(checks, "cwd", "OK", str(Path.cwd()))
     add(checks, "index-dir", "OK" if index_dir.exists() else "WARN", str(index_dir))
-    add(checks, "index-db-count", "OK" if index_dir.exists() else "WARN", str(len(list(index_dir.glob('*.sqlite'))) if index_dir.exists() else 0))
+    add(
+        checks,
+        "index-db-count",
+        "OK" if index_dir.exists() else "WARN",
+        str(len(list(index_dir.glob("*.sqlite"))) if index_dir.exists() else 0),
+    )
     root_env = os.environ.get("PROJECT_ROOT") or os.environ.get("GX3_ROOT") or ""
     add(checks, "root-env", "OK" if root_env else "WARN", root_env or "PROJECT_ROOT/GX3_ROOT not set")
     tools = archive_tool_candidates()
@@ -185,14 +190,35 @@ def print_checks(checks: list[Check]) -> None:
         print(f"{check.status:<5} {check.name:<{width}}  {check.detail}")
 
 
+def _project_health_args(argv: list[str]) -> list[str] | None:
+    """Strip the mode flag and forward the rest to the audit health layer."""
+    if "--project-health" not in argv:
+        return None
+    return [arg for arg in argv if arg != "--project-health"]
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check GX3 CLI scripts, project root, indexes, and link-map readiness.")
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    health_argv = _project_health_args(raw_argv)
+    if health_argv is not None:
+        from gx3cli.gx3_audit import project_health_main
+
+        return project_health_main(health_argv)
+
+    parser = argparse.ArgumentParser(
+        description="Check GX3 CLI workspace readiness. Use --project-health for project maintainability diagnosis."
+    )
     parser.add_argument("--root", default=str(default_project_root(BASE_DIR)), help="extracted project root")
     parser.add_argument("--index-dir", default=".gx3_index", help="index directory")
     parser.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="cross-project link-map DB")
     parser.add_argument("--warn-only", action="store_true", help="return 0 even when ERROR checks exist")
     parser.add_argument("--no-script-check", action="store_true", help="skip command script presence checks")
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--project-health",
+        action="store_true",
+        help="run the cross-project maintainability Doctor instead of workspace readiness checks",
+    )
+    args = parser.parse_args(raw_argv)
 
     raw_root = Path(args.root)
     label = project_label_from_root(raw_root)
