@@ -120,22 +120,30 @@ def candidate_dirs(root: Path) -> list[Path]:
 
 def meta_of(path: Path) -> dict[str, str] | None:
     """The meta table of a database, {} if unreadable, None if not there."""
+    return _metadata_and_schema(path)[0]
+
+
+def _metadata_and_schema(path: Path, kind: str | None = None) -> tuple[dict[str, str] | None, list[str]]:
+    """Read identity and structure on one handle; no validation/reopen gap."""
     if not path.exists():
-        return None
+        return None, []
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error:
-        return {}
+        return {}, []
     try:
-        return {str(key): str(value) for key, value in con.execute("select key, value from meta")}
+        meta = {str(key): str(value) for key, value in con.execute("select key, value from meta")}
+        from gx3cli.gx3_index_contract import schema_gaps
+
+        return meta, schema_gaps(con, kind) if kind is not None else []
     except sqlite3.Error:
-        return {}
+        return {}, []
     finally:
         con.close()
 
 
 def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
-    meta = meta_of(path)
+    meta, gaps = _metadata_and_schema(path, kind)
     if meta is None:
         return Artefact(kind, path, MISSING, "not built yet")
     if not meta:
@@ -172,6 +180,8 @@ def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
     version = meta.get("analyzer_version", "")
     if version and version != package_version():
         return Artefact(kind, path, OLD_BUILD, f"built by {version}, this is {package_version()}")
+    if gaps:
+        return Artefact(kind, path, UNREADABLE, "; ".join(gaps))
     return Artefact(kind, path, READY, f"input {short(stored_input)}")
 
 

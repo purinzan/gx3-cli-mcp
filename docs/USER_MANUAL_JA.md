@@ -212,6 +212,12 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+root付きのxref/lite照会は、版と入力指紋に加えて用途に必要な表・列も検証します。
+欠損時は再構築を案内し、workspaceのprepareは壊れた側の索引だけを再構築します。
+xrefの基本照会に値フロー表は必須ではありません。外部境界のみを読む処理も、その表の
+契約だけを要求します。全workspaceの再利用判定は全表を確認します。追加表・追加列は許可します。
+これは保存形式の検証であり、保存行の完全性やSTを含む元プログラムの解釈範囲とは別です。
+
 dead-logic / trace / Doctorのconstant-chainは、保存された外部境界分類の共通readerを使います。
 境界DBが未取得・壊れている・別入力・必要表欠損なら、「外部デバイス0件」とみなさず、
 境界に依存する判定や定数pruningを未評価にします。dead-logicはCSVに加えて

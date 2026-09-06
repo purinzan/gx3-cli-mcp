@@ -81,7 +81,7 @@ def lite_db_path(root: Path) -> Path:
 
 def load_external_devices(path: Path, root: Path | None = None) -> dict[str, str]:
     """Compatibility wrapper over the validated reader; unavailable raises."""
-    with closing(open_existing(path, root=root)) as con:
+    with closing(open_existing(path, root=root, required_tables=("external_sources",))) as con:
         return external_sources_from(con)
 
 

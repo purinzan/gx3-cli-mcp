@@ -64,11 +64,9 @@ def test_the_ladder_the_comments_and_the_parameters_all_count() -> None:
 
 
 def make_stamped_xref(path: Path, root: Path) -> None:
-    con = sqlite3.connect(path)
-    con.execute("create table xref (id integer primary key, device text)")
-    stamp_decoder(con, root)
-    con.commit()
-    con.close()
+    from gx3cli.gx3_xref import main as xref_main
+
+    assert xref_main(["--root", str(root), "--db", str(path), "build"]) == 0
 
 
 def test_a_database_built_from_another_project_is_refused() -> None:
