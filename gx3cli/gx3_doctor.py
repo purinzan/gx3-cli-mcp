@@ -191,11 +191,7 @@ def print_checks(checks: list[Check]) -> None:
 
 
 def _project_health_args(argv: list[str]) -> list[str] | None:
-    """Strip the mode flag and forward the rest to gx3_project_health.
-
-    Keeping this before the workspace-health parser lets the project-health mode
-    have its own output flags without growing two overlapping argparse schemas.
-    """
+    """Strip the mode flag and forward the rest to the audit health layer."""
     if "--project-health" not in argv:
         return None
     return [arg for arg in argv if arg != "--project-health"]
@@ -205,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     health_argv = _project_health_args(raw_argv)
     if health_argv is not None:
-        from gx3cli.gx3_project_health import main as project_health_main
+        from gx3cli.gx3_audit import project_health_main
 
         return project_health_main(health_argv)
 
