@@ -215,7 +215,7 @@ def test_timing_chart_reads_the_same_way() -> None:
 
 
 # #139: constants proved elsewhere in the project also simplify normal coil
-# tracing.  These regressions are about which upstream conditions still matter
+# tracing. These regressions are about which upstream conditions still matter
 # to the ON question, not about declaring live PLC state.
 def _contact(device: str, role: str = "a", position: str = "0,0") -> dict:
     return {
@@ -345,6 +345,16 @@ def test_public_trace_dispatch_prunes_refs_before_canonical_bfs_queue() -> None:
     assert stats["raw_refs"] == 3, stats
     assert stats["kept_refs"] == 1, stats
     assert stats["raw_refs"] - stats["kept_refs"] == 2, stats
+
+
+def test_postfilter_row_key_includes_the_driven_device() -> None:
+    from gx3cli.trace_gx3_device_dependencies import _row_device_key
+
+    y0_row = {"row_id": "P1:10", "device": "Y0"}
+    y1_row = {"row_id": "P1:10", "device": "Y1"}
+    assert _row_device_key(y0_row) != _row_device_key(y1_row)
+    assert _row_device_key({"row_id": "P1:10", "from_device": "Y0"}) == _row_device_key(y0_row)
+    assert _row_device_key({"row_id": "P1:10", "from_device": "Y1"}) == _row_device_key(y1_row)
 
 
 def main() -> int:
