@@ -348,15 +348,24 @@ def test_an_empty_label_file_means_no_labels() -> None:
         assert load_label_resolver(work / "p").status == LABELS_ABSENT
 
 
-def test_an_unresolved_label_token_is_remembered() -> None:
-    from gx3cli.gx3_label_resolve import EMPTY
+def test_an_unresolved_label_token_is_remembered_without_leaking_to_the_next_project() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        first = work / "first"
+        second = work / "second"
+        first.mkdir()
+        second.mkdir()
 
-    resolver = EMPTY
-    resolver.unresolved.clear()
-    assert resolver.resolve_token("_lid/TableA/7") is None
-    assert "_lid/TableA/7" in resolver.unresolved
-    assert resolver.resolve_token("D100") is None
-    assert "D100" not in resolver.unresolved
+        resolver_a = load_label_resolver(first)
+        assert resolver_a.resolve_token("_lid/TableA/7") is None
+        assert "_lid/TableA/7" in resolver_a.unresolved
+        assert resolver_a.resolve_token("D100") is None
+        assert "D100" not in resolver_a.unresolved
+
+        resolver_b = load_label_resolver(second)
+        assert resolver_b is not resolver_a
+        assert resolver_b.status == LABELS_ABSENT
+        assert resolver_b.unresolved == set(), resolver_b.unresolved
 
 
 def main() -> int:
@@ -378,7 +387,7 @@ def main() -> int:
     test_no_label_database_is_not_a_failure()
     test_a_schema_this_build_does_not_know_is_reported_not_fatal()
     test_an_empty_label_file_means_no_labels()
-    test_an_unresolved_label_token_is_remembered()
+    test_an_unresolved_label_token_is_remembered_without_leaking_to_the_next_project()
     print("input trust checks passed")
     return 0
 
