@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
-from gx3cli.gx3_xref import default_db_path, normalize_device
+from gx3cli.gx3_xref import default_db_path, normalize_device, open_xref_db
 
 
 DEVICE_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
@@ -150,8 +150,7 @@ def span_length(row: sqlite3.Row) -> int:
 def load_project_devices(spec: ProjectSpec) -> dict[str, DeviceInfo]:
     if not spec.db.exists():
         raise SystemExit(f"xref db not found for {spec.label}: {spec.db}")
-    con = sqlite3.connect(spec.db)
-    con.row_factory = sqlite3.Row
+    con = open_xref_db(spec.db, read_only=True, root=spec.root)
     devices: dict[str, DeviceInfo] = {}
 
     def ensure(device: str, device_type: str, number: int) -> DeviceInfo:
@@ -161,27 +160,29 @@ def load_project_devices(spec: ProjectSpec) -> dict[str, DeviceInfo]:
             devices[device] = info
         return info
 
-    for row in con.execute(
-        """
-        select id, device, device_type, number, access, role, opcode, arg_index,
-               const_args, lddb, pos, title, comment
-        from xref
-        where access in ('read', 'write', 'both')
-        order by id
-        """
-    ):
-        device = str(row["device"])
-        device_type = str(row["device_type"]).upper()
-        number = int(row["number"])
-        evidence = f"{row['lddb']}:{row['pos']}:{row['opcode'] or row['role']}:{row['access']}"
-        merge_info(ensure(device, device_type, number), row, evidence)
+    try:
+        for row in con.execute(
+            """
+            select id, device, device_type, number, access, role, opcode, arg_index,
+                   const_args, lddb, pos, title, comment
+            from xref
+            where access in ('read', 'write', 'both')
+            order by id
+            """
+        ):
+            device = str(row["device"])
+            device_type = str(row["device_type"]).upper()
+            number = int(row["number"])
+            evidence = f"{row['lddb']}:{row['pos']}:{row['opcode'] or row['role']}:{row['access']}"
+            merge_info(ensure(device, device_type, number), row, evidence)
 
-        length = span_length(row)
-        if device_type in {"W", "D"} and length > 1:
-            for offset in range(1, length):
-                expanded = device_name(device_type, number + offset)
-                merge_info(ensure(expanded, device_type, number + offset), row, evidence + f"+{offset}", use_comment=False)
-    con.close()
+            length = span_length(row)
+            if device_type in {"W", "D"} and length > 1:
+                for offset in range(1, length):
+                    expanded = device_name(device_type, number + offset)
+                    merge_info(ensure(expanded, device_type, number + offset), row, evidence + f"+{offset}", use_comment=False)
+    finally:
+        con.close()
     return devices
 
 
@@ -441,12 +442,8 @@ def directionally_valid(a: DeviceInfo, b: DeviceInfo, adjacencies: set[tuple[str
     if explicit_peer_marker(source, dest.project) or explicit_peer_marker(dest, source.project):
         conflict = False
         if (source.project, dest.project) in adjacencies and reads_from_next(dest.comment):
-            # dest is downstream of source, yet its comment says the value
-            # comes from the next process.
             conflict = True
         elif (dest.project, source.project) in adjacencies and reads_from_previous(dest.comment):
-            # dest is upstream of source, yet its comment says the value
-            # comes from the previous process.
             conflict = True
         return True, conflict
     if (source.project, dest.project) in adjacencies:
