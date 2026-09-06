@@ -32,7 +32,6 @@ def test_eval_and_or() -> None:
     assert eval_node(node, {"dev:M1": True, "dev:M2": False}) is True
     assert eval_node(node, {"dev:M1": True, "dev:M2": True}) is False
     assert eval_node(node, {"dev:M1": True}) is None
-    # short-circuit works on partial assignment
     assert eval_node(node, {"dev:M2": True}) is False
 
 
@@ -64,7 +63,7 @@ def test_collect_vars_counts_predicates_once_per_form() -> None:
     counter: Counter[str] = Counter()
     collect_vars(node, counter)
     keys = [k for k in counter if k.startswith("predicate:")]
-    assert len(keys) == 1  # same predicate shares one variable through the not-wrapper
+    assert len(keys) == 1
 
 
 def synthetic_row(logic: dict, output: dict, pos: int, role: str | None = None) -> LadderRow:
@@ -75,12 +74,18 @@ def synthetic_row(logic: dict, output: dict, pos: int, role: str | None = None) 
     return LadderRow("SYNTH_LDDB.db", pos, "{x}", "", 0, rowsize, data, "", [], "exact")
 
 
-def call_row(contact_number: int, pointer: int, pos: int, device_type: str = "M") -> LadderRow:
-    """A real-shaped CALL row, based on the corpus regression CALL #P240 row."""
+def call_row(
+    contact_number: int,
+    pointer: int,
+    pos: int,
+    device_type: str = "M",
+    opcode: str = "CALL",
+) -> LadderRow:
+    """A real-shaped CALL/ECALL row based on the corpus CALL #P240 row."""
     from test_gx3_operand_alignment import POINTER_ROW
 
     data = POINTER_ROW
-    data = data.replace("a:M:CALL:P:D", f"a:{device_type}:CALL:P:D", 1)
+    data = data.replace("a:M:CALL:P:D", f"a:{device_type}:{opcode}:P:D", 1)
     data = data.replace("a=100", f"a={contact_number}", 1)
     data = data.replace("a=240", f"a={pointer}", 1)
     return LadderRow("SYNTH_LDDB.db", pos, "{call}", "", 0, 1, data, "4x1", [], "exact")
@@ -88,9 +93,6 @@ def call_row(contact_number: int, pointer: int, pos: int, device_type: str = "M"
 
 def pointer_row(pointer: int, condition_device: str, output_device: str, pos: int) -> LadderRow:
     row = synthetic_row({"device": condition_device}, {"type": "coil", "device": output_device}, pos)
-    # parse_pointers() reads the same p{...} record GX stores beside a rung.
-    # Keeping it outside the generated element list avoids changing the rung
-    # topology under test; the pointer is a label, not a conduction element.
     row.data += f":p{{s=d{{s=#:a={pointer}:vt=nn}}:pos=0,0}}"
     return row
 
@@ -187,6 +189,32 @@ def test_missing_ret_is_explicit_unresolved_execution_context() -> None:
     assert any("no following RET" in site.condition_text for site in sites), sites
 
 
+def test_missing_pointer_definition_marks_the_whole_call_lddb_unresolved() -> None:
+    from gx3cli.gx3_mc_zones import build_jump_index, jumps_before
+
+    before = synthetic_row({"device": "M1"}, {"type": "coil", "device": "M101"}, 0)
+    call = call_row(10, 999, 1024)
+    after = synthetic_row({"device": "M2"}, {"type": "coil", "device": "M102"}, 2048)
+    index = build_jump_index([before, call, after])
+    for row in (before, after):
+        sites = jumps_before(index, row.lddb, row.pos)
+        assert any(site.opcode == "CALL_CONTEXT" for site in sites), (row.pos, sites)
+        assert any("no pointer definition" in site.condition_text for site in sites), sites
+
+
+def test_ecall_without_a_target_marks_other_programs_unresolved_too() -> None:
+    from gx3cli.gx3_mc_zones import build_jump_index, jumps_before
+
+    ecall = call_row(10, 777, 0, opcode="ECALL")
+    other = synthetic_row({"device": "M3"}, {"type": "coil", "device": "M103"}, 1024)
+    other.lddb = "OTHER_LDDB.db"
+    index = build_jump_index([ecall, other])
+    sites = jumps_before(index, other.lddb, other.pos)
+    assert any(site.opcode == "CALL_CONTEXT" for site in sites), sites
+    assert any("ECALL P777" in site.condition_text for site in sites), sites
+    assert any("no matching P definition" in site.condition_text for site in sites), sites
+
+
 def test_recursive_call_keeps_known_entry_but_marks_context_unresolved() -> None:
     from gx3cli.gx3_mc_zones import build_jump_index, jumps_before
 
@@ -194,11 +222,9 @@ def test_recursive_call_keeps_known_entry_but_marks_context_unresolved() -> None
     recursive = call_row(30, 240, 1536)
     rows = [call_row(10, 240, 0), sub, recursive, ret_row(2048)]
 
-    # The known external entry is still useful evidence.
     text = combined_logic_text(rows, sub, "M100")
     assert "[M10]" in text and "[M20]" in text, text
 
-    # But recursion means the project-level execution model is not complete.
     sites = jumps_before(build_jump_index(rows), sub.lddb, sub.pos)
     assert any(site.opcode == "CALL_CONTEXT" for site in sites), sites
     assert any("recursive/cyclic" in site.condition_text for site in sites), sites
