@@ -146,8 +146,6 @@ def command_group_lines() -> list[str]:
         if not names:
             continue
         lines.append(f"  {category}:")
-        # Wrapped rather than one per line: sixty-odd commands one to a line
-        # buries the rest of the help.
         line = "   "
         for name in names:
             if len(line) + len(name) + 2 > 76:
@@ -161,8 +159,6 @@ def command_group_lines() -> list[str]:
 def python_env(root: str | None = None) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    # Ensure the package is importable when running from a source checkout that
-    # is not pip-installed. Harmless (site-packages parent) when installed.
     existing = env.get("PYTHONPATH", "")
     parent = str(PACKAGE_PARENT)
     if parent not in existing.split(os.pathsep):
@@ -175,29 +171,16 @@ def python_env(root: str | None = None) -> dict[str, str]:
 
 
 def module_argv(module: str, args: list[str]) -> list[str]:
-    """argv to run a sibling command module as `python -m gx3cli.<module>`.
-
-    Use this instead of building a path to a `.py` file: after packaging, running
-    a package file as a loose script has no import context and fails.
-    """
     return [sys.executable, "-m", f"{PACKAGE}.{module}", *args]
 
 
 def cli_argv(args: list[str]) -> list[str]:
-    """argv to re-invoke this dispatcher as `python -m gx3cli.gx3_cli ...`."""
     if getattr(sys, "frozen", False):
         return [sys.executable, *args]
     return module_argv("gx3_cli", args)
 
 
 def run_module_in_process(module_name: str, args: list[str]) -> int:
-    """Run a command module inside a PyInstaller-frozen gx3-cli.exe.
-
-    Frozen apps cannot safely re-enter themselves with ``-m gx3cli.module``.
-    Import the bundled module and call its main function with a temporary
-    ``sys.argv`` instead.
-    """
-
     module = importlib.import_module(f"{PACKAGE}.{module_name}")
     main_func = getattr(module, "main", None)
     if main_func is None:
@@ -222,12 +205,6 @@ def run_module_in_process(module_name: str, args: list[str]) -> int:
 
 
 def run_python_script(script: str, args: list[str], root: str | None = None) -> int:
-    """Run a sibling command module as `python -m gx3cli.<module>`.
-
-    ``script`` is kept as a filename (e.g. "gx3_lint.py") for backward-compatible
-    command specs; the module name is derived from it. cwd is inherited from the
-    caller so reports/index files land in the user's working directory.
-    """
     module_name = script[:-3] if script.endswith(".py") else script
     if getattr(sys, "frozen", False):
         return run_module_in_process(module_name, args)
@@ -746,7 +723,96 @@ def print_command_help(args: list[str]) -> int:
     return 2
 
 
-NO_PROJECT_COMMANDS = {"list", "version", "help"}
+# Commands whose execution does not auto-select one GX3 project from the cwd.
+# They either do no project analysis, or require their own explicit input(s).
+NO_PROJECT_COMMANDS = {
+    "list",
+    "help",
+    "mcp-server",
+    "live-read",
+    "synthetic-project",
+    "failure-corpus",
+    "gtx-probe",
+    "link-map",
+}
+
+# Only these commands accept GX3 projects as positional arguments. A `.gx3`
+# string elsewhere (for example an output file option) must never suppress the
+# ambiguity guard for a command that would otherwise auto-detect a root.
+POSITIONAL_PROJECT_COUNTS = {
+    "review": 1,
+    "lint": 1,
+    "semantic-diff": 2,
+    "change-impact": 2,
+    "diff": 2,
+}
+
+
+def _looks_like_explicit_project(value: str) -> bool:
+    if value.startswith("-"):
+        return False
+    path = Path(value)
+    if value.lower().endswith(".gx3"):
+        return True
+    try:
+        return is_extracted_gx3_root(path)
+    except OSError:
+        return False
+
+
+def _has_explicit_positional_projects(command: str, rest: list[str]) -> bool:
+    required = POSITIONAL_PROJECT_COUNTS.get(command)
+    if required is None:
+        return False
+    return sum(1 for item in rest if _looks_like_explicit_project(item)) >= required
+
+
+def _index_project_roots(base: Path | None = None) -> list[Path]:
+    """All existing project roots named by local index/xref metadata.
+
+    `default_project_root()` historically chose the newest index DB. The CLI's
+    ambiguity guard must see every distinct root those DBs point at before that
+    fallback can happen, otherwise two internally valid indexes still become a
+    silent newest-file guess.
+    """
+    base = (base or Path.cwd()).resolve()
+    index_dir = base / ".gx3_index"
+    if not index_dir.is_dir():
+        return []
+    seen: dict[Path, None] = {}
+    for db in sorted(index_dir.glob("*.sqlite")):
+        con: sqlite3.Connection | None = None
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            row = con.execute("select value from meta where key='root'").fetchone()
+        except sqlite3.Error:
+            continue
+        finally:
+            if con is not None:
+                con.close()
+        if not row or not row[0]:
+            continue
+        raw = Path(str(row[0])).expanduser()
+        candidate = raw if raw.is_absolute() else base / raw
+        if not candidate.exists():
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        seen.setdefault(resolved, None)
+    return list(seen)
+
+
+def _all_candidate_roots(base: Path | None = None) -> list[Path]:
+    seen: dict[Path, None] = {}
+    for path in [*candidate_roots(base), *_index_project_roots(base)]:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        seen.setdefault(resolved, None)
+    return list(seen)
 
 
 def ambiguous_project(command: str, rest: list[str]) -> str:
@@ -759,18 +825,10 @@ def ambiguous_project(command: str, rest: list[str]) -> str:
         return ""
     if first_env(ROOT_ENV, LEGACY_ROOT_ENV):
         return ""
-    if any(item.lower().endswith(".gx3") for item in rest):
+    if _has_explicit_positional_projects(command, rest):
         return ""
-    for item in rest:
-        if item.startswith("-"):
-            continue
-        try:
-            if is_extracted_gx3_root(Path(item)):
-                return ""
-        except OSError:
-            continue
 
-    candidates = candidate_roots()
+    candidates = _all_candidate_roots()
     if len(candidates) < 2:
         return ""
     listed = chr(10).join(f"  {path}" for path in candidates[:10])
