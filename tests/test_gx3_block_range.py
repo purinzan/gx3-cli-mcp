@@ -143,6 +143,23 @@ def test_block_add_writes_d_and_covers_all_three_blocks() -> None:
     assert spans["D300"] == ("write", 5), spans
 
 
+def test_an_indexed_block_source_is_not_materialized_as_a_static_run() -> None:
+    indexed = ROW.replace(
+        ":BMOV:D:D:K_1:",
+        ":BMOV:D:Zs:D:K_1:",
+    ).replace(
+        "d{s=#:a=64060:vt=nn}:d{s=#:a=64061:vt=nn}",
+        "M{b=d{s=#:a=64060:vt=nn}:m=d{s=#:a=2:vt=nn}}:d{s=#:a=64061:vt=nn}",
+    )
+    operations, status = parse_row_occurrences(indexed)
+    assert status == "exact", status
+    bmov = next(entry for entry in operations if entry[1] == "BMOV")
+    spans = {occ.device: (occ.access, occ.range_len) for occ in bmov[2]}
+    assert spans["D64060"] == ("read", 1), spans
+    assert spans["Z2"] == ("read", 1), spans
+    assert spans["D64061"] == ("write", 4), spans
+
+
 def test_an_instruction_with_no_count_operand_is_left_alone() -> None:
     # MOV takes (s) and (d); no "(n)", so nothing to span.
     assert block_span("MOV", ["d{s=#:a=1:vt=nn}", "d{s=#:a=2:vt=nn}"]) == (1, "")
@@ -200,13 +217,11 @@ def decoder_generation(stamp: str) -> int:
 
 
 def test_the_stamp_moved_with_the_change() -> None:
-    # Existing databases have no range_len, so they answer the old way; the
-    # decoder version is what stops them being read as if they did.
-    #
-    # Asserted as "at least", not as a literal: every later coverage change
-    # moves this stamp too, and a test that pins the exact string turns each
-    # of those into a failure that says nothing.
-    assert decoder_generation(XREF_DECODER) >= 3, XREF_DECODER
+    # Count-unit semantics change persisted physical coverage even when the GX3
+    # input fingerprint stayed the same, so old xref databases must be rebuilt.
+    # Asserted as "at least", not as a literal: later coverage changes move the
+    # stamp too without making this test meaningless.
+    assert decoder_generation(XREF_DECODER) >= 5, XREF_DECODER
 
 
 def add_index_device(con: sqlite3.Connection, device: str, device_type: str, number: int) -> None:
@@ -303,6 +318,7 @@ def main() -> int:
     test_a_double_word_fill_multiplies_element_count_by_width()
     test_word_to_byte_and_byte_to_word_use_physical_word_spans()
     test_block_add_writes_d_and_covers_all_three_blocks()
+    test_an_indexed_block_source_is_not_materialized_as_a_static_run()
     test_an_instruction_with_no_count_operand_is_left_alone()
     test_a_count_held_in_a_device_is_reported_as_unknown()
     test_a_search_finds_the_device_the_run_writes_without_naming()
