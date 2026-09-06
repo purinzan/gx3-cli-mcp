@@ -86,6 +86,10 @@ class LabelResolver:
         # Tokens asked for and not found. A caller that shows a rung can say
         # "this name could not be resolved" instead of printing the raw token
         # as though it were the answer.
+        #
+        # This is intentionally per-resolver state. An MCP server can analyse
+        # several projects in one process, so unresolved evidence from one
+        # project must never appear on another project's resolver.
         self.unresolved: set[str] = set()
 
     @property
@@ -140,7 +144,14 @@ def split_label_token(token: str) -> tuple[str, int] | None:
         return None
 
 
-EMPTY = LabelResolver({}, status=LABELS_ABSENT)
+def empty_resolver() -> LabelResolver:
+    """Return a fresh resolver for a project that has no label database.
+
+    This used to be a module-level `EMPTY` singleton. `resolve_token()` records
+    unresolved evidence, so reusing that object let one project's missing
+    labels accumulate into the next analysis in a long-lived process.
+    """
+    return LabelResolver({}, status=LABELS_ABSENT)
 
 
 def unreadable(reason: str) -> LabelResolver:
@@ -152,7 +163,7 @@ def unknown_schema(reason: str) -> LabelResolver:
 
 
 def load_label_resolver(root: Path) -> LabelResolver:
-    """Read LabelData.db under root, and say which of three things happened.
+    """Read LabelData.db under root, and say which label-input state applies.
 
     A project with no labels has no LabelData.db. A project whose LabelData.db
     will not open has labels this run cannot see. Both used to return the same
@@ -165,7 +176,7 @@ def load_label_resolver(root: Path) -> LabelResolver:
     """
     path = Path(root) / "LabelData.db"
     if not path.exists():
-        return EMPTY
+        return empty_resolver()
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error as error:
@@ -178,7 +189,7 @@ def load_label_resolver(root: Path) -> LabelResolver:
         if not tables:
             # An empty database file. There is genuinely nothing in it, which
             # is the same answer as having no file at all.
-            return EMPTY
+            return empty_resolver()
         if "ColumnDataTbl" not in tables:
             return unknown_schema(
                 f"{path.name} holds {len(tables)} tables and not the label tables "
