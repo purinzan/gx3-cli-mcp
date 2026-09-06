@@ -149,10 +149,9 @@ def _operand_width(opcode: str, argc: int, arg_index: int) -> int:
     return operand_words(types[arg_index])
 
 
-def _range_for(device: str, count: int, width: int) -> str:
-    """Expand a plain device to an inclusive range when its span is known."""
+def _range_for(device: str, span: int) -> str:
+    """Expand a plain device by its canonical physical-device span."""
 
-    span = count * width
     if not device or span <= 1:
         return device
     parsed = split_device(device)
@@ -267,8 +266,10 @@ def records_for_operation(
     records: list[FlowRecord] = []
     for source in reads:
         source_width = _operand_width(opcode, argc, source.arg_index)
+        source_span = max(0, int(source.range_len))
         for destination in writes:
             destination_width = _operand_width(opcode, argc, destination.arg_index)
+            destination_span = max(0, int(destination.range_len))
             records.append(
                 FlowRecord(
                     record_kind="edge",
@@ -282,8 +283,8 @@ def records_for_operation(
                     const_args=const_args,
                     source_detail=source.detail,
                     destination_detail=destination.detail,
-                    source_range=_range_for(source.device, count, source_width),
-                    destination_range=_range_for(destination.device, count, destination_width),
+                    source_range=_range_for(source.device, source_span),
+                    destination_range=_range_for(destination.device, destination_span),
                     range_count=count,
                     source_word_width=source_width,
                     destination_word_width=destination_width,
