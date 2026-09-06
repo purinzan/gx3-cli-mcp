@@ -16,6 +16,8 @@ thing the mode gate exists to prevent.
 """
 
 import sys
+import json
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +44,22 @@ def call(name: str, arguments: dict) -> dict:
 
 def text_of(result: dict) -> str:
     return result["content"][0]["text"]
+
+
+def test_mixed_capture_is_rejected_through_both_mcp_entries() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "capture.json"
+        base = {"timestamp": "2026-09-06T10:00:00Z", "device": "M1", "value": False}
+        path.write_text(json.dumps({"records": [
+            {**base, "source": "PLC-A"}, {**base, "source": "PLC-B", "value": True},
+        ]}), encoding="utf-8")
+        for name, args in (
+            ("gx3_replay_capture", {"verb": "changes", "input": str(path)}),
+            ("gx3_run_command", {"command": "live-read", "args": ["replay", "changes", str(path)]}),
+        ):
+            result = call(name, args)
+            assert result["isError"] is True, result
+            assert "mixed capture identity" in text_of(result), result
 
 
 # ----- the network mode stays out -------------------------------------------
@@ -150,6 +168,7 @@ def test_the_command_list_names_the_modes() -> None:
 
 
 def main() -> int:
+    test_mixed_capture_is_rejected_through_both_mcp_entries()
     test_the_bare_command_is_still_refused()
     test_the_network_mode_is_refused_by_its_own_flags()
     test_a_network_flag_smuggled_behind_a_mode_word_is_refused()

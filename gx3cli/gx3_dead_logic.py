@@ -34,7 +34,7 @@ from gx3cli.gx3_mc_zones import (
 )
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
 from gx3cli.gx3_device_name import split_device
-from gx3cli.gx3_xref_read import device_match
+from gx3cli.gx3_xref_read import counts_for, device_match, has_members
 from gx3cli.gx3_xref import default_db_path, open_xref_db
 from gx3cli.review_gx3_project import LadderRow, load_comments_for_root, load_rows
 
@@ -175,6 +175,7 @@ def evaluate_constant_logic(node: dict[str, Any], facts: dict[str, ConstantFact]
 
 
 def _writer_rows(con: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
+    """Named writer metadata only; not proof of exclusive physical ownership."""
     rows = con.execute(
         """
         select device, device_type, access, role, opcode, lddb, pos, pou, step,
@@ -235,6 +236,20 @@ def propagate_constant_devices(
     externals = externals or {}
     refresh_areas = refresh_areas or []
     writers = _writer_rows(con)
+    # Ask the same boundary as xref about physical ownership. Keep the named
+    # rows solely to locate the normal OUT once exclusivity is established.
+    writer_counts = counts_for(con, writers)
+    uncertain_types: set[str] = set()
+    members_available = has_members(con)
+    for occurrence in con.execute("select * from xref where access in ('write', 'both', 'ref')"):
+        fields = set(occurrence.keys())
+        span = int(occurrence["range_len"]) if "range_len" in fields else 1
+        detail = str(occurrence["detail"] or "") if "detail" in fields else ""
+        if (occurrence["access"] == "ref" or span <= 0 or "indexed" in detail
+                or (span > 1 and not members_available)):
+            # Unknown endpoints cannot establish single-writer ownership.
+            # An old named-only index must not turn a covered writer invisible.
+            uncertain_types.add(str(occurrence["device_type"]))
     special_roots = _special_constant_roots(con)
     zones = build_mc_zones(rows)
     jump_index = build_jump_index(rows)
@@ -254,6 +269,8 @@ def propagate_constant_devices(
             device = ref.device
             if ref.device_type not in PROPAGATED_BIT_TYPES:
                 continue
+            if ref.device_type in uncertain_types:
+                continue
             if device in externals or _in_refresh(ref.device_type, device, refresh_areas):
                 continue
             device_writers = writers.get(device, [])
@@ -261,7 +278,7 @@ def propagate_constant_devices(
             # Two OUT elements for the same device can share (lddb, pos) and
             # still have separate enable branches/order. Never prove a constant
             # from only the last output element encountered in that case.
-            if len(device_writers) != 1:
+            if len(device_writers) != 1 or writer_counts.get(device, {}).get("write") != 1:
                 continue
             writer = device_writers[0]
             if (str(writer["lddb"]), int(writer["pos"])) != (row.lddb, row.pos):

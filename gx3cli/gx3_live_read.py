@@ -947,7 +947,23 @@ def load_captured_log(path: Path) -> dict[str, object]:
     default_fp = str(metadata.get("project_fingerprint") or "")
     deduped: dict[tuple[str, str], dict[str, object]] = {}
     duplicate_count = 0
+    capture_identity: tuple[str, str] | None = None
     for sequence, raw in enumerate(raw_rows):
+        # Validate BEFORE last-record-wins can erase evidence of a different
+        # PLC/project. A filename is a display fallback, not a PLC identity.
+        # Missing identity may inherit file metadata, never another record.
+        identity = (
+            str(raw.get("source") or metadata.get("source") or "").strip(),
+            str(raw.get("project_fingerprint") or default_fp or "").strip(),
+        )
+        if capture_identity is None:
+            capture_identity = identity
+        elif identity != capture_identity:
+            raise ValueError(
+                f"record {sequence}: mixed capture identity (source/project_fingerprint); "
+                "split the log by PLC and project version before replay; "
+                "missing identity is not assumed to match a named capture"
+            )
         row = _normalise_log_row(
             raw,
             sequence=sequence,
