@@ -20,12 +20,15 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from gx3cli.gx3_analysis_state import DECODE, PARTIAL
 from gx3cli.gx3_arg_decode import parse_row_occurrences
 from gx3cli.gx3_label_resolve import (
     empty_resolver,
     load_label_resolver,
     split_label_token,
 )
+from gx3cli.trace_gx3_device_dependencies import build_trace
+from test_gx3_shared_reach import write_program
 
 LABEL_ID = "9162445254180170159"
 
@@ -76,6 +79,12 @@ def _rung(*refs: tuple[str, int]) -> str:
         for index, (role, _row) in enumerate(refs)
     )
     return f"V1:{len(refs) * 2}:1:26:{header}:cb{{fg=fg{{dim={len(refs)}x1:es=[{elements}]}}}}"
+
+
+def _trace_project(root: Path, condition_row: int = 2) -> Path:
+    write_program(root, [("_guid/labels", _rung(("a", condition_row), ("c", 7)))])
+    _write_label_db(root)
+    return root
 
 
 def test_token_is_split_into_table_and_row() -> None:
@@ -166,6 +175,38 @@ def test_absent_projects_do_not_share_unresolved_label_evidence() -> None:
         resolver_b = load_label_resolver(second)
         assert resolver_b is not resolver_a
         assert resolver_b.unresolved == set()
+
+
+def test_trace_uses_label_names_through_the_real_topology_path() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _trace_project(Path(tmp) / "p")
+        result = build_trace(root, "Start_Latch", 3, 50, True, True)
+
+        assert result["analysis"]["state"] == "checked", result["analysis"]
+        assert result["label_resolution"]["status"] == "read"
+        assert result["label_resolution"]["unresolved_count"] == 0
+        assert result["verification"]["structural_shape"] == "exact"
+        assert result["verification"]["independent_gx_works3_validation"] is False
+        assert result["driver_rows"], result
+        assert result["driver_rows"][0]["device"] == "Start_Latch"
+        assert any(
+            cond["device"] == "IN_Start"
+            for cond in result["driver_rows"][0]["conditions"]
+        ), result["driver_rows"][0]
+
+
+def test_exact_shape_with_an_unresolved_label_is_not_checked() -> None:
+    """#90/#92: structural exactness cannot erase missing label identity."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _trace_project(Path(tmp) / "p", condition_row=999)
+        result = build_trace(root, "Start_Latch", 3, 50, True, True)
+
+        assert result["verification"]["structural_shape"] == "exact", result["verification"]
+        assert result["analysis"]["state"] == PARTIAL, result["analysis"]
+        assert result["analysis"]["stage"] == DECODE, result["analysis"]
+        assert result["label_resolution"]["unresolved_count"] == 1
+        assert result["label_resolution"]["unresolved_tokens"] == [f"_lid/{LABEL_ID}/999"]
+        assert "label" in result["analysis"]["reason"].lower()
 
 
 def main() -> int:
