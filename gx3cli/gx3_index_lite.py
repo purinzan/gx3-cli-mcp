@@ -9,7 +9,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_device_name import canonical_device as _canonical_device, format_device as _format_device
+from gx3cli.gx3_device_name import (
+    canonical_device as _canonical_device,
+    format_device as _format_device,
+    parse_device_name as _parse_device_name,
+)
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_version import package_version
@@ -494,19 +498,70 @@ def expanded_terms(text: str) -> list[str]:
     return sorted(terms)
 
 
+def covered_usages_for_device(
+    con: sqlite3.Connection, device: str, limit: int
+) -> list[dict[str, object]]:
+    """Return interval evidence for a device not named at a range's start.
+
+    The row in `covered_ranges` is the occurrence.  D401 inside a D400..D403
+    BMOV run is not a second raw occurrence, so keep D400 as `source_device`
+    and expose D401 only as an offset into that physical span.
+    """
+    dev_type, number = _parse_device_name(device)
+    rows = con.execute(
+        """
+        select cr.device_type, cr.start, cr.length, cr.access, cr.opcode,
+               cr.lddb, cr.pos,
+               coalesce(lr.title, '') as title,
+               coalesce(lr.parse_status, '') as parse_status
+        from covered_ranges cr
+        left join ladder_rows lr on lr.lddb=cr.lddb and lr.pos=cr.pos
+        where cr.device_type=?
+          and cr.length > 1
+          and cr.start < ?
+          and ? < cr.start + cr.length
+        order by cr.lddb, cr.pos, cr.start
+        limit ?
+        """,
+        (dev_type, number, number, limit),
+    ).fetchall()
+    return [
+        {
+            "coverage_kind": "covered",
+            "matched_device": device,
+            "source_device": _format_device(dev_type, int(row["start"])),
+            "run_offset": number - int(row["start"]),
+            "span_length": int(row["length"]),
+            "access": row["access"],
+            "opcode": row["opcode"] or "",
+            "lddb": row["lddb"] or "",
+            "pos": int(row["pos"] or 0),
+            "title": row["title"] or "",
+            "parse_status": row["parse_status"] or "",
+        }
+        for row in rows
+    ]
+
+
 def query_device(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_existing(Path(args.db or default_db_path()), root_of(args))
     rec = con.execute("select * from devices where device=?", (device,)).fetchone()
-    if not rec:
+    covered = covered_usages_for_device(con, device, args.limit)
+    if not rec and not covered:
         if args.json:
             print_json("query-device", args.root, [])
         else:
             print(f"device not found: {device}")
         con.close()
         return 1
+
     ext = con.execute("select * from external_sources where device=?", (device,)).fetchone()
-    rows = con.execute(
+    comment_row = con.execute("select all_text from comments where device=?", (device,)).fetchone()
+    comment = (rec["comment"] if rec and rec["comment"] else "") or (
+        comment_row["all_text"] if comment_row and comment_row["all_text"] else ""
+    )
+    drivers = con.execute(
         """
         select role, lddb, pos, title, row_conditions
         from device_usages
@@ -516,52 +571,7 @@ def query_device(args: argparse.Namespace) -> int:
         """,
         (device, args.limit),
     ).fetchall()
-    if args.json:
-        print_json(
-            "query-device",
-            args.root,
-            [
-                {
-                    "device": rec["device"],
-                    "comment": rec["comment"] or "",
-                    "occurrences": rec["occurrences"],
-                    "driver_rows": rec["driver_rows"],
-                    "condition_uses": rec["condition_uses"],
-                    "roles": rec["roles"],
-                    "external": row_dict(ext) if ext else None,
-                    "drivers": [row_dict(row) for row in rows],
-                    "conditions": [
-                        row_dict(row)
-                        for row in con.execute(
-                            """
-                            select role, lddb, pos, title
-                            from device_usages
-                            where device=? and is_condition=1
-                            order by lddb, pos
-                            limit ?
-                            """,
-                            (device, args.limit),
-                        ).fetchall()
-                    ],
-                }
-            ],
-        )
-        con.close()
-        return 0
-    print(f"{rec['device']} {rec['comment'] or ''}".rstrip())
-    print(f"occurrences={rec['occurrences']} driver_rows={rec['driver_rows']} condition_uses={rec['condition_uses']} roles={rec['roles']}")
-    if ext:
-        print(
-            "external: "
-            f"{ext['source_kind']} / {ext['semantic_group']} / {ext['source_detail']} "
-            f"{ext['refresh_device_range'] or ext['source_unit_area']}"
-        )
-    print("")
-    print("Driver rows:")
-    print_rows(rows, ["role", "lddb", "pos", "title", "row_conditions"])
-    print("")
-    print("Condition uses:")
-    rows = con.execute(
+    conditions = con.execute(
         """
         select role, lddb, pos, title
         from device_usages
@@ -571,7 +581,57 @@ def query_device(args: argparse.Namespace) -> int:
         """,
         (device, args.limit),
     ).fetchall()
-    print_rows(rows, ["role", "lddb", "pos", "title"])
+
+    summary = {
+        "device": device,
+        "comment": comment,
+        "occurrences": int(rec["occurrences"]) if rec else 0,
+        "driver_rows": int(rec["driver_rows"]) if rec else 0,
+        "condition_uses": int(rec["condition_uses"]) if rec else 0,
+        "roles": rec["roles"] if rec else "",
+        "external": row_dict(ext) if ext else None,
+        "drivers": [row_dict(row) for row in drivers],
+        "conditions": [row_dict(row) for row in conditions],
+        "coverage": covered,
+    }
+    if args.json:
+        print_json("query-device", args.root, [summary])
+        con.close()
+        return 0
+
+    print(f"{device} {comment}".rstrip())
+    print(
+        f"occurrences={summary['occurrences']} driver_rows={summary['driver_rows']} "
+        f"condition_uses={summary['condition_uses']} roles={summary['roles']}"
+    )
+    if ext:
+        print(
+            "external: "
+            f"{ext['source_kind']} / {ext['semantic_group']} / {ext['source_detail']} "
+            f"{ext['refresh_device_range'] or ext['source_unit_area']}"
+        )
+    print("")
+    print("Driver rows (named occurrences):")
+    print_rows(drivers, ["role", "lddb", "pos", "title", "row_conditions"])
+    print("")
+    print("Condition uses (named occurrences):")
+    print_rows(conditions, ["role", "lddb", "pos", "title"])
+    if covered:
+        print("")
+        print("Coverage matches (not additional raw occurrences):")
+        print_rows(
+            covered,
+            [
+                "source_device",
+                "run_offset",
+                "span_length",
+                "access",
+                "opcode",
+                "lddb",
+                "pos",
+                "title",
+            ],
+        )
     con.close()
     return 0
 
