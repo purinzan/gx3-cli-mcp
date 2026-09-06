@@ -69,6 +69,7 @@ FORMAT_NAMES = re.compile(
     r"|[0-9A-Fa-f]+_(LDDB|DC|MilDB|StepInfo|DM|FBDDB|STDB)\.db"
     r"|[0-9]+\.db)$"
 )
+STRUCTURAL_ALIAS = re.compile(r"^(?:DIR|FILE)_\d{4}$")
 
 
 def safe_component(component: str, index: dict[str, str], kind: str) -> str:
@@ -142,6 +143,28 @@ def add_json(zf: zipfile.ZipFile, name: str, data: object, redact: Any) -> None:
     add_text(zf, name, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", redact)
 
 
+def structural_leak_table(table: RedactionMap) -> RedactionMap:
+    """Known secrets that are still forbidden in a structural inventory.
+
+    The generic redactor can learn format-defined names from another payload
+    such as doctor.txt and put them in the alias table. Those exact names are
+    deliberately retained by project_inventory(), so treating them as leaks at
+    this boundary makes the two policies contradict each other. Structural
+    stand-ins are safe for the same reason.
+
+    Everything else remains in the check: project/customer/equipment names
+    already known to the alias table must still fail if they somehow survive
+    structural pseudonymization. IP and CJK checks are independent of the table
+    and remain active in assert_no_leaks().
+    """
+    filtered = {
+        real: alias
+        for real, alias in table.real_to_alias.items()
+        if not FORMAT_NAMES.fullmatch(real) and not STRUCTURAL_ALIAS.fullmatch(real)
+    }
+    return RedactionMap(path=table.path, real_to_alias=filtered)
+
+
 def add_structural_json(
     zf: zipfile.ZipFile,
     name: str,
@@ -157,12 +180,13 @@ def add_structural_json(
     or 001_LDDB.db, destroying the diagnostic information the structural pass
     deliberately retained.
 
-    We still run the leak assertion. If a CJK/IP/known secret reaches this
-    boundary despite the structural rules, fail the bundle instead of silently
-    publishing it.
+    We still run the leak assertion with only the intentionally-safe exact
+    format names removed from the known-secret set. If a CJK/IP/customer name
+    reaches this boundary despite the structural rules, fail the bundle instead
+    of silently publishing it.
     """
     payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    assert_no_leaks(payload, table)
+    assert_no_leaks(payload, structural_leak_table(table))
     zf.writestr(name, payload.encode("utf-8"))
 
 
