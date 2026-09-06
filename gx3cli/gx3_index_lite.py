@@ -688,33 +688,65 @@ def query_cycle(args: argparse.Namespace) -> int:
     return 0
 
 
+def occupied_intervals(con: sqlite3.Connection) -> dict[str, list[tuple[int, int]]]:
+    """Return merged physical device intervals used by named or covered access.
+
+    `devices` contains only addresses printed in ladder operands.  A block/range
+    instruction can also read or write every address inside `covered_ranges`.
+    Keeping those as intervals avoids materialising giant BMOV spans while
+    still making an address inside one unavailable for reuse.
+    """
+    by_type: dict[str, list[tuple[int, int]]] = {}
+    for row in con.execute(
+        """
+        select device_type, number as start, 1 as length from devices
+        union all
+        select device_type, start, length from covered_ranges
+        order by device_type, start
+        """
+    ):
+        length = int(row["length"])
+        if length <= 0:
+            continue
+        start = int(row["start"])
+        by_type.setdefault(str(row["device_type"]), []).append((start, start + length - 1))
+
+    merged_by_type: dict[str, list[tuple[int, int]]] = {}
+    for dev_type, intervals in by_type.items():
+        merged: list[tuple[int, int]] = []
+        for start, end in sorted(intervals):
+            if not merged or start > merged[-1][1] + 1:
+                merged.append((start, end))
+                continue
+            prev_start, prev_end = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, end))
+        merged_by_type[dev_type] = merged
+    return merged_by_type
+
+
 def device_map(args: argparse.Namespace) -> int:
     con = open_existing(Path(args.db or default_db_path()), root_of(args))
     min_free = int(args.min_free)
     types_filter = {t.strip().upper() for t in args.types.split(",")} if args.types else None
-    rows = con.execute("select device_type, number from devices order by device_type, number").fetchall()
+    by_type = occupied_intervals(con)
     con.close()
-    by_type: dict[str, list[int]] = {}
-    for row in rows:
-        by_type.setdefault(str(row["device_type"]), []).append(int(row["number"]))
 
     free_col = f"free_ranges(>= {min_free})"
     out_rows: list[dict[str, object]] = []
     for dev_type in sorted(by_type):
         if types_filter and dev_type not in types_filter:
             continue
-        nums = sorted(set(by_type[dev_type]))
-        if not nums:
+        intervals = by_type[dev_type]
+        if not intervals:
             continue
-        used = len(nums)
-        lo, hi = nums[0], nums[-1]
+        used = sum(end - start + 1 for start, end in intervals)
+        lo, hi = intervals[0][0], intervals[-1][1]
         span = hi - lo + 1
         gaps: list[tuple[int, int, int]] = []
-        prev = None
-        for num in nums:
-            if prev is not None and num - prev - 1 >= min_free:
-                gaps.append((prev + 1, num - 1, num - prev - 1))
-            prev = num
+        for (_start, end), (next_start, _next_end) in zip(intervals, intervals[1:]):
+            length = next_start - end - 1
+            if length >= min_free:
+                gaps.append((end + 1, next_start - 1, length))
         gaps.sort(key=lambda item: item[2], reverse=True)
         free_txt = "; ".join(f"{dev_type}{a}-{dev_type}{b}({c})" for a, b, c in gaps[: args.max_gaps])
         out_rows.append(
