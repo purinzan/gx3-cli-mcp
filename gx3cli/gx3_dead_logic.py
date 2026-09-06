@@ -257,12 +257,18 @@ def propagate_constant_devices(
             if device in externals or _in_refresh(ref.device_type, device, refresh_areas):
                 continue
             device_writers = writers.get(device, [])
-            locations = {(str(writer["lddb"]), int(writer["pos"])) for writer in device_writers}
-            if len(locations) != 1 or locations != {(row.lddb, row.pos)}:
+            # "Single writer" means one writer occurrence, not one ladder row.
+            # Two OUT elements for the same device can share (lddb, pos) and
+            # still have separate enable branches/order. Never prove a constant
+            # from only the last output element encountered in that case.
+            if len(device_writers) != 1:
+                continue
+            writer = device_writers[0]
+            if (str(writer["lddb"]), int(writer["pos"])) != (row.lddb, row.pos):
                 continue
             # Another write kind on the same rung still makes final ownership
             # stateful/order-dependent. Normal OUT is the only admitted kind.
-            if not device_writers or any(str(writer["role"] or "") != "c" for writer in device_writers):
+            if str(writer["role"] or "") != "c":
                 continue
 
             logic = enable_logic_for_output(row, output)
@@ -272,7 +278,6 @@ def propagate_constant_devices(
                 dependency = str(condition.get("device") or "")
                 if dependency:
                     dependents[dependency].add(device)
-            writer = device_writers[0]
             candidates[device] = {
                 "logic": logic,
                 "row": row,
