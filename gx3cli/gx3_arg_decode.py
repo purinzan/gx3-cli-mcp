@@ -252,6 +252,16 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
     tokens = header_tokens(data)
     header_ops = parse_header_ops(data)
     ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
+    # The shape of the decode, and nothing more. "exact" here means the header
+    # named as many operations as the row holds elements for -- it is not a
+    # claim that each operation's devices, roles, operands, wiring or read and
+    # write semantics came out right. `gx3_roundtrip` exists because rows have
+    # been called exact and been semantically wrong: a dropped contact, an
+    # operand read as the count, a label reference with no identity.
+    #
+    # Anything that treats this as proof of meaning is reading it wrong. The
+    # states that speak about meaning are in gx3_analysis_state, under the
+    # semantics stage.
     status = "exact" if len(ce_elements) == len(header_ops) else "partial"
     results: list[DecodedOperation] = []
 
