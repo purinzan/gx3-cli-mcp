@@ -328,13 +328,17 @@ def orient_link(row: sqlite3.Row, project_a: str, project_b: str) -> tuple[str, 
 
 def detect_signals(project_a: str, project_b: str, link_db: Path) -> tuple[list[DetectedSignal], list[DataGroup]]:
     link_con = open_link_map(link_db)
-    xref_paths = project_xref_paths(link_con)
-    roots = project_roots(link_con)
-    xrefs = {project: open_xref(path, roots[project]) for project, path in xref_paths.items()}
-    # Per project, and built lazily: a run that never needs a condition never
-    # reads a ladder.
-    rows = project_rows(link_con)
+    xrefs: dict[str, sqlite3.Connection] = {}
     try:
+        xref_paths = project_xref_paths(link_con)
+        roots = project_roots(link_con)
+        # Open inside the protected region one-by-one. If validation rejects a
+        # later xref, every earlier one plus the link-map DB still gets closed.
+        for project, path in xref_paths.items():
+            xrefs[project] = open_xref(path, roots[project])
+        # Per project, and built lazily: a run that never needs a condition never
+        # reads a ladder.
+        rows = project_rows(link_con)
         links = link_rows_between(link_con, project_a, project_b)
         detected: list[DetectedSignal] = []
         for row in links:
