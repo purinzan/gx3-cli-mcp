@@ -1,6 +1,6 @@
 # #153 解析契約の移行台帳
 
-監査基準: main `acb08f2`（2026-09-06）。これは完了宣言ではない。
+監査基準: main `acb08f2`、入力・外部境界の追記は`6dcc2b0`（2026-09-06）。これは完了宣言ではない。
 対象は #153。#154 は #156 で修正・クローズ済み。#49 と #135 の完了判定は行わない。
 
 「共通関数をimportしている」と「問いの入口から出力まで同じ契約を満たす」を区別する。
@@ -19,12 +19,12 @@
 | dependency-flow: 値の出所 | data_flow→xref.data_flow→value_sources→build_flow | #157でrange_countを物理幅として使う誤りを修正 | test_gx3_flow_in_xref.py, test_gx3_dependency_flow_topology.py | 未完。flow_dbで検証後にpathを返しreaderで開き直す。検証と読取りの同一handle化が必要 |
 | graph device-flow | flow_db→dependency_flow.build_flow→graph出力 | 同じ値フローconsumerを呼ぶ既存adapter | test_gx3_flow_consumers.py | 上記の検証/再open問題とunknown制約を共有。別汎用探索器は作らない |
 | trace-device: 駆動条件と上流 | trace_stateのrows/labels/comments→出力別enable→provider→trace→text/JSON | #159でimport時関数差替えを除去。1回の入力ロードを明示注入 | test_gx3_topology_conditions.py, test_gx3_trace_state.py | 部分移行済み。外部CSV、未解析writer、実行条件を含む定数証明が未完。#161でxref拒否時にpruningだけ無効化 |
-| dead-logic: 単一writerに基づく定数 | xref/member→counts_for + named OUT位置→propagate_constant_devices | #155でcovered writerとboth集計、未知のwriter種別を保守的に扱う | test_gx3_dead_logic_runs.py, test_gx3_xref_reader_boundary.py | 未完。load_external_devicesは欠損/SQL失敗を空集合化する。未解析ST/実行保証を含む証明境界も残る |
+| dead-logic: 単一writerに基づく定数 | xref/member→counts_for + named OUT位置→propagate_constant_devices | #155でcovered writerとboth集計、#165で共通外部readerと未取得状態のsidecarを追加 | test_gx3_dead_logic_runs.py, test_gx3_xref_reader_boundary.py | 未完。外部DBの欠損/SQL失敗の空集合化は解消。未解析ST/実行保証を含む証明境界が残る |
 | scan-order: 同じ物理デバイスの前後writer | xref/member→occurrences_ofまたは全memberのgrouping→writers | 単体照会と全デバイス列挙の問いを分けた既存経路 | test_gx3_xref_reader_boundary.py | 未完。dead-logic/xrefと同一fixtureの結果比較、旧member欠損時のscopeを確認する |
 | alarm-map: reset/駆動候補 | xref/member→device_match→目的別SQL→レポート | lookupは共通、alarmのfilterは目的別として維持 | test_gx3_xref_reader_boundary.py | 既存共通経路。scope/未解釈・外部証拠不足が出力まで残るか受入が必要 |
 | timing-chart: signalと条件 | link_mapのroot/xref→open_xref_db→device_match→signal selection | xref入力照合は既存経路。#161で指紋なしを拒否するため手書き選別fixtureにも実rootを使用 | test_gx3_timing_detect.py | 部分移行。link-map/外部証拠のprovenanceと未評価表示を監査する |
-| lint: writer/occupancy/外部値 | rows + xref device_match + lite covered_ranges→目的別checks→summarise | xrefはopen_checked_xref。lite/linkはopen_optionalでraw openのまま | test_gx3_lint_block_runs.py, test_gx3_analysis_state.py | 未完。liteの入力照合迂回を除去し、空確認と取得不能を区別する |
-| doctor --project-health: constant-chain等 | audit→LintContext/checks + dead_logic→health集約 | xrefは照合、liteはopen_optional。定数はload_external_devicesを別open | test_gx3_analysis_state.py, test_gx3_same_input_across_artefacts.py | 未完。#153の契約部分だけ変更する。#135の別受入PRはこの作業の統合対象外 |
+| lint: writer/occupancy/外部値 | rows + xref device_match + lite covered_ranges→目的別checks→summarise | #164でliteもopen_checked_liteへ。linkは複数project用として別契約 | test_gx3_lint_block_runs.py, test_gx3_analysis_state.py, test_gx3_same_input_across_artefacts.py | 部分移行。lite入力照合とhandle管理は統合済み。schema/capabilityと外部CSVの制約が残る |
+| doctor --project-health: constant-chain等 | audit→LintContext/checks + dead_logic→health集約 | #164でlite入力照合、#165で既存handleの外部readerを利用し再openを除去 | test_gx3_analysis_state.py, test_gx3_same_input_across_artefacts.py, test_gx3_dead_logic_runs.py | 部分移行。schema/capability・定数証明が残る。#135の別受入PRはこの作業の統合対象外 |
 | semantic-diff: 内容差分 | 生LDDB/config入力→parse_row_operations→差分 | raw DBは派生xrefのlookupではないため保持。差分と到達解析は問いが異なる | test_gx3_semantic_diff.py | 経路保持。decode statusを捨てるsummarize_change等の制約を監査し、範囲未解釈を同等としない |
 | ladder-report: 参照集計と論理 | rows + open_xref_db→counts_for/occurrences_of→レポート | 既存range reader利用。#155のboth集計修正を共有 | test_gx3_xref_reader_boundary.py | 部分移行。未解析入力と論理制約がレポートの総括まで残るか確認する |
 | MCP generic/typed | gx3_mcp_server→既存CLI subprocess→payload | CLIの意味論を再実装しない。offline/filesystem guardは保持 | test_gx3_mcp_server.py, test_gx3_mcp_offline_modes.py | #154のログ混在拒否は両経路検証済み。#153変更後のpayload/出力policy受入は継続 |
@@ -38,23 +38,24 @@
 - #158（台帳作成中に統合済み）: STDB/DM/module/config等の入力指紋依存、manifest版更新。
 - #159（統合済み）: traceの明示provider、同じ入力の一度のロード、並行/入れ子/例外テスト。
 - #160（統合済み）: 代表AnalysisStateに加えて全constraintsをJSON/再集約で保持。
-- #161（別PR）: root付き照会で指紋欠損/入力消失を拒否。検証失敗時close、optional traceの継続。
-- #162（別PR）: where-usedのbothを双方へ表示、raw件数と分類件数を分離。
+- #161（統合済み）: root付き照会で指紋欠損/入力消失を拒否。検証失敗時close、optional traceの継続。
+- #162（統合済み）: where-usedのbothを双方へ表示、raw件数と分類件数を分離。
+- #164（統合済み）: lint/healthのlite照合、読取り専用と失敗時のhandle解放。
+- #165（統合済み）: 外部分類の共通reader。空確認と取得不能を区別し、後者で定数判定をしない。
 
 入力指紋だけではschema/capabilityの完全性を証明しない。読取り途中の入力変更、
 外部CSVの由来、派生DBに必要tableが欠けた場合の判断は残課題。
-`load_external_devices`の空集合化や未検証liteなど、再現/修正が必要な箇所を
-「整理済み」の名で対象外にしない。
+これらの残課題を「整理済み」の名で対象外にしない。
 
 ## 性能と次の検証
 
-cold build / warm query の同一fixture・OS/Python・optionsでの時間、SQL数、入力読込数、
-peak memoryの比較は未測定。既存のSQL予算テストやtraceのロード1回テストは
-局所的な回帰検証であり、全体ベンチマークの代わりにはならない。
-速度改善率や許容メモリ値は本書では設定しない。
+cold build / warm query / traceの6種の固定fixtureで、同一環境の比較を実施した。
+詳細と制約・後続変更の予算は[性能基準](ANALYSIS_BENCHMARK_JA.md)に記録する。
+SQL/loader回数、wall時間、Python peakとprocess peak RSSを区別する。WindowsのRSSは
+未測定。少数の合成検体を全実案件の速度改善率やメモリ上限の保証として使わない。
 
-次はsmall / wide / deep / large span / multi-POU / LD-STの合成検体と測定手順を固定し、
-変更前後を同じ環境で測る。正しさは別に手で定めた期待値と照合する。
+後続移行の前後でも同じ手順を繰り返し、最終統合版で再測定する。
+正しさは別に手で定めた期待値と照合する。
 消費側の独自span換算・未検証DB lookupのguardは、既存reader境界テストを拡張する。
 正当なprojectionは認め、既知の迂回を検出するpositive/negative testを用意する。
 

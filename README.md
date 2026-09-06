@@ -142,6 +142,7 @@ decrypted; export the folder from GX Works3 instead.
 - [Validation matrix (JA)](docs/VALIDATION_MATRIX.md) — verified scope and limits
 - [GX Works3 feature matrix (JA)](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) — standard-feature coverage, gaps, and implementation priorities
 - [File usage guide (JA)](docs/FILE_USAGE_GUIDE_JA.md) — repository map
+- [Analysis benchmark (JA)](docs/ANALYSIS_BENCHMARK_JA.md) — synthetic performance baseline and measurement limits
 - [Review questions (JA)](docs/REVIEW_QUESTIONS_JA.md) — the questions to ask a
   change before opening a pull request, and the bugs each of them found
 - [Related projects (JA)](docs/GITHUB_PROJECT_REVIEW_JA.md) — other GX Works3/MELSEC tools and what was taken from them
