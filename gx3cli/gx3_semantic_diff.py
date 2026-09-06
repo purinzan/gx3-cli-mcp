@@ -36,7 +36,8 @@ import zipfile
 from pathlib import Path
 
 from gx3cli.gx3_device_name import format_device as _format_device
-from gx3cli.gx3_arg_decode import parse_row_operations
+from gx3cli.gx3_arg_decode import DecodedOperation, parse_row_operations
+from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL
 from gx3cli.gx3_operand_parse import CONST_VALUE_RE
 from gx3cli.gx3_intermediate_tool import decode_data
 from gx3cli.gx3_program_map import load_program_map
@@ -111,12 +112,10 @@ def load_side(root: Path) -> tuple[dict[str, dict[str, tuple[int, str, str]]], d
 
 
 def summarize_change(old_data: str, new_data: str) -> str:
-    def decoded_ops(data: str) -> list[str]:
-        operations, _status = parse_row_operations(data)
-        return [operation.role for operation in operations]
+    old_operations, old_status = parse_row_operations(old_data)
+    new_operations, new_status = parse_row_operations(new_data)
 
-    def decoded_args(data: str) -> list[str]:
-        operations, _status = parse_row_operations(data)
+    def decoded_args(operations: list[DecodedOperation]) -> list[str]:
         args: list[str] = []
         for operation in operations:
             for index, raw in enumerate(operation.raw_args):
@@ -129,16 +128,25 @@ def summarize_change(old_data: str, new_data: str) -> str:
         return args
 
     parts = []
-    o_ops, n_ops = decoded_ops(old_data), decoded_ops(new_data)
+    o_ops = [operation.role for operation in old_operations]
+    n_ops = [operation.role for operation in new_operations]
     if o_ops != n_ops:
         parts.append(f"ops {' '.join(o_ops[:12])} -> {' '.join(n_ops[:12])}")
-    o_args, n_args = decoded_args(old_data), decoded_args(new_data)
+    o_args, n_args = decoded_args(old_operations), decoded_args(new_operations)
     if o_args != n_args:
         removed = [x for x in o_args if x not in n_args]
         added = [x for x in n_args if x not in o_args]
         if removed or added:
             parts.append(f"args -{removed[:8]} +{added[:8]}")
-    return "; ".join(parts) or "wiring, execution metadata, or raw operand data changed; review rung"
+    summary = "; ".join(parts) or "wiring, execution metadata, or raw operand data changed; review rung"
+    if old_status != "exact" or new_status != "exact":
+        state = AnalysisState(
+            PARTIAL, stage=DECODE,
+            reason=f"decoded summary only (old={old_status}, new={new_status}); unparsed changes may be omitted from this summary",
+            next_step="inspect the raw rung and parse-gaps in both project versions",
+        )
+        summary += "; " + state.line("summary-scope")
+    return summary
 
 
 def comment_map(root: Path) -> dict[str, str]:

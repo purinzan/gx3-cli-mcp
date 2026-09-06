@@ -212,6 +212,11 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+semantic-diffの変更要約は各版を一度だけ解読し、旧版または新版がpartialの場合は
+`summary-scope`にdecode段階の注記を出します。画面とCSVのsummary両方に残り、
+解読できた命令・引数だけで変更全体を説明したとは扱いません。差分の有無は従来
+どおり描画領域寸法だけを除いた生データで判断し、解読結果の一致で隠しません。
+
 dead-logicの`unwritten-contact`は「索引に物理writerが見つからない」という観測です。
 旧`const-off-contact` / `always-on-contact`のようにA/B接点の値を断定しません。
 CSVの`contact_role`はa/b、`analysis_state`はpartial、定数値は空欄です。
