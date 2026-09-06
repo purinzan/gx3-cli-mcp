@@ -55,7 +55,13 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   recorded as read rather than inheriting the operand's access.
 #   arg-decode-3: a block instruction's destination records how many devices
 #   the run covers, so a search finds a device the run writes without naming.
-XREF_DECODER = "arg-decode-3"
+#
+#   arg-decode-4: an operand records the devices its own type occupies, so
+#   DMOV D100 D200 covers D100..D101 and D200..D201 rather than one device
+#   each. Coverage changed, so a database built by the previous decoder holds
+#   fewer members than this build would find and must not be reused: the
+#   fingerprint is the same input, and the answer would still be narrower.
+XREF_DECODER = "arg-decode-4"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:

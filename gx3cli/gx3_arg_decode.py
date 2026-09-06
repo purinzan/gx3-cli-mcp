@@ -31,7 +31,13 @@ from gx3cli.gx3_intermediate_tool import parse_header_ops
 from gx3cli.gx3_operand_parse import CONST_VALUE_RE, M_CONST_MOD_RE, parse_operands
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
-from gx3cli.gx3_instruction_table import MANUAL_WRITE_ARGS, manual_operand_names, manual_write_indices
+from gx3cli.gx3_instruction_table import (
+    MANUAL_WRITE_ARGS,
+    manual_operand_names,
+    manual_operand_types,
+    manual_write_indices,
+    operand_words,
+)
 from gx3cli.gx3_label_resolve import LabelResolver, split_label_token
 
 
@@ -285,7 +291,9 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
         # operand tables spell BMOV and FMOV identically.
         span, span_basis = block_span(hop.op, raw_args)
         source_runs = source_run_indices(hop.op, len(raw_args)) if span != 1 else set()
+        widths = operand_widths(hop.op, len(raw_args))
         for a in occ:
+            apply_operand_width(a, widths)
             if a.is_index_register:
                 # It shares its arg_index with the operand it modifies, so the
                 # write set would otherwise report the destination's Z as
@@ -366,6 +374,52 @@ SOURCE_RUN_OPERANDS: dict[str, tuple[str, ...]] = {
     "BMOV": ("(s)",),
     "BMOVL": ("(s)",),
 }
+
+
+def operand_widths(opcode: str, argc: int) -> dict[int, int]:
+    """How many devices each operand of this instruction occupies.
+
+    `DMOV D100 D200` reads D100 and D101 and writes D200 and D201; the ladder
+    names only the first of each. The manuals give the operand's type and the
+    type gives its width, and `data-flow` has used both all along -- so the two
+    canonical views of one operation disagreed, the occurrence layer recording
+    a single device where the value-flow layer recorded a pair.
+
+    Only the width. The count of a block instruction is a separate thing and is
+    already in devices, so multiplying the two would expand a run twice.
+    """
+    types = manual_operand_types(opcode, argc) or manual_operand_types(base_opcode(opcode), argc)
+    if types is None:
+        return {}
+    widths: dict[int, int] = {}
+    for index, type_code in enumerate(types):
+        words = operand_words(type_code)
+        if words > 1:
+            widths[index] = words
+    return widths
+
+
+def apply_operand_width(occ: ArgOcc, widths: dict[int, int]) -> None:
+    """Give an occurrence the width of the operand it stands for.
+
+    Left alone in three cases, each for its own reason:
+
+    an index register     it is one device, whatever it modifies
+    a run already sized   a block count is in devices; multiplying double-counts
+    an index-modified base  which devices it reaches is not knowable from the
+                            file, so a width here would name the wrong ones
+    """
+    if occ.is_index_register:
+        return
+    if int(occ.range_len or 1) != 1:
+        return
+    if "indexed" in (occ.detail or ""):
+        return
+    width = widths.get(occ.arg_index, 1)
+    if width <= 1:
+        return
+    occ.range_len = width
+    occ.detail = (occ.detail + "; " if occ.detail else "") + f"{width}-word operand"
 
 
 def source_run_indices(opcode: str, argc: int) -> set[int]:

@@ -185,6 +185,76 @@ def test_a_run_of_unknown_length_gets_one_member() -> None:
         assert [r["member_device"] for r in members] == ["D400"], members
 
 
+def test_a_multi_word_operand_covers_the_words_it_occupies() -> None:
+    """#96: `DMOV D100 D200` reads D100..D101 and writes D200..D201.
+
+    The ladder names the first of each. `data-flow` has read the operand's
+    width from the manuals all along, so the two canonical views of one
+    operation disagreed: a pair of words in one, a single device in the other.
+    """
+    from test_gx3_shared_reach import rung
+
+    dmov = rung("DMOV:D:D", "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}")
+    reader = rung("MOV:D:D", "d{s=#:a=201:vt=nn}:d{s=#:a=900:vt=nn}")
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        write_program(work / "p", [("_guid/d", dmov), ("_guid/m", reader)])
+        db = build_xref(work / "p", work / "x.sqlite")
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            second = occurrences_of(con, "D201", access=("write", "both"))
+            past = occurrences_of(con, "D202", access=("write", "both"))
+        finally:
+            con.close()
+        assert [str(r["opcode"]) for r in second] == ["DMOV"], [dict(r) for r in second]
+        assert past == [], past
+
+
+def test_a_block_count_is_not_multiplied_by_the_operand_width() -> None:
+    # The count of a block instruction is already in devices. Multiplying it by
+    # the operand width would expand the run twice.
+    from gx3cli.gx3_arg_decode import parse_row_occurrences
+    from test_gx3_shared_reach import rung
+
+    operations, _ = parse_row_occurrences(
+        rung("BMOV:D:D:K_1", "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:c{s=#:v=4}")
+    )
+    spans = {
+        occ.device: occ.range_len
+        for operation in operations
+        for occ in operation[2]
+        if occ.device.startswith("D")
+    }
+    assert spans["D400"] == 4, spans
+    assert spans["D300"] == 4, spans
+
+
+def test_a_single_word_operand_is_unchanged() -> None:
+    from gx3cli.gx3_arg_decode import parse_row_occurrences
+    from test_gx3_shared_reach import rung
+
+    operations, _ = parse_row_occurrences(
+        rung("MOV:D:D", "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}")
+    )
+    spans = {
+        occ.device: occ.range_len
+        for operation in operations
+        for occ in operation[2]
+        if occ.device.startswith("D")
+    }
+    assert spans == {"D100": 1, "D200": 1}, spans
+
+
+def test_the_decoder_version_moved_so_older_databases_are_rebuilt() -> None:
+    # Coverage changed, so a database built by the previous decoder holds fewer
+    # members than this build would find. Its input fingerprint is unchanged,
+    # which is exactly why the decoder version has to carry the difference.
+    from gx3cli.gx3_xref import XREF_DECODER
+
+    assert int(XREF_DECODER.rsplit("-", 1)[1]) >= 4, XREF_DECODER
+
+
 def main() -> int:
     test_no_new_reader_looks_a_device_up_by_hand()
     test_the_member_index_holds_every_device_a_row_covers()
@@ -192,6 +262,10 @@ def main() -> int:
     test_counts_follow_the_same_rule()
     test_a_database_without_the_index_still_answers()
     test_a_run_of_unknown_length_gets_one_member()
+    test_a_multi_word_operand_covers_the_words_it_occupies()
+    test_a_block_count_is_not_multiplied_by_the_operand_width()
+    test_a_single_word_operand_is_unchanged()
+    test_the_decoder_version_moved_so_older_databases_are_rebuilt()
     print("xref reader boundary checks passed")
     return 0
 
