@@ -212,6 +212,10 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+入力指紋はST/FBD、初期・保持値、ユニット設定を含むプロジェクト直下のDBと、
+SourceInfo・Config・モーション等の入力も対象にします。依存ファイル定義の更新により、
+以前の索引は再構築が必要です。生成した索引やCSVはプロジェクト入力と分けて保存してください。
+
 xrefのデータフロー索引は、読出し側・書込み側の物理範囲を別々に保存します。
 命令の件数`range_count`を範囲長として再利用しません。動的件数やインデックス修飾で
 終端が不明な場合は、`source_range_len` / `destination_range_len`の0で不明を保持します。
