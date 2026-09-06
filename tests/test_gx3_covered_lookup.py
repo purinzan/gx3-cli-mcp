@@ -84,7 +84,23 @@ def test_a_covered_device_is_not_dressed_up_as_its_own_occurrence() -> None:
         root, _, lite = both_indexes(work)
         _, body = ask_lite(lite, root, "D402")
         assert "occurrences=" not in body, body
-        assert "+4" in body, body
+        assert "length=4" in body, body
+
+
+def test_named_and_covered_evidence_survive_together() -> None:
+    # D401 is named by MOV and is also the second destination word of the BMOV.
+    # A point query must not let the exact named row hide the covering run.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root, xref, lite = both_indexes(work)
+        assert set(ask_xref(xref, "D401")) == {"BMOV", "MOV"}
+
+        code, body = ask_lite(lite, root, "D401")
+        assert code == 0, body
+        assert "occurrences=1" in body, body
+        assert "Covered ranges:" in body, body
+        assert "D400" in body and "BMOV" in body, body
+        assert "offset=1" in body and "length=4" in body, body
 
 
 def test_a_device_the_ladder_names_answers_as_before() -> None:
@@ -108,7 +124,7 @@ def test_one_past_the_end_is_still_not_found() -> None:
         assert "not found" in body, body
 
 
-def test_the_json_form_carries_it_too() -> None:
+def test_the_json_form_carries_named_and_covered_semantics() -> None:
     import json
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -118,22 +134,31 @@ def test_the_json_form_carries_it_too() -> None:
         with contextlib.redirect_stdout(out):
             try:
                 lite_main(
-                    ["device", "D402", "--db", str(lite), "--root", str(root), "--json"]
+                    ["device", "D401", "--db", str(lite), "--root", str(root), "--json"]
                 )
             except SystemExit:
                 pass
         payload = json.loads(out.getvalue())
         results = payload.get("results") or payload.get("data") or []
         assert results, payload
-        assert results[0].get("covered_by"), results
+        result = results[0]
+        assert result.get("occurrences") == 1, result
+        covered = result.get("covered_by") or []
+        assert covered, result
+        bmov = next(item for item in covered if item.get("opcode") == "BMOV")
+        assert bmov.get("covered_by") == "D400", bmov
+        assert bmov.get("run_offset") == 1, bmov
+        assert bmov.get("run_length") == 4, bmov
+        assert bmov.get("match_kind") == "covered", bmov
 
 
 def main() -> int:
     test_both_indexes_agree_that_the_run_reaches_it()
     test_a_covered_device_is_not_dressed_up_as_its_own_occurrence()
+    test_named_and_covered_evidence_survive_together()
     test_a_device_the_ladder_names_answers_as_before()
     test_one_past_the_end_is_still_not_found()
-    test_the_json_form_carries_it_too()
+    test_the_json_form_carries_named_and_covered_semantics()
     print("covered lookup checks passed")
     return 0
 
