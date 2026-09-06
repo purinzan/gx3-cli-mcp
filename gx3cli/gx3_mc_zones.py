@@ -15,8 +15,9 @@ execution context that lives outside that rung:
 
 ECALL deliberately stays conservative until its program-file operand can be
 mapped to the exact program/LDDB from project evidence. Duplicate pointers,
-missing RET, ECALL targets and recursive/cyclic invocation are likewise kept as
-explicit unresolved execution context rather than guessed.
+missing RET, missing pointer definitions, unreadable call-site topology, ECALL
+targets and recursive/cyclic invocation are kept as explicit unresolved
+execution context rather than guessed.
 """
 
 from collections import defaultdict
@@ -146,19 +147,7 @@ class CallContext:
 
 
 def inferred_label_resolver(rows: list[LadderRow]) -> LabelResolver | None:
-    """Recover label names already resolved on the row occurrence boundary.
-
-    `trace-device` resolves LABEL occurrences before it asks this module for
-    control-flow context. Older callers pass only rows, while newer callers may
-    pass the resolver explicitly. Re-reading LabelData here would duplicate
-    project discovery and a module-global resolver would leak across MCP
-    analyses, so the fallback uses only evidence already attached to the rows.
-
-    Header label tokens and decoded LABEL occurrences are produced by the same
-    canonical operation walk and therefore keep the same order. A still-raw
-    `_lid/...` occurrence is deliberately skipped: absence of a name is not a
-    licence to invent one.
-    """
+    """Recover label names already resolved on the row occurrence boundary."""
     entries: dict[tuple[str, int], LabelRef] = {}
     for row in rows:
         tokens = [token for token in header_tokens(row.data) if token.startswith(LABEL_TOKEN_PREFIX)]
@@ -203,8 +192,6 @@ def first_arg_number(raw: str) -> int | None:
 
 
 def mc_relay_device(element: FlowElement) -> str:
-    # arg order is (N, relay); with a single decoded device it is ambiguous,
-    # so only trust it when both were decoded. Relay is informational only.
     if len(element.devices) >= 2:
         return element.devices[-1].device
     return ""
@@ -292,9 +279,6 @@ def _scope_for_start(
 ) -> SubroutineScope:
     end = next((pos for pos in ret_positions.get(lddb, []) if pos > start_pos), None)
     if end is None:
-        # Keep a bounded affected range even when RET is missing. This is not a
-        # claim that the subroutine extends to the file end; it is precisely the
-        # range in which project-level execution cannot be completed statically.
         return SubroutineScope(
             lddb,
             pointer,
@@ -313,9 +297,6 @@ def _call_sites(
 ) -> list[CallSite]:
     sites: list[CallSite] = []
     for row in rows:
-        # CALL is uncommon even in large projects. The cheap header walk keeps
-        # a 6,000-rung project from paying full printable/topology decoding on
-        # every ordinary row merely to discover that it contains no call.
         if not any(hop.op in CALL_OPS for hop in parse_header_ops(row.data)):
             continue
         printed, _verticals, _wires = parse_rung(row, labels)
@@ -375,13 +356,13 @@ def _call_context(
 
     pointer_defs = _pointer_definitions(rows)
     ret_positions = _ret_positions(rows)
+    min_pos: dict[str, int] = {}
     max_pos: dict[str, int] = {}
     for row in rows:
+        min_pos[row.lddb] = min(min_pos.get(row.lddb, row.pos), row.pos)
         max_pos[row.lddb] = max(max_pos.get(row.lddb, row.pos), row.pos)
+    all_lddbs = sorted(max_pos)
 
-    # Only pointers actually named by CALL/ECALL are candidate subroutine
-    # entries. A P label used only by CJ is a jump destination, not evidence of
-    # a callable P..RET scope.
     wanted: set[tuple[str, int]] = set()
     for site in sites:
         if site.pointer is None:
@@ -406,17 +387,29 @@ def _call_context(
         scopes_by_pointer[scope.pointer].append(scope)
 
     unresolved_reason: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    global_unresolved: dict[str, set[str]] = defaultdict(set)
     incoming: dict[tuple[str, int, int], list[CallSite]] = defaultdict(list)
+
+    def mark_global(reason: str, lddbs: list[str]) -> None:
+        for lddb in lddbs:
+            global_unresolved[lddb].add(reason)
 
     for site in sites:
         if site.pointer is None:
+            targets = all_lddbs if site.opcode == "ECALL" else [site.lddb]
+            mark_global(
+                f"{site.opcode} at {site.lddb}:{site.pos} pointer target could not be decoded",
+                targets,
+            )
             continue
+
         if site.opcode == "ECALL":
-            # ECALL chooses a program file as well as P. Until that program
-            # operand is mapped to an exact LDDB, every same-numbered P scope is
-            # only a candidate. Keep all candidates partial rather than choosing
-            # the convenient one.
             candidates = scopes_by_pointer.get(site.pointer, [])
+            if not candidates:
+                mark_global(
+                    f"ECALL P{site.pointer} has no matching P definition and its program target is unresolved",
+                    all_lddbs,
+                )
             for scope in candidates:
                 unresolved_reason[scope.key].add(
                     f"ECALL P{site.pointer} program target is not resolved to one LDDB"
@@ -426,9 +419,19 @@ def _call_context(
 
         candidates = scopes_by_target.get((site.lddb, site.pointer), [])
         site.target_keys = [scope.key for scope in candidates]
+        if not candidates:
+            mark_global(
+                f"CALL P{site.pointer} has no pointer definition in {site.lddb}",
+                [site.lddb],
+            )
+            continue
         if len(candidates) == 1:
             incoming[candidates[0].key].append(site)
-        elif len(candidates) > 1:
+            if site.condition.get("op") == "unknown":
+                unresolved_reason[candidates[0].key].add(
+                    f"CALL P{site.pointer} call-site topology could not be resolved"
+                )
+        else:
             for scope in candidates:
                 unresolved_reason[scope.key].add(
                     f"CALL P{site.pointer} has {len(candidates)} pointer definitions in {site.lddb}"
@@ -442,8 +445,6 @@ def _call_context(
         candidates = [scope for scope in scopes if scope.lddb == lddb and scope.contains(pos)]
         if not candidates:
             return None
-        # The latest entry is the innermost/most specific scope if data is
-        # unusual enough to overlap.
         return max(candidates, key=lambda scope: scope.start_pos)
 
     cache: dict[tuple[str, int, int], dict[str, Any] | None] = {}
@@ -461,8 +462,7 @@ def _call_context(
 
         visiting.append(scope.key)
         terms: list[dict[str, Any]] = []
-        sites_here = incoming.get(scope.key, [])
-        for site in sites_here:
+        for site in incoming.get(scope.key, []):
             parent = containing_scope(site.lddb, site.pos)
             if parent is None:
                 terms.append(site.condition)
@@ -489,9 +489,6 @@ def _call_context(
     for scope in scopes:
         logic = invocation(scope)
         if logic is not None:
-            # McZone.contains is start-exclusive for real MC. Shift the
-            # synthetic start one position so the rung carrying P itself is
-            # included in its invocation context.
             context.zones.setdefault(scope.lddb, []).append(
                 McZone(
                     lddb=scope.lddb,
@@ -520,6 +517,26 @@ def _call_context(
                     reason=reason,
                 )
             )
+
+    # If the target scope itself cannot be located, there is no honest bounded
+    # subroutine range to annotate. Fail closed over the smallest defensible
+    # domain: the current LDDB for CALL, or every LDDB for unresolved ECALL.
+    for lddb, reasons in global_unresolved.items():
+        if lddb not in min_pos:
+            continue
+        reason = "; ".join(sorted(reasons))
+        start = min_pos[lddb]
+        context.unresolved.setdefault(lddb, []).append(
+            JumpSite(
+                lddb=lddb,
+                pos=start - 1,
+                opcode="CALL_CONTEXT",
+                condition_text=reason,
+                start_pos=start,
+                end_pos=max_pos[lddb] + 1,
+                reason=reason,
+            )
+        )
 
     for zones in context.zones.values():
         zones.sort(key=lambda zone: (zone.start_pos, zone.end_pos or 2**63))
