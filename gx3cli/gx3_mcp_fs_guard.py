@@ -20,7 +20,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
@@ -80,6 +80,7 @@ def _install_open_guards() -> None:
     original_open = builtins.open
     original_io_open = io.open
     original_os_open = os.open
+    original_path_open = Path.open
 
     def guarded_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any):
         if _mode_writes(mode) and not isinstance(file, int):
@@ -96,9 +97,32 @@ def _install_open_guards() -> None:
             _require_inside(path, "os.open for write", dir_fd=dir_fd)
         return original_os_open(path, flags, mode, dir_fd=dir_fd)
 
+    def guarded_path_open(
+        self: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ):
+        # pathlib implementations have changed across supported Python
+        # versions. Some versions retain an opener captured before
+        # sitecustomize patches io.open, so guard Path.open explicitly too.
+        if _mode_writes(mode):
+            _require_inside(self, "Path.open for write")
+        return original_path_open(
+            self,
+            mode=mode,
+            buffering=buffering,
+            encoding=encoding,
+            errors=errors,
+            newline=newline,
+        )
+
     builtins.open = guarded_open
     io.open = guarded_io_open
     os.open = guarded_os_open
+    Path.open = guarded_path_open
 
 
 def _install_mutation_guards() -> None:
