@@ -39,6 +39,11 @@ def main() -> int:
             assert sample["trace"][loader] == 1, sample
         assert sample["dependency_flow"]["load_rows"] == 1, sample
         assert sample["dependency_flow"]["load_comments"] == 1, sample
+        # One checked connection replaces probe + reopen. BEGIN and ST scope
+        # query add two SQL statements; multi-pou reads three extra source DBs.
+        multi = sample["case"] == "multi-pou"
+        assert sample["dependency_flow"]["sqlite_opens"] == (5 if multi else 2), sample
+        assert sample["dependency_flow"]["sql_statements"] == (14 if multi else 11), sample
     print("synthetic benchmark determinism and instrumentation checks passed")
     return 0
 

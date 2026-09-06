@@ -133,7 +133,11 @@ def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
 def open_xref_db(
     path: Path, read_only: bool = False, root: Path | None = None, *, snapshot: bool = False
 ) -> sqlite3.Connection:
-    """Open a cross-reference database, checked against the decoder and input."""
+    """Open a database checked against the decoder and input.
+
+    snapshot pins validation and later queries to one read transaction. The
+    caller must close the returned handle; source files are not pinned.
+    """
     uri = f"file:{path}?mode=ro" if read_only else str(path)
     con = sqlite3.connect(uri, uri=read_only)
     con.row_factory = sqlite3.Row
