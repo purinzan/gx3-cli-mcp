@@ -26,11 +26,13 @@ from pathlib import Path
 # The files an answer depends on. Anything not here can change without changing
 # what the analysis says -- outputs, caches, the index itself.
 ANALYSIS_INPUTS = (
-    "*_LDDB.db",
-    "*_DC.db",
-    "*_MilDB.db",
-    "*_StepInfo.db",
-    "LabelData.db",
+    # Module parameter readers discover tables in every project-level .db;
+    # this also includes ST/FBD, device memory and label/step/comment stores.
+    "*.db",
+    "SourceInfo.CAB",
+    "Config.xml",
+    "*.iut",
+    "*.w3pa",
     "UnitConfig.dat",
     "CPU.PRM",
     "UNIT.PRM",
@@ -66,11 +68,13 @@ def fingerprint(root: Path) -> str:
     files = input_files(root)
     if not files:
         return ""
-    digest = hashlib.sha256()
+    # Version the dependency contract as well as the content. Old fingerprints
+    # cannot certify that inputs newly added to this manifest were unchanged.
+    digest = hashlib.sha256(b"gx3-analysis-inputs-v2\0")
     for path in files:
-        digest.update(path.name.encode("utf-8"))
-        digest.update(str(path.stat().st_size).encode("utf-8"))
-        digest.update(file_digest(path).encode("utf-8"))
+        digest.update(path.name.encode("utf-8") + b"\0")
+        digest.update(str(path.stat().st_size).encode("ascii") + b"\0")
+        digest.update(file_digest(path).encode("ascii") + b"\0")
     return digest.hexdigest()
 
 
