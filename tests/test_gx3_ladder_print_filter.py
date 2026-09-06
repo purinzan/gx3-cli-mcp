@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from gx3cli.gx3_ladder_print import load_live_values, scan_sections, truthy_live_value, select_entries
-from gx3cli.gx3_snapshot_explain import build_explanation, evaluate_logic, explain_driver_row, load_snapshot
+from gx3cli.gx3_live_read import build_explanation, evaluate_logic, explain_driver_row, load_snapshot
 
 
 def entry(blocktype, pos, title=None, devices=(), lines=None):
