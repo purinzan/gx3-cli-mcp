@@ -134,3 +134,18 @@ coldのSQLは全caseで+13、traceは+7（multi-pou 16→23、他13→20）。
 loader回数とfingerprint読込みは前と同じ。Python peak中央値は増加最大約4KiB、
 process peak RSS中央値の増加も最大約0.24MiBで、いずれも前述の予算内だった。
 単独の速度改善を狙う変更ではなく、構造検証の追加コストが固定的であることの確認。
+
+## 値フローの検証・読取りsnapshot化
+
+`eeca7ff23248240c8338aed0d6421c1d87577cd7`→`6d48bf687f6075ff7765f13ed8f889881cb6da57`。
+同じv2 harnessでCLI同様のパス選択とbuild_flowを測定した。前版のprobeと再openも
+測定に含む。固定6検体・各3回を同じ環境で順次実行し、全入力hashが一致。
+中央値msはsmall 3.08→2.96、wide 21.53→21.42、deep 24.45→22.55、
+large-span 15.35→16.70、multi-pou 24.90→23.48、ld-st 22.72→22.81。
+
+値フローphaseのSQLite openは3→2（multi-pouは6→5）、SQLは9→11
+（multi-pouは12→14）。BEGINとST能力差の確認が各1回増える。
+rows/commentsは各1回、labelsは0回、入力hash読込み回数は変更なし。
+Python peak中央値の増分は最大約60KiBで、値フローphaseの時間・Python peak・
+累積RSSは前述の予算内。構造的なSQL/open予算も回帰テストへ追加した。
+速度改善の一般化はしない。全入力の同時変更防止、Windows性能、実案件規模は未検証。
