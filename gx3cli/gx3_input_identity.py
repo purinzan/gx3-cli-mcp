@@ -83,11 +83,12 @@ def short(value: str) -> str:
 
 
 def mismatch_message(kind: str, path: Path, stored: str, actual: str, rebuild: str) -> str:
+    problem = "was built from a different input" if stored and actual else "input identity cannot be verified"
     return "\n".join(
         [
-            f"{kind} was built from a different input: {path}",
+            f"{kind} {problem}: {path}",
             f"  built from: {short(stored)}   this project: {short(actual)}",
-            "Answers taken from it would be about the other input.",
+            "Answers from it cannot be verified against this project.",
             f"Rebuild it: {rebuild}",
         ]
     )

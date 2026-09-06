@@ -130,7 +130,7 @@ def load_trace_constant_context(
 
     try:
         con = open_xref_db(xref_path, root=root)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         return TraceConstantContext({}, False, f"xref unavailable for constant pruning: {exc}")
 
     try:

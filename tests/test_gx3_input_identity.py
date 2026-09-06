@@ -14,8 +14,10 @@ came from the same input. So the fingerprint covers all of them.
 """
 
 import sqlite3
+import os
 import tempfile
 import shutil
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_input_identity import fingerprint, input_files
@@ -101,9 +103,8 @@ def test_a_database_built_from_another_project_is_refused() -> None:
         raise AssertionError("a database from another project was accepted")
 
 
-def test_a_database_with_no_input_recorded_still_opens() -> None:
-    # Built before inputs were stamped. The decoder check already refuses those
-    # that matter; this must not add a second failure for the same thing.
+def test_a_database_with_no_input_recorded_requires_rebuild_for_root() -> None:
+    # Decoder compatibility is not proof of project identity.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         project = create_demo_line_project(work / "line", overwrite=True)
@@ -113,8 +114,78 @@ def test_a_database_with_no_input_recorded_still_opens() -> None:
         stamp_decoder(con)  # no root: no input recorded
         con.commit()
         con.close()
-        con = open_xref_db(db, root=project)
+        try:
+            open_xref_db(db, root=project)
+        except SystemExit as exc:
+            assert "cannot be verified" in str(exc), exc
+        else:
+            raise AssertionError("unstamped database accepted for project")
+        # Standalone inspection without a claimed project remains supported.
+        con = open_xref_db(db)
         con.close()
+
+
+def test_real_indexes_reject_missing_identity_and_removed_inputs() -> None:
+    from gx3cli.gx3_workspace import prepare, locate
+    from gx3cli.gx3_index_lite import open_existing
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
+        built = prepare(project)
+        for artifact, opener in ((built.xref, open_xref_db), (built.index, open_existing)):
+            with closing(sqlite3.connect(artifact.path)) as con, con:
+                saved = con.execute("select value from meta where key='input_sha256'").fetchone()[0]
+                con.execute("delete from meta where key='input_sha256'")
+            try:
+                opener(artifact.path, root=project)
+            except SystemExit as exc:
+                assert "cannot be verified" in str(exc), exc
+            else:
+                raise AssertionError("missing identity accepted")
+            assert not getattr(locate(project), artifact.kind).usable
+            with closing(sqlite3.connect(artifact.path)) as con, con:
+                con.execute("insert into meta values ('input_sha256', ?)", (saved,))
+        for path in input_files(project):
+            path.unlink()
+        assert not locate(project).ready
+        for artifact, opener in ((built.xref, open_xref_db), (built.index, open_existing)):
+            try:
+                opener(artifact.path, root=project)
+            except SystemExit as exc:
+                assert "cannot be verified" in str(exc), exc
+            else:
+                raise AssertionError("removed input accepted")
+            # Failed validation must not retain a Windows file lock.
+            moved = artifact.path.with_suffix(".moved")
+            artifact.path.rename(moved)
+            moved.rename(artifact.path)
+
+
+def test_rejected_xref_disables_only_optional_trace_pruning() -> None:
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = create_demo_line_project(Path(tmp) / "line", overwrite=True)
+        built = prepare(project)
+        previous = Path.cwd()
+        try:
+            os.chdir(tmp)
+            for key in ("input_sha256", "decoder"):
+                with closing(sqlite3.connect(built.xref.path)) as con, con:
+                    original = con.execute("select value from meta where key=?", (key,)).fetchone()[0]
+                    con.execute("delete from meta where key=?", (key,))
+                context = load_trace_constant_context(project, [], [])
+                assert not context.enabled and not context.facts, context
+                assert "xref unavailable" in context.reason, context
+                trace = build_trace(project, "Y0", max_depth=2, max_devices=20,
+                                    include_reset=True, strict_logic=True)
+                assert trace["target"]["device"] == "Y0", trace
+                with closing(sqlite3.connect(built.xref.path)) as con, con:
+                    con.execute("insert into meta values (?, ?)", (key, original))
+        finally:
+            os.chdir(previous)
 
 
 def test_new_analysis_dependencies_invalidate_real_indexes() -> None:
@@ -149,12 +220,14 @@ def test_new_analysis_dependencies_invalidate_real_indexes() -> None:
 
 
 def main() -> int:
+    test_rejected_xref_disables_only_optional_trace_pruning()
     test_new_analysis_dependencies_invalidate_real_indexes()
     test_a_folder_with_no_ladder_has_no_identity()
     test_the_same_project_hashes_the_same_and_a_changed_one_does_not()
     test_the_ladder_the_comments_and_the_parameters_all_count()
     test_a_database_built_from_another_project_is_refused()
-    test_a_database_with_no_input_recorded_still_opens()
+    test_a_database_with_no_input_recorded_requires_rebuild_for_root()
+    test_real_indexes_reject_missing_identity_and_removed_inputs()
     print("input identity checks passed")
     return 0
 

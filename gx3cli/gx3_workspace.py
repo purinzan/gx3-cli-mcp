@@ -142,7 +142,9 @@ def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
         return Artefact(kind, path, UNREADABLE, "no meta table; not a database this build wrote")
 
     stored_input = meta.get("input_sha256", "")
-    if stored_input and expected_input and stored_input != expected_input:
+    if not expected_input:
+        return Artefact(kind, path, OTHER_INPUT, "project has no verifiable analysis inputs")
+    if stored_input and stored_input != expected_input:
         return Artefact(
             kind,
             path,
