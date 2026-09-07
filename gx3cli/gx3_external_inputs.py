@@ -14,7 +14,8 @@ from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import LadderRow, comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
-from gx3cli.gx3_device_name import device_radix
+from gx3cli.gx3_device_name import device_radix, split_device
+from gx3cli.gx3_analysis_state import AnalysisState, NOT_EVALUATED, PARTIAL, DISCOVERY, DECODE
 
 
 CONTACT_ROLES = {"a", "b"}
@@ -102,23 +103,51 @@ def find_comm_csv(name_suffix: str, path: Path | None = None) -> Path:
     return Path(name)
 
 
-def load_refresh_areas(path: Path | None = None) -> list[RefreshArea]:
+@dataclass
+class RefreshAreaEvidence:
+    areas: list[RefreshArea]
+    analysis: AnalysisState
+    read_error: Exception | None = None
+
+
+def read_refresh_areas(path: Path | None = None) -> RefreshAreaEvidence:
+    """Read supplied CSV contents, not proof of project/external-write coverage.
+
+    A checked empty CSV differs from a missing or malformed CSV. Provenance
+    and configuration completeness require evidence beyond this file reader.
+    """
     path = find_comm_csv("refresh_areas.csv", path)
-    if not path.exists():
-        return []
     areas: list[RefreshArea] = []
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            start = str(row.get("device_start", "")).strip().upper()
-            end = str(row.get("device_end", "")).strip().upper()
-            start_parsed = parse_device_text(start)
-            end_parsed = parse_device_text(end)
-            if not start_parsed or not end_parsed:
-                continue
-            if start_parsed[0] != end_parsed[0]:
-                continue
-            areas.append(
-                RefreshArea(
+    detail: dict[str, object] = {
+        "path": str(path),
+        "scope": "supplied CSV contents only; project provenance and external-write coverage not verified",
+    }
+    invalid_lines: list[int] = []
+    invalid_count = 0
+    read_error: Exception | None = None
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f, strict=True)
+            fields = reader.fieldnames or []
+            if not {"device_start", "device_end"}.issubset(fields) or len(fields) != len(set(fields)):
+                return RefreshAreaEvidence(areas, AnalysisState(
+                    NOT_EVALUATED, "invalid refresh CSV header", "regenerate the communication refresh CSV",
+                    detail=detail, stage=DECODE))
+            for row in reader:
+                start = (row.get("device_start") or "").strip().upper()
+                end = (row.get("device_end") or "").strip().upper()
+                try:
+                    start_parsed = split_device(start)
+                    end_parsed = split_device(end)
+                except ValueError:
+                    start_parsed = end_parsed = None
+                if (None in row or None in row.values() or not start_parsed or not end_parsed
+                        or start_parsed[0] != end_parsed[0] or start_parsed[1] > end_parsed[1]):
+                    invalid_count += 1
+                    if len(invalid_lines) < 10:
+                        invalid_lines.append(reader.line_num)
+                    continue
+                areas.append(RefreshArea(
                     object_id=str(row.get("object_id", "")),
                     network_label=str(row.get("network_label", "")),
                     area_kind=str(row.get("area_kind", "")),
@@ -132,9 +161,33 @@ def load_refresh_areas(path: Path | None = None) -> list[RefreshArea]:
                     slot_number=str(row.get("slot_number", "")),
                     unit_start_io=str(row.get("unit_start_io", "")),
                     station=str(row.get("remote_station_module_strings", "")),
-                )
-            )
-    return areas
+                ))
+    except OSError as exc:
+        return RefreshAreaEvidence(areas, AnalysisState(
+            NOT_EVALUATED, f"refresh CSV unavailable: {exc}", "supply a readable communication refresh CSV",
+            detail=detail, stage=DISCOVERY), None if isinstance(exc, FileNotFoundError) else exc)
+    except (csv.Error, UnicodeError) as exc:
+        detail["error"] = str(exc)
+        invalid_count += 1
+        read_error = exc
+    if invalid_count:
+        detail.update(invalid_count=invalid_count, invalid_lines=invalid_lines, known_area_count=len(areas))
+        return RefreshAreaEvidence(areas, AnalysisState(
+            PARTIAL, "refresh CSV contains uninterpreted data", "repair or regenerate the communication refresh CSV",
+            detail=detail, stage=DECODE), read_error)
+    return RefreshAreaEvidence(areas, AnalysisState(detail=detail))
+
+
+def load_refresh_areas(path: Path | None = None) -> list[RefreshArea]:
+    """Known-area compatibility projection; [] is not absence evidence.
+
+    Preserve read/encoding errors for consumers not yet migrated to evidence:
+    silently turning those failures into a smaller list would weaken them.
+    """
+    evidence = read_refresh_areas(path)
+    if evidence.read_error is not None:
+        raise evidence.read_error
+    return evidence.areas
 
 
 def load_unit_io_areas(path: Path | None = None) -> list[UnitIoArea]:

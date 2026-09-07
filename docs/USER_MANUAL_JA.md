@@ -287,6 +287,12 @@ dead-logic / trace / Doctorのconstant-chainは、保存された外部境界分
 `<prefix>_analysis.json`に評価状態を出力します。正常な空の分類表とは区別しますが、
 正常に読めた場合でも、実設備の全外部writerや実行時の定数を保証するものではありません。
 
+lintの`external-value-source`は、refresh CSVの未取得・不正なheader・不正な範囲・
+文字コード/CSV構文の不正を、正常な空CSVと区別します。不正な入力では依存するcheckを
+`not_evaluated`とし、JSONに原因・段階・CSV読取り範囲を残します。`--require-evaluated`も
+失敗します。有効な空CSVは「指定CSV内に範囲なし」の意味に限定され、別プロジェクトの
+CSVでないことや実設備の全外部writerの不存在を証明するものではありません。
+
 lintとDoctorのproject-healthもlite索引の入力指紋・device naming版を検証します。
 別入力・指紋欠損・旧版のlite索引は拒否し、欠損している場合は従来どおり依存する検査を未評価にします。
 liteの照会は読取り専用で開き、失敗した場合も先に開いた解析DBを閉じます。

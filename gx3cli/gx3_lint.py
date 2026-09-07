@@ -31,7 +31,7 @@ import re
 import sqlite3
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -46,7 +46,7 @@ from gx3cli.gx3_project_paths import (
 )
 from gx3cli.gx3_device_name import format_device, split_device
 from gx3cli.gx3_xref_read import device_match
-from gx3cli.gx3_external_inputs import load_refresh_areas, refresh_area_for
+from gx3cli.gx3_external_inputs import read_refresh_areas, refresh_area_for
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE, collect_alarms
 from gx3cli.review_gx3_project import (
@@ -165,6 +165,7 @@ class LintContext:
     # Where the communication refresh areas were written, if they were.
     refresh_csv: str = ""
     _refresh_areas: object = _UNLOADED
+    refresh_analysis: AnalysisState | None = None
 
     def cannot_evaluate(self, check: str, reason: str, next_step: str = "") -> list:
         self.states[check] = not_evaluated(reason, next_step)
@@ -181,10 +182,12 @@ class LintContext:
         """
         if self._refresh_areas is _UNLOADED:
             path = Path(self.refresh_csv) if self.refresh_csv else None
-            if path is None or not path.exists():
+            if path is None:
                 self._refresh_areas = None
             else:
-                self._refresh_areas = load_refresh_areas(path)
+                evidence = read_refresh_areas(path)
+                self.refresh_analysis = evidence.analysis
+                self._refresh_areas = evidence.areas if evidence.analysis.conclusive else None
         return self._refresh_areas
 
     def comment(self, device_type: str, number: int) -> str:
@@ -484,11 +487,18 @@ def check_external_value_source(ctx: LintContext) -> list[dict[str, object]]:
 
     refresh_areas = ctx.refresh_areas()
     if refresh_areas is None:
+        if ctx.refresh_analysis is not None:
+            state = replace(ctx.refresh_analysis, state="not_evaluated")
+            ctx.states["external-value-source"] = state
+            print(f"  external-value-source: {state.line()}")
+            return []
         return ctx.cannot_evaluate(
             "external-value-source",
             "no communication refresh areas; a refreshed device would be reported as unexplained",
             "gx3-cli comm-refresh --root <project>")
 
+    if ctx.refresh_analysis is not None:
+        ctx.states["external-value-source"] = ctx.refresh_analysis
     written = {
         str(row["device"])
         for row in ctx.xref.execute(

@@ -122,3 +122,12 @@ SQL/loader回数、wall時間、Python peakとprocess peak RSSを区別する。
 
 本表の未完項目が解消または根拠付きで範囲外と判定され、Issue本文の代表検体と
 性能比較が揃うまでは、#153をクローズしない。
+
+## refresh CSVからlintへの読取り状態
+
+refresh CSVはread_refresh_areasで既知の範囲と読取り状態を一度に返す。
+lint external-value-sourceはこの結果を使い、欠損/不正入力で依存checkを未評価にする。
+実合成LDDB→xref→lint summary/CLI JSONとrequire-evaluatedで空確認と取得失敗を区別。
+load_refresh_areasは既知範囲だけの互換projectionであり、空リストは不存在証明ではない。
+従来のI/O/文字コードエラーは握り潰さない。他のCSV consumer、units CSV、保存済み境界の
+入力由来・完全性の契約は未移行であり、このreader追加だけで全外部境界の受入とはしない。
