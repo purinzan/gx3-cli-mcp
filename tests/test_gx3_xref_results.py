@@ -248,7 +248,84 @@ def test_st_xref_bridge(root: Path) -> None:
     assert "Downstream traversal does not infer value-flow through ST" in text, text
 
 
+def test_cross_project_member_counts_and_limits() -> None:
+    from test_gx3_shared_reach import write_program, rung
+    from test_gx3_lint_block_runs import bmov, mov
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        a, b = work / "a", work / "b"
+        write_program(a, [("entry", generate_rung({"device": "M0"}, {"type": "coil", "device": "M1"})[0])])
+        write_program(b, [("block", bmov(300, 400, 4)), ("single", mov(500, 401)),
+                          ("both", rung("D+:D:D", "d{s=#:a=500:vt=nn}:d{s=#:a=600:vt=nn}"))])
+        assert invoke(a, "build")[0] == 0
+        assert invoke(b, "build")[0] == 0
+        links = work / "links # %.sqlite"
+        # The explicit project mapping is fixture input, not invented xref
+        # occurrences: both source indexes were built from their actual LDDBs.
+        with closing(sqlite3.connect(links)) as con, con:
+            con.execute("create table project(label, root, xref_db)")
+            con.execute("insert into project values ('B', ?, ?)", (str(b), str(b / "xref.sqlite")))
+            con.execute("create table link_map(project_a, device_a, project_b, device_b, link_type, direction, confidence, role)")
+            for device in ("D401", "D404", "D601"):
+                con.execute("insert into link_map values ('A','M0','B',?,'fixture','both',1,'explicit')", (device,))
+            con.execute("insert into link_map values ('A','M9','B','D401','fixture','both',1,'explicit')")
+            con.execute("insert into link_map values ('A','M8','C','D0','fixture','both',1,'explicit')")
+        for limit in (0, 1, 2, 3, -1):
+            code, text = invoke(a, "where-used", "M0", "--cross", "--project", "A",
+                                "--link-db", str(links), "--cross-xref-limit", str(limit))
+            assert code == 0, text
+            middle = text.split("-> B:D401", 1)[1].split("-> B:D404", 1)[0]
+            outside = text.split("-> B:D404", 1)[1].split("-> B:D601", 1)[0]
+            both = text.split("-> B:D601", 1)[1]
+            shown = 2 if limit < 0 else min(limit, 2)
+            assert f"Writers ({shown} shown / 2 total)" in middle, middle
+            assert ("showing" in middle) == (shown < 2), middle
+            if shown == 2:
+                assert "BMOV" in middle and "MOV" in middle, middle
+            assert "no indexed xref occurrences" in outside, outside
+            count = 0 if limit == 0 else 1
+            assert f"Writers ({count} shown / 1 total)" in both, both
+            assert f"Readers ({count} shown / 1 total)" in both, both
+            _, encoded = invoke(a, "where-used", "M0", "--cross", "--project", "A",
+                                "--link-db", str(links), "--cross-xref-limit", str(limit), "--json")
+            targets = {t["device"]: t for t in json.loads(encoded)["cross"]["targets"]}
+            assert targets["D401"]["total_count"] == 2
+            assert targets["D401"]["returned_count"] == shown
+            assert targets["D401"]["truncated"] == (shown < 2)
+            assert targets["D401"]["analysis"]["state"] == ("truncated" if shown < 2 else "checked")
+            assert targets["D404"]["analysis"]["state"] == "checked"
+            assert targets["D601"]["total_counts"] == {"writers": 1, "readers": 1, "refs": 0}
+        for cap in (0, 2, 3, 4, -1):
+            _, encoded = invoke(a, "where-used", "M0", "--cross", "--project", "A",
+                                "--link-db", str(links), "--cross-limit", str(cap), "--json")
+            cross = json.loads(encoded)["cross"]
+            shown = 3 if cap < 0 else min(cap, 3)
+            assert cross["target_count"] == 3 and cross["returned_target_count"] == shown
+            assert cross["truncated"] == (shown < 3)
+        for source in ("M9", "M8"):
+            code, encoded = invoke(a, "where-used", source, "--cross", "--project", "A",
+                                   "--link-db", str(links), "--json")
+            assert code == 1  # Existing exit code still describes the source-project query.
+            target = json.loads(encoded)["cross"]["targets"][0]
+            if source == "M9":
+                assert target["total_count"] == 2
+                _, text = invoke(a, "where-used", source, "--cross", "--project", "A", "--link-db", str(links))
+                assert "BMOV" in text
+            else:
+                assert target["analysis"]["state"] == "not_evaluated" and "total_count" not in target
+        _, encoded = invoke(a, "where-used", "M0", "--cross", "--project", "A",
+                            "--link-db", str(work / "absent.sqlite"), "--json")
+        assert json.loads(encoded)["cross"]["analysis"]["state"] == "not_evaluated"
+        assert not (work / "absent.sqlite").exists()
+        _, encoded = invoke(a, "where-used", "M7", "--cross", "--project", "A",
+                            "--link-db", str(links), "--json")
+        empty = json.loads(encoded)["cross"]
+        assert empty["targets"] == [] and empty["analysis"]["state"] == "checked"
+
+
 def main() -> int:
+    test_cross_project_member_counts_and_limits()
     test_range_and_read_modify_write_counts()
     test_real_read_modify_write_is_one_occurrence()
     with tempfile.TemporaryDirectory(prefix="gx3_xref_results_") as tmp:

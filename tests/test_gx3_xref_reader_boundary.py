@@ -50,10 +50,7 @@ APPROVED_NAMED_QUERIES = {
 
 # A known incomplete consumer, tracked explicitly rather than calling the
 # whole module safe. Remove this entry when that consumer is migrated.
-KNOWN_UNMIGRATED_QUERIES = {
-    ("gx3_xref.py", "print_cross_where_used", "select * from xref where device=? order by pou, pos limit ?"):
-        "#153 cross-project where-used still loses covered members; not an approved long-term query.",
-}
+KNOWN_UNMIGRATED_QUERIES = {}
 
 LOOKUP = re.compile(r"\b(?:where|and|or)\s+(?:\w+\.)?device\s*=\s*\?", re.IGNORECASE)
 

@@ -39,6 +39,14 @@ falseでも保持/初期値をOFFと証明できない。実LDDB→builder→定
 条件付き・SM401呼出しを除外し、SM400無条件呼出しと通常OUTは維持することを確認する。
 派生定数からのCALL成立証明、初回実行前の値や全POU実行順の証明は未完。
 
+cross-project where-usedのtext表示も、検証済みリンク先xrefを共通member照会へ接続。
+範囲内、both、総件数、表示上限による実打切り、indexed/STの注意を表示し、guardの
+該当KNOWN_UNMIGRATED_QUERYを除去した。2つの実合成LDDBと明示リンクfixtureで検証。
+JSONとtextはcross_where_usedの同じ構造化結果を使い、元project未検出でも照会する。
+リンク先欠損はnot_evaluated、target/occurrence両limitは実件数と比較して打切り判定。
+従来のexit codeは元projectの該当有無を維持。link-map自体のprovenance、
+全言語の参照完全性は引き続き未検証であり、全cross-project解析の証明とはしない。
+
 Architecture guardはxref/link-map/readerのファイル丸ごと免除を廃止した。
 execute呼出しのSQL文字列をASTで取り出し、ファイル・関数・SQL単位で例外を限定する。
 commentの名前取得とraw exportを正当なprojectionとして許可し、cross-project照会は

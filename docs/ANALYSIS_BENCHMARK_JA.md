@@ -210,6 +210,19 @@ traceは22→24（multi-pou25→27）、value-flowは11→12（multi-pou14→15�
 全case/phaseで不変、時間・Python peak・累積RSSも既存予算内。揺らぎを含む少数測定で、
 新しい速度改善の主張ではない。SQL予算テストにも用途別の固定増分を反映した。
 
+## cross-project where-used
+
+baseline `0e80a77`と本修正。既存v2固定6検体を各2projectに作成し、明示的な保存リンク
+1件から実where-used(text)を実行。各3回の新規プロセス、macOS/Python 3.14.4、入力hash一致。
+初回はPath.as_uriのurllib.request importでsmall9.17→42.66msと予算超過したため、
+SQLite用URIをurllib.parse.quoteによるパスエスケープに限定し、読取り専用を維持して再比較。
+再比較cross中央値msはsmall9.41→10.52、wide10.19→11.33、deep9.34→10.83、
+large-span9.27→11.19、multi-pou10.39→10.86、ld-st10.35→10.54。
+cross SQL28→34はmember存在/集計/制約照会、cold SQLと全phaseの
+open/rows/comments/labels/hash読込みは不変。cold/crossの時間・Python peak・累積RSSは
+既定予算内。状態を保つ追加コストであり、高速化の主張ではない。
+MCP通信・多数のリンク先・ネットワーク設備の性能を保証する測定ではない。
+
 ## xrefとindex-liteの照会契約
 
 CALL定数候補の保守化について、baseline `6373380`と本修正を既存v2固定6検体・各3回で
