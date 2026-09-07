@@ -326,70 +326,56 @@ def _comment_for(occ: ArgOcc, comments: dict[tuple[str, int], CommentInfo]) -> s
     return info.japanese or info.english or info.all_text or ""
 
 
+def decoded_rows(rows_by_db, program_map, labels):
+    """Yield each LD row once, with the source location shared by consumers."""
+    for lddb, rows in rows_by_db.items():
+        pou = program_map.label(lddb)
+        title = ""
+        for raw in rows:
+            blocktype = int(raw["blocktype"])
+            if blocktype in {1, 2}:
+                title = extract_title(str(raw["data"])) or title
+            if blocktype != 0:
+                continue
+            pos = int(float(raw["pos"]))
+            ops, status = parse_row_operations(str(raw["data"]), labels)
+            yield ops, status, dict(lddb=lddb, pos=pos, pou=pou,
+                                    step=program_map.step_of(lddb, pos),
+                                    title=title, block_id=str(raw["id"]))
+
+
+def operation_records(op, status, comments, location):
+    """Attach shared decoding evidence and comments to value-flow records."""
+    for record in records_for_operation(
+        op.opcode, op.argc, op.args, parse_status=status,
+        const_args=op.const_summary, constant_values=op.constant_values,
+        operation_index=op.op_index, element_position=op.element_position,
+        **location,
+    ):
+        source = next((o for o in op.args if o.device == record.source_device), None)
+        destination = next((o for o in op.args if o.device == record.destination_device), None)
+        yield replace(record, source_comment=_comment_for(source, comments) if source else "",
+                      destination_comment=_comment_for(destination, comments) if destination else "")
+
+
 def build_report(root: Path, device: str | None = None, opcode: str | None = None) -> dict[str, object]:
     """Parse all LDDBs and return a stable JSON-compatible report."""
-
     program_map = load_program_map(root)
     labels = load_label_resolver(root)
     comments = load_comments_for_root(root)
     wanted_device = _canonical_filter(device) if device else None
     wanted_opcode = opcode.upper() if opcode else None
     records: list[FlowRecord] = []
-    row_count = 0
-    operation_count = 0
-    partial_rows = 0
-
-    for lddb, rows in read_ladder_rows(root).items():
-        pou = program_map.label(lddb)
-        current_title = ""
-        for raw in rows:
-            data = str(raw["data"])
-            blocktype = int(raw["blocktype"])
-            if blocktype in {1, 2}:
-                title = extract_title(data)
-                if title:
-                    current_title = title
-            if blocktype != 0:
+    row_count = operation_count = partial_rows = 0
+    for ops, status, location in decoded_rows(read_ladder_rows(root), program_map, labels):
+        row_count += 1
+        operation_count += len(ops)
+        partial_rows += status != "exact"
+        for op in ops:
+            if not op.opcode or (wanted_opcode and op.opcode.upper() != wanted_opcode):
                 continue
-            row_count += 1
-            pos = int(float(raw["pos"]))
-            ops, status = parse_row_operations(data, labels)
-            if status != "exact":
-                partial_rows += 1
-            step = program_map.step_of(lddb, pos)
-            for op in ops:
-                operation_count += 1
-                operation_opcode = op.opcode
-                if not operation_opcode:
-                    continue
-                if wanted_opcode and operation_opcode.upper() != wanted_opcode:
-                    continue
-                op_records = records_for_operation(
-                    operation_opcode,
-                    op.argc,
-                    op.args,
-                    parse_status=status,
-                    const_args=op.const_summary,
-                    operation_index=op.op_index,
-                    block_id=str(raw["id"]),
-                    element_position=op.element_position,
-                    lddb=lddb,
-                    pos=pos,
-                    pou=pou,
-                    step=step,
-                    title=current_title,
-                    constant_values=op.constant_values,
-                )
-                for record in op_records:
-                    source = next((o for o in op.args if o.device == record.source_device), None)
-                    destination = next((o for o in op.args if o.device == record.destination_device), None)
-                    record = replace(
-                        record,
-                        source_comment=_comment_for(source, comments) if source else "",
-                        destination_comment=_comment_for(destination, comments) if destination else "",
-                    )
-                    if wanted_device and wanted_device not in {record.source_device, record.destination_device}:
-                        continue
+            for record in operation_records(op, status, comments, location):
+                if not wanted_device or wanted_device in {record.source_device, record.destination_device}:
                     records.append(record)
 
     edges = [asdict(record) for record in records if record.record_kind == "edge"]
