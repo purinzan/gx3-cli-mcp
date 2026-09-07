@@ -21,8 +21,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     header_tokens,
     is_op_like,
 )
-from gx3cli.gx3_arg_decode import parse_row_occurrences as decode_row_occurrences, parse_row_operations
-from gx3cli.gx3_intermediate_tool import decode_data, extract_dim, operation_model, parse_header_ops, read_ladder_rows
+from gx3cli.gx3_arg_decode import row_operations
+from gx3cli.gx3_intermediate_tool import parse_row_syntax, decode_data, extract_dim, operation_model, parse_header_ops, read_ladder_rows
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root, find_comment_db
 
 
@@ -189,9 +189,10 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
     """Decode every device argument of every operation (transfer destinations,
     buffer memory, digit-specified and indexed devices included)."""
     occs: list[DeviceOcc] = []
-    decoded, _status = decode_row_occurrences(row.data)
-    for role, _opcode, args, _consts in decoded:
-        for arg in args:
+    decoded, _status = row_operations(row)
+    for operation in decoded:
+        role = operation.role
+        for arg in operation.args:
             if arg.device_type in {"?", ""}:
                 continue
             occs.append(
@@ -228,8 +229,9 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
     return occs
 
 
-def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[LadderRow]:
-    rows_by_db = read_ladder_rows(root)
+def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo], *, rows_by_db=None) -> list[LadderRow]:
+    if rows_by_db is None:
+        rows_by_db = read_ladder_rows(root)
     out: list[LadderRow] = []
     for lddb, rows in rows_by_db.items():
         current_title = ""
@@ -242,7 +244,8 @@ def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[
                     current_title = title
             if blocktype != 0:
                 continue
-            operations = operation_model(data)
+            syntax = parse_row_syntax(data)
+            operations = operation_model(data, syntax=syntax)
             ce_count = data.count("s=ce{")
             parse_status = "exact" if ce_count == len(operations) else "partial"
             row = LadderRow(
@@ -257,6 +260,7 @@ def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[
                 operations=operations,
                 parse_status=parse_status,
             )
+            row._gx3_syntax_cache = (data, syntax)
             row.occurrences = parse_device_occurrences(row, comments)
             out.append(row)
     return out
@@ -613,7 +617,7 @@ def review_interlock_candidates(rows: list[LadderRow], comments: dict[tuple[str,
 def review_timer_settings(rows: list[LadderRow], comments: dict[tuple[str, int], CommentInfo]) -> list[dict[str, object]]:
     out = []
     for row in rows:
-        operations, _status = parse_row_operations(row.data)
+        operations, _status = row_operations(row)
         for operation in operations:
             opcode = operation.role
             if opcode not in {"OUT__16", "OUTH__16"}:

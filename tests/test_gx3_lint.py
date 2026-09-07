@@ -48,7 +48,7 @@ def ctx_with(ops_by_row: list[tuple[LadderRow, list[RowOp]]]) -> LintContext:
     rows = [row for row, _ in ops_by_row]
     ctx = LintContext(root=Path("."), rows=rows, comments={})
     for row, ops in ops_by_row:
-        ctx.row_ops_cache[f"{row.lddb}:{row.pos}"] = ops
+        ctx.row_ops_cache[(row.lddb, row.pos, row.data)] = ops
     return ctx
 
 

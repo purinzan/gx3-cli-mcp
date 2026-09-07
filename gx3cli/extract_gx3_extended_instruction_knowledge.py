@@ -388,8 +388,8 @@ def has_device_operand_after(tokens: list[str], index: int) -> bool:
     return token_device_type(tokens[index + 1]) in DEVICE_TYPES
 
 
-def parse_header_ops(data: str) -> list[HeaderOp]:
-    tokens = header_tokens(data)
+def parse_header_ops(data: str, *, tokens: list[str] | None = None) -> list[HeaderOp]:
+    tokens = header_tokens(data) if tokens is None else tokens
     ops: list[HeaderOp] = []
     skip_string_literal_tokens = 0
     for i, token in enumerate(tokens):

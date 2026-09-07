@@ -17,18 +17,17 @@ occurrence parsing for the lite index and static reviews).
 """
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 
 from gx3cli.gx3_device_name import format_device as _format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPES,
     extract_args_text,
-    extract_elements,
     element_meta,
-    header_tokens,
     top_level_items,
 )
-from gx3cli.gx3_intermediate_tool import parse_header_ops
+from gx3cli.gx3_intermediate_tool import RowSyntax, parse_row_syntax, row_syntax
 from gx3cli.gx3_operand_parse import CONST_VALUE_RE, M_CONST_MOD_RE, parse_operands
 from gx3cli.gx3_operand_display import apply_operand_modifiers
 
@@ -257,7 +256,7 @@ def parse_row_occurrences(
     return [(op.role, op.opcode, op.args, op.const_summary) for op in operations], status
 
 
-def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tuple[list[DecodedOperation], str]:
+def parse_row_operations(data: str, labels: LabelResolver | None = None, *, syntax: RowSyntax | None = None) -> tuple[list[DecodedOperation], str]:
     """Return decoded operations with raw argument metadata.
 
     This is the canonical row walk. Tools that need argument counts, constants,
@@ -265,9 +264,8 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
     and ``ce`` elements themselves.
     """
 
-    tokens = header_tokens(data)
-    header_ops = parse_header_ops(data)
-    ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
+    syntax = syntax if syntax is not None else parse_row_syntax(data)
+    tokens, header_ops, ce_elements = syntax.tokens, syntax.header_ops, syntax.ce_elements
     # The shape of the decode, and nothing more. "exact" here means the header
     # named as many operations as the row holds elements for -- it is not a
     # claim that each operation's devices, roles, operands, wiring or read and
@@ -752,3 +750,24 @@ def make_occ(
         detail=detail,
         is_index_register=index_register,
     )
+
+
+def row_operations(row, labels: LabelResolver | None = None) -> tuple[list[DecodedOperation], str]:
+    """Reuse decoding for a row and resolver without exposing mutable cache values.
+
+    Resolver objects are retained and compared by identity, so an unrelated
+    resolver cannot reuse a previous object's id. Resolvers are read-only
+    during analysis; changed row data always discards every decoded variant.
+    """
+    if LABEL_TOKEN_PREFIX not in row.data:
+        labels = None  # Device-only rows do not depend on a label resolver.
+    cached = getattr(row, "_gx3_operations_cache", None)
+    if cached is None or cached[0] != row.data:
+        cached = (row.data, [])
+        row._gx3_operations_cache = cached
+    for resolver, result in cached[1]:
+        if resolver is labels:
+            return deepcopy(result)
+    result = parse_row_operations(row.data, labels, syntax=row_syntax(row))
+    cached[1].append((labels, result))
+    return deepcopy(result)
