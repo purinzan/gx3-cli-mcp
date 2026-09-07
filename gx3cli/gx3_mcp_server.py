@@ -314,8 +314,9 @@ TYPED_TOOLS: list[TypedTool] = [
         name="gx3_device_map",
         command="device-map",
         description=(
-            "Report, per device type, which numbers are in use, how densely, and where the free gaps are. "
-            "Use it to pick an unused range before adding devices, or to see how a project is laid out. "
+            "Report, per device type, observed LD usage, density, and gaps in the index. "
+            "Gaps are not verified free allocations: ST/FBD, unresolved accesses and external or reserved "
+            "allocations are not excluded. Verify them in GX Works3 before adding devices. "
             "Read-only; returns a table and writes nothing. Requires the index-lite DB: run "
             "`gx3-cli index-lite build --root <root>` once per project first."
         ),

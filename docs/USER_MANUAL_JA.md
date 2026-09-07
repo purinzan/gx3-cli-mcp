@@ -54,7 +54,7 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | 同義語も広げてコメント検索する | `gx3-cli query-comment alarm --root project.gx3 --expand-synonyms` |
 | 外部入力、HMI、通信境界を見る | `gx3-cli query-external --root project.gx3` |
 | サイクル、ステップ、状態系候補を見る | `gx3-cli query-cycle --root project.gx3` |
-| 使用デバイス範囲と空き領域を見る | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
+| 観測した使用範囲と索引上の隙間を見る（割当可能性の証明ではない） | `gx3-cli device-map --root project.gx3 --types M,D,W --min-free 100` |
 | writer/reader と POU/step を見る | `gx3-cli xref where-used M100 --root project.gx3` |
 | スクリプト向け JSON を出す | `gx3-cli query-device M100 --root project.gx3 --json` |
 | デバイス辞書を出力する | `gx3-cli device-dictionary --root project.gx3 --format json -o address-comment.json` |
@@ -211,6 +211,12 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 `--show-layout-only` で描画領域サイズの変更も確認できます。
 
 ## 注意
+
+index-liteのdevice照会は観測済みLDオペランドと固定範囲の検索です。JSONの
+`reference_scope`が収録範囲、`availability_analysis`が割当可能性の未評価を示します。
+未検出の既存exit code 1・空resultsは維持しますが、ST/inline-ST/FBD、未解釈・
+動的アクセス、外部機器・予約領域が存在しないことは証明しません。device-mapの
+`free_ranges`は互換列名であり、索引上の隙間です。安全な空き領域と扱わないでください。
 
 xref/index-liteのbuildは一時SQLiteで構築し、前後の入力指紋・ファイル状態と保存指紋を
 照合してから出力を置き換えます。途中変更や構築失敗では以前のDBを残し、新規出力なら
