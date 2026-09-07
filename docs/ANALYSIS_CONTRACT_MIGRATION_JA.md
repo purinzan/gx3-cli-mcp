@@ -153,3 +153,15 @@ lint external-value-sourceはこの結果を使い、欠損/不正入力で依�
 load_refresh_areasは既知範囲だけの互換projectionであり、空リストは不存在証明ではない。
 従来のI/O/文字コードエラーは握り潰さない。他のCSV consumer、units CSV、保存済み境界の
 入力由来・完全性の契約は未移行であり、このreader追加だけで全外部境界の受入とはしない。
+
+## index-liteの外部ファイル依存と再構築
+
+実buildが選択したrefresh/units CSVを明示依存として保存し、共通の
+external_dependency_problemをreader/workspaceの再利用判断に使う。
+未存在→存在、削除、同size/mtimeの内容差、構築途中の変更を合成project→実build→
+実CLIで検証。再構築時は元のCSV指定を維持し、無関係なxrefは再利用する。
+旧依存manifest欠損は拒否・再構築。曖昧な旧相対パスは明示buildを必要とする。
+入力CSV自身への索引上書きも禁止する。範囲表示の手作りDBテストはprojection補助のまま残す。
+
+依存ファイルの内容同一性と、CSVのproject由来・解析完全性は別である。
+後者、直接CSVを読む他consumer、結果構築全体での複数artifact/source版の固定は未完。
