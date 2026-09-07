@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+`xref where-used --cross`はtext/JSONともリンク先の範囲参照・both・総件数を表示します。
+JSONでは既存resultsとは別の`cross`にリンク先結果・解析状態を追加します。
+元projectが未検出でもcrossを調べますが、既存exit code 1は元projectの未検出を表します。
+リンク先DB欠損は未評価、リンク先件数/参照件数の上限は実際に隠れた結果だけを打切り扱いに
+します。`--cross-limit -1`と`--cross-xref-limit -1`は各上限を解除します。
+保存されたlink-mapの対応付け自体や全言語の参照完全性を検証した結果ではありません。
+
 index-liteのdevice照会は観測済みLDオペランドと固定範囲の検索です。JSONの
 `reference_scope`が収録範囲、`availability_analysis`が割当可能性の未評価を示します。
 未検出の既存exit code 1・空resultsは維持しますが、ST/inline-ST/FBD、未解釈・

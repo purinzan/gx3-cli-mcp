@@ -33,6 +33,22 @@
 
 ## 共通基盤の変更と残り
 
+cross-project where-usedのtext表示も、検証済みリンク先xrefを共通member照会へ接続。
+範囲内、both、総件数、表示上限による実打切り、indexed/STの注意を表示し、guardの
+該当KNOWN_UNMIGRATED_QUERYを除去した。2つの実合成LDDBと明示リンクfixtureで検証。
+JSONとtextはcross_where_usedの同じ構造化結果を使い、元project未検出でも照会する。
+リンク先欠損はnot_evaluated、target/occurrence両limitは実件数と比較して打切り判定。
+従来のexit codeは元projectの該当有無を維持。link-map自体のprovenance、
+全言語の参照完全性は引き続き未検証であり、全cross-project解析の証明とはしない。
+
+Architecture guardはxref/link-map/readerのファイル丸ごと免除を廃止した。
+execute呼出しのSQL文字列をASTで取り出し、ファイル・関数・SQL単位で例外を限定する。
+commentの名前取得とraw exportを正当なprojectionとして許可し、cross-project照会は
+KNOWN_UNMIGRATED_QUERIESで未移行と明記する（正当な設計扱いにはしない）。
+別table・全件projection・member lookupのnegative testと、alias/連結文字列/f-stringの
+迂回positive testを追加。変数から組み立てるSQLや全意味重複の証明は対象外で、
+実builder→consumer回帰テストを引き続き必要とする。
+
 xref単一プロジェクトのwhere-usedはページ・件数とも共通readerのcovered_queryを使う。
 member表を使う実builder経路でD+のboth/第2語、BK+のsource/destination/範囲外を確認。
 device_filterはreaderのinterval_filterへの互換facade。member表のない低水準呼出しは

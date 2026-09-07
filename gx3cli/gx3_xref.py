@@ -29,6 +29,7 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_occurrences
@@ -804,12 +805,14 @@ def where_used(args: argparse.Namespace) -> int:
         "refs": sum(1 for r in symbol_rows if r["access"] not in {"read", "write"}),
     }
     found_any = bool(total or symbol_rows)
+    cross = cross_where_used(args, device) if args.cross else None
     if args.json:
         print(
             json.dumps(
                 {
                     "command": "xref where-used",
                     "root": str(args.root),
+                    **({"cross": cross} if cross is not None else {}),
                     "results": [
                         {
                             "device": device,
@@ -838,6 +841,8 @@ def where_used(args: argparse.Namespace) -> int:
         print(f"no occurrences: {device}")
         for warning in warnings:
             print(warning)
+        if cross is not None:
+            print_cross_where_used(args, device, report=cross)
         return 1
     print(f"{device} {comment}".rstrip())
     for warning in warnings:
@@ -867,17 +872,25 @@ def where_used(args: argparse.Namespace) -> int:
                 f"{r['source_file']} {r['source_location']} stmt={r['statement_index']}{resolved}"
             )
     if args.cross:
-        print_cross_where_used(args, device)
+        print_cross_where_used(args, device, report=cross)
     return 0
 
 
-def print_cross_where_used(args: argparse.Namespace, device: str) -> None:
+def cross_where_used(args: argparse.Namespace, device: str) -> dict[str, object]:
+    from gx3cli.gx3_analysis_state import AnalysisState, NOT_EVALUATED, PARTIAL, TRUNCATED, DISCOVERY, DECODE, SEMANTICS, REACH, worst
+
     link_db = Path(args.link_db)
-    if not link_db.exists():
-        print(f"\nCross-link targets: link-map db not found: {link_db}")
-        return
     project = args.project or project_label_from_root(Path(args.root))
-    link_con = sqlite3.connect(link_db)
+    report = {"project": project, "device": device, "link_db": str(link_db),
+              "scope": "saved link-map rows and indexed occurrences; mapping provenance is not verified",
+              "targets": [], "target_count": 0, "returned_target_count": 0, "truncated": False}
+    states = []
+    if not link_db.exists():
+        report["analysis"] = AnalysisState(NOT_EVALUATED, f"link-map db not found: {link_db}", "provide the saved link-map database", stage=DISCOVERY).as_dict()
+        return report
+    # Path.as_uri() imports urllib.request on Python 3.14. SQLite needs only
+    # an escaped local path, not URL-to-path/platform networking machinery.
+    link_con = sqlite3.connect("file:" + quote(link_db.resolve().as_posix(), safe="/:") + "?mode=ro", uri=True)
     link_con.row_factory = sqlite3.Row
     try:
         rows = link_con.execute(
@@ -893,53 +906,82 @@ def print_cross_where_used(args: argparse.Namespace, device: str) -> None:
             """,
             (project, device, project, device),
         ).fetchall()
-        print(f"\nCross-link targets via {link_db} ({project}:{device}):")
-        if not rows:
-            print("  (none)")
-            return
-        for link in rows[: args.cross_limit]:
+        states.append(AnalysisState())  # The saved link rows were examined, even if empty.
+        selected = rows if args.cross_limit < 0 else rows[:args.cross_limit]
+        report.update(target_count=len(rows), returned_target_count=len(selected), truncated=len(selected) < len(rows))
+        if report["truncated"]:
+            states.append(AnalysisState(TRUNCATED, "linked targets hidden by --cross-limit", "increase --cross-limit or use -1", stage=REACH))
+        for link in selected:
             other_project = str(link["other_project"])
             other_device = str(link["other_device"])
-            print(
-                f"  -> {other_project}:{other_device} "
-                f"type={link['link_type']} dir={link['direction']} confidence={link['confidence']} role={link['role']}"
-            )
+            target = {"project": other_project, "device": other_device,
+                      **{key: link[key] for key in ("link_type", "direction", "confidence", "role")}}
+            report["targets"].append(target)
             db_row = link_con.execute(
                 "select root, xref_db from project where label=?", (other_project,)
             ).fetchone()
-            if not db_row:
-                print("     xref db: unknown project in link-map")
+            if not db_row or not Path(str(db_row["xref_db"])).exists():
+                state = AnalysisState(NOT_EVALUATED, "linked project or xref database is unavailable", "restore the linked project/index and verify the mapping", stage=DISCOVERY)
+                target["analysis"] = state.as_dict()
+                states.append(state)
                 continue
             xref_path = Path(str(db_row["xref_db"]))
-            if not xref_path.exists():
-                print(f"     xref db missing: {xref_path}")
-                continue
             other_root = Path(str(db_row["root"]))
+            target.update(root=str(other_root), xref_db=str(xref_path))
             other_con = open_xref_db(xref_path, read_only=True, root=other_root)
             try:
-                other_rows = other_con.execute(
-                    "select * from xref where device=? order by pou, pos limit ?",
-                    (other_device, args.cross_xref_limit),
-                ).fetchall()
-                if not other_rows:
-                    print("     no xref rows")
-                    continue
+                other_rows = rows_for_device(other_con, other_device, args.cross_xref_limit)
+                counts, total = device_count_summary(other_con, other_device)
+                target_states = [AnalysisState()]  # An empty checked query is not a skipped query.
+                warnings = []
+                for warning, stage in ((indexed_note(other_con, other_device).strip(), SEMANTICS), (st_coverage_note(other_con), DECODE)):
+                    if warning:
+                        warnings.append(warning)
+                        target_states.append(AnalysisState(PARTIAL, warning, "inspect unresolved references in the linked project", stage=stage))
+                truncated = len(other_rows) < total
+                if truncated:
+                    target_states.append(AnalysisState(TRUNCATED, "linked occurrences hidden by --cross-xref-limit", "increase --cross-xref-limit or use -1", stage=REACH))
                 writers = [r for r in other_rows if r["access"] in {"write", "both"}]
-                readers = [r for r in other_rows if r["access"] == "read"]
-                if writers:
-                    print(f"     Writers ({len(writers)} shown):")
-                    for r in writers:
-                        print("   " + fmt_row(r))
-                if readers:
-                    print(f"     Readers ({len(readers)} shown):")
-                    for r in readers:
-                        print("   " + fmt_row(r))
+                readers = [r for r in other_rows if r["access"] in {"read", "both"}]
+                refs = [r for r in other_rows if r["access"] not in {"read", "write", "both"}]
+                target.update(writers=[row_dict(r) for r in writers], readers=[row_dict(r) for r in readers], refs=[row_dict(r) for r in refs],
+                              total_counts=counts, total_count=total, returned_count=len(other_rows), limit=args.cross_xref_limit,
+                              truncated=truncated, warnings=warnings, analysis=worst(target_states).as_dict())
+                states.extend(target_states)
             finally:
                 other_con.close()
-        if len(rows) > args.cross_limit:
-            print(f"  ... {len(rows) - args.cross_limit} more cross-link targets suppressed")
     finally:
         link_con.close()
+    report["analysis"] = worst(states).as_dict()
+    return report
+
+
+def print_cross_where_used(args: argparse.Namespace, device: str, *, report: dict | None = None) -> None:
+    report = cross_where_used(args, device) if report is None else report
+    print(f"\nCross-link targets via {report['link_db']} ({report['project']}:{device}):")
+    print("  Scope: " + report["scope"])
+    if report["analysis"]["state"] != "checked":
+        print(f"  {report['analysis']['state']}: {report['analysis']['reason']}")
+    if not report["targets"]:
+        print("  (no linked targets shown)")
+    for target in report["targets"]:
+        print(f"  -> {target['project']}:{target['device']} type={target['link_type']} dir={target['direction']} confidence={target['confidence']} role={target['role']}")
+        if "total_count" not in target:
+            print("     " + target["analysis"]["reason"])
+            continue
+        for warning in target["warnings"]:
+            print("     " + warning)
+        if not target["total_count"]:
+            print("     no indexed xref occurrences")
+        if target["truncated"]:
+            print(f"     showing {target['returned_count']} of {target['total_count']} occurrences (--cross-xref-limit {target['limit']}); increase the limit or use -1")
+        for label, key in (("Writers", "writers"), ("Readers", "readers"), ("Unclassified refs", "refs")):
+            if target["total_counts"][key]:
+                print(f"     {label} ({len(target[key])} shown / {target['total_counts'][key]} total):")
+                for row in target[key]:
+                    print("   " + fmt_row(row) + span_note(row, target["device"]))
+    if report["truncated"]:
+        print(f"  ... {report['target_count'] - report['returned_target_count']} more cross-link targets suppressed")
 
 
 def downstream(args: argparse.Namespace) -> int:
