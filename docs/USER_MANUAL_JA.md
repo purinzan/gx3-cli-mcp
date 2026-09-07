@@ -342,3 +342,15 @@ alarm-map showはbothもwriterとして表示し、timing-chartはbothをreader�
 timing-chartのCSVは既存列の末尾にreceiver_conditionを追加、Markdownにも受信側の
 read-site条件を表示します。出力に対応付けられない読取り位置は接点一覧へのfallbackと明記し、
 「対応する出力が見つからない」をFALSEと断定しません。
+
+### 定数を前方の読取りへ適用しない
+
+通常OUTの成立条件が定数でも、そのOUTより前の接点は初期値・保持値を読む可能性が
+あります。定数の置換は、既知の読取りがすべて同一LDDBの後続行にある場合に限定します。
+同一行（命令順未証明）、別POU、位置欠損、未知・インデックス修飾の読取りが影響する場合は
+候補を定数にせず、semanticsのpartialと確認すべき位置を残します。範囲読取りも対象です。
+
+同一POUでOUTの後に接点を読む通常の連鎖は継続して扱います。traceは除外された候補を
+FALSE/TRUEに置換せず、前処理・後処理・JSON要約で同じ制約を使います。dead-logicの
+解析JSONとDoctorのconstant-chainにも未証明を残します。これは保存位置による必要条件で、
+実行スケジュール・全外部writer・全状態依存の証明が完了したことは意味しません。

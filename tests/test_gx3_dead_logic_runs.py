@@ -113,12 +113,12 @@ def _insert_xref(
     )
 
 
-def test_constant_state_propagates_across_pous_and_b_contacts() -> None:
-    """SM401 -> M100 OFF -> /M100 -> M200 ON -> M200 -> Y0 ON."""
+def test_constant_state_propagates_in_order_with_b_contacts() -> None:
+    """Same-source ordered SM401 -> M100 OFF -> /M100 -> M200 ON -> Y0."""
     rows = [
         _row({"device": "SM401"}, "M100", 10, "P1_LDDB.db"),
-        _row({"not": {"device": "M100"}}, "M200", 20, "P2_LDDB.db"),
-        _row({"device": "M200"}, "Y0", 30, "P3_LDDB.db"),
+        _row({"not": {"device": "M100"}}, "M200", 20, "P1_LDDB.db"),
+        _row({"device": "M200"}, "Y0", 30, "P1_LDDB.db"),
     ]
     con = sqlite3.connect(":memory:")
     con.executescript(XREF_SCHEMA)
@@ -126,10 +126,10 @@ def test_constant_state_propagates_across_pous_and_b_contacts() -> None:
 
     _insert_xref(con, "SM401", "SM", 401, "read", "a", "P1_LDDB.db", 10, "P1", 10)
     _insert_xref(con, "M100", "M", 100, "write", "c", "P1_LDDB.db", 10, "P1", 10)
-    _insert_xref(con, "M100", "M", 100, "read", "b", "P2_LDDB.db", 20, "P2", 20)
-    _insert_xref(con, "M200", "M", 200, "write", "c", "P2_LDDB.db", 20, "P2", 20)
-    _insert_xref(con, "M200", "M", 200, "read", "a", "P3_LDDB.db", 30, "P3", 30)
-    _insert_xref(con, "Y0", "Y", 0, "write", "c", "P3_LDDB.db", 30, "P3", 30)
+    _insert_xref(con, "M100", "M", 100, "read", "b", "P1_LDDB.db", 20, "P1", 20)
+    _insert_xref(con, "M200", "M", 200, "write", "c", "P1_LDDB.db", 20, "P1", 20)
+    _insert_xref(con, "M200", "M", 200, "read", "a", "P1_LDDB.db", 30, "P1", 30)
+    _insert_xref(con, "Y0", "Y", 0, "write", "c", "P1_LDDB.db", 30, "P1", 30)
     con.commit()
 
     facts, findings = propagate_constant_devices(rows, con)
@@ -578,6 +578,100 @@ def main() -> int:
         test()
     print(f"{len(tests)} dead-logic checks passed")
     return 0
+
+
+def test_real_read_order_limits_constant_substitution() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+    from gx3cli.gx3_xref_read import first_reads_for
+
+    for family in ("M", "L"):
+        for order in ("before", "after", "same", "other-pou", "covered-before"):
+            with tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                root = work / "project"
+                device = f"{family}100"
+                writer = ("off", generate_rung({"device": "SM401"}, {"type": "coil", "device": device})[0])
+                reader = ("use", generate_rung({"device": device}, {"type": "coil", "device": "Y0"})[0])
+                if order == "same":
+                    write_program(root, [("self", generate_rung(
+                        {"and": [{"device": "SM401"}, {"device": device}]},
+                        {"type": "coil", "device": device})[0]), reader])
+                elif order == "other-pou":
+                    write_program(root, [writer])
+                    other = work / "other"
+                    write_program(other, [reader])
+                    shutil.copy2(other / "001_LDDB.db", root / "002_LDDB.db")
+                elif order == "covered-before":
+                    # K4M96/K4L96 reads the candidate at offset 4 before its OUT.
+                    from test_gx3_block_range import operation_row
+                    covered = ("covered-use", operation_row("MOV", f"{family}:Ks:D", "M{b=d{s=#:a=96:vt=nn}:m=c{s=#:v=4}}:d{s=#:a=900:vt=nn}"))
+                    write_program(root, [covered, writer, reader])
+                else:
+                    write_program(root, [reader, writer] if order == "before" else [writer, reader])
+                built = prepare(root)
+                rows = load_rows(root, load_comments_for_root(root))
+                constraints = []
+                with closing(sqlite3.connect(built.xref.path)) as con:
+                    con.row_factory = sqlite3.Row
+                    facts, findings = propagate_constant_devices(rows, con, root=root, proof_constraints=constraints)
+                    sites = first_reads_for(con, [device])[device]
+                    if family == "L" and order == "before":
+                        for count in (499, 500, 501):
+                            batch = [f"D{i}" for i in range(count - 1)] + [device]
+                            assert first_reads_for(con, batch)[device][0]["first_pos"] == 0
+                expected = order == "after"
+                assert (device in facts) == expected, (family, order, facts, sites)
+                assert bool(constraints) != expected, (order, constraints)
+                assert (any(f["category"] == "dead-contact" and f["device"] == device for f in findings)) == expected
+                previous = Path.cwd()
+                try:
+                    os.chdir(work)
+                    context = load_trace_constant_context(root, rows, [])
+                finally:
+                    os.chdir(previous)
+                assert context.enabled, context.reason
+                assert (device in context.facts) == expected
+                if not expected:
+                    assert context.analysis.state == "partial" and context.analysis.stage == "semantics", context
+                repo = Path(__file__).resolve().parents[1]
+                result = subprocess.run([sys.executable, "-m", "gx3cli.trace_gx3_device_dependencies", "Y0",
+                    "--root", str(root), "--strict-logic", "--no-link-map", "--format", "json"],
+                    cwd=work, env=dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8"),
+                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+                assert result.returncode == 0, result.stderr
+                trace = json.loads(result.stdout)
+                proof = trace["constant_pruning"]
+                if not expected:
+                    assert proof["analysis"]["state"] == "partial", proof
+                    assert trace["analysis"]["state"] == "partial", trace
+                    outputs = [row for row in trace["driver_rows"] if row["device"] == "Y0"]
+                    assert outputs and any(device in row["enable_logic_text"] for row in outputs), trace
+                    assert not any(c.get("device") == device for row in outputs for c in row.get("constant_contacts", [])), trace
+                if family == "L" and order == "before":
+                    from gx3cli.gx3_audit import collect_constant_chains
+                    from gx3cli.gx3_lint import LintContext
+                    with closing(sqlite3.connect(built.xref.path)) as con, closing(sqlite3.connect(built.index.path)) as lite:
+                        con.row_factory = lite.row_factory = sqlite3.Row
+                        ctx = LintContext(root, rows, {}, xref=con, lite=lite)
+                        assert collect_constant_chains(ctx, index_db=built.index.path) == []
+                        assert ctx.states["constant-chain"].stage == "semantics", ctx.states
+                    report_dir = work / "reports"
+                    result = subprocess.run([sys.executable, "-m", "gx3cli.gx3_dead_logic",
+                        "--root", str(root), "--db", str(built.xref.path), "--lite-db", str(built.index.path),
+                        "--output-dir", str(report_dir), "--prefix", "read-order"], cwd=work,
+                        env=dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8"),
+                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    assert result.returncode == 0, result.stderr
+                    report = json.loads((report_dir / "read-order_analysis.json").read_text(encoding="utf-8"))
+                    assert report["constant_propagation_evaluated"] is False, report
+                    assert report["constant_propagation_analysis"]["stage"] == "semantics", report
+                    with (report_dir / "read-order.csv").open(encoding="utf-8-sig") as stream:
+                        records = list(csv.DictReader(stream))
+                    assert not any(r["category"] in ("constant-device", "constant-output", "dead-contact")
+                                   and r["device"] in (device, "Y0") for r in records), records
 
 
 if __name__ == "__main__":

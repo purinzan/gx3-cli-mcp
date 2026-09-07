@@ -153,3 +153,20 @@ lint external-value-sourceはこの結果を使い、欠損/不正入力で依�
 load_refresh_areasは既知範囲だけの互換projectionであり、空リストは不存在証明ではない。
 従来のI/O/文字コードエラーは握り潰さない。他のCSV consumer、units CSV、保存済み境界の
 入力由来・完全性の契約は未移行であり、このreader追加だけで全外部境界の受入とはしない。
+
+## 定数置換と書込み前の初期・保持値読取り
+
+修正前、L100接点→Y0が先、SM401→L100 OUTが後の実LDDBで、traceは前の接点を
+ALWAYS_OFF/FALSEとしてqueue投入前に削除していた。合成case retained-read-before-outを
+ローカルfailure-corpusに保存。corpusは保存形式の再生確認で、判定の正しさは別の実builder→
+trace CLI JSON/dead-logic CLI CSV・解析JSON/Doctor consumerの回帰で検証する。
+
+first_reads_forは共通member照会で候補デバイスごとの最早読取りをLDDB別に取得する。
+命令の独自範囲換算は追加せず、500件バッチの前後も確認。定数候補の全既知読取りが
+同一LDDBの後続行にあることを必要条件にし、前方・同一行・別POU・未知読取りを除外。
+M/L各型の順方向/逆方向、同一行、別POU、桁指定の途中memberを保存入力から検証する。
+元の別POU間の無条件定数伝播テストは、実行順を証明していなかったため互換goldenにはしない。
+未証明のsemantics制約はshared propagationからtrace/dead-logic/Doctorへ渡す。
+
+この修正は初期値を読む位置の矛盾を防ぐもの。保存posを実行保証と同一視せず、
+プログラム起動条件・全外部writer・保持設定全般の解析が完了したとは扱わない。

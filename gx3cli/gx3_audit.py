@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked
+from gx3cli.gx3_analysis_state import AnalysisState, DECODE, PARTIAL, checked, worst
 from gx3cli.gx3_cli import BASE_DIR, cli_argv, project_label_from_root, python_env
 from gx3cli.gx3_dead_logic import ConstantProofUnavailable, propagate_constant_devices
 from gx3cli.gx3_index_lite import external_sources_from
@@ -173,14 +173,18 @@ def collect_constant_chains(
         refresh_areas = load_refresh_areas(refresh_path)
 
     try:
+        proof_constraints: list[AnalysisState] = []
         _facts, propagated = propagate_constant_devices(
             ctx.rows, ctx.xref, externals=externals, refresh_areas=refresh_areas, root=ctx.root,
+            proof_constraints=proof_constraints,
         )
     except ConstantProofUnavailable as exc:
         ctx.states["constant-chain"] = exc.analysis
         print(exc.analysis.line("constant-chain"))
         return []
 
+    if proof_constraints:
+        ctx.states["constant-chain"] = worst(proof_constraints)
     findings: list[dict[str, object]] = []
     for item in propagated:
         if str(item.get("category") or "") != "constant-output":

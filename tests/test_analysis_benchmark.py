@@ -42,7 +42,9 @@ def main() -> int:
         assert sample["warm_query"]["sql_statements"] == 34, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
         # before constant proofs. Both artifact opens verify the build contract.
-        assert sample["trace"]["sql_statements"] == (27 if sample["case"] == "multi-pou" else 24), sample
+        # One capability check and one batched first-read query certify that
+        # constants are not substituted before their defining OUT.
+        assert sample["trace"]["sql_statements"] == (29 if sample["case"] == "multi-pou" else 26), sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample
