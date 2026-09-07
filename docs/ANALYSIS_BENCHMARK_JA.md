@@ -329,3 +329,15 @@ fingerprint読込み回数は全phaseで不変。時間・Python peak・累積RS
 時間予算はbaseline×1.20+2msで、wideの値フローもこの絶対許容分を含めて判定した。
 OS cache未flush、RSSは累積process peak。同一ラングの同一命令を区別できることは
 別の保存LD→実builder→実CLI回帰で確認し、全言語・実設備・Windowsの速度保証とはしない。
+
+## 定数の書込み前読取りガード（2026-09-06）
+
+比較元50ef132、変更版2d4bd1e。同じmacOS/Python 3.14.4で既存v2固定6検体×3を
+順次実行。入力hash全一致、全phaseの時間・Python peak・累積RSSは既存予算内。
+trace中央値msはsmall9.85→9.77、wide59.87→59.45、deep77.20→80.47、
+large-span9.72→9.64、multi-pou81.25→78.90、ld-st78.83→79.49。
+traceのSQL24→26（multi-pou27→29）はmember capability確認と最早読取りの
+一括照会。対象が500件を超える場合は既存countsと同じ500件単位で分割する。
+他phaseのSQL、全phaseのopen/rows/comments/labels/hash読込みは不変。
+定数ごとの全project再読込みやSQL発行は追加しない。OS cache未flush、RSSは累積process peak。
+初期・保持値の実行時保証やWindows性能の測定ではなく、順序ガードの正しさは別の実CLI回帰で確認。
