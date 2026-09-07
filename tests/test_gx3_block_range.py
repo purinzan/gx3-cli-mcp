@@ -249,6 +249,12 @@ def make_lite_index(path: Path) -> sqlite3.Connection:
     create_schema(con)
     con.execute("insert into meta(key, value) values ('device_naming', ?)", (DEVICE_NAMING,))
     con.execute("insert into meta(key, value) values ('build_contract', ?)", (BUILD_CONTRACT,))
+    from gx3cli.gx3_input_identity import dependency_snapshot
+    paths = {"refresh_csv": path.parent / "refresh.csv", "unit_csv": path.parent / "units.csv"}
+    records, _ = dependency_snapshot(paths)
+    con.executemany("insert into meta values (?, ?)", [(key, record["path"]) for key, record in records.items()])
+    con.execute("insert into meta values ('external_dependencies', ?)",
+                (json.dumps({"version": 1, "files": records}),))
     return con
 
 

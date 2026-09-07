@@ -170,3 +170,15 @@ M/L各型の順方向/逆方向、同一行、別POU、桁指定の途中member�
 
 この修正は初期値を読む位置の矛盾を防ぐもの。保存posを実行保証と同一視せず、
 プログラム起動条件・全外部writer・保持設定全般の解析が完了したとは扱わない。
+
+## index-liteの外部ファイル依存と再構築
+
+実buildが選択したrefresh/units CSVを明示依存として保存し、共通の
+external_dependency_problemをreader/workspaceの再利用判断に使う。
+未存在→存在、削除、同size/mtimeの内容差、構築途中の変更を合成project→実build→
+実CLIで検証。再構築時は元のCSV指定を維持し、無関係なxrefは再利用する。
+旧依存manifest欠損は拒否・再構築。曖昧な旧相対パスは明示buildを必要とする。
+入力CSV自身への索引上書きも禁止する。範囲表示の手作りDBテストはprojection補助のまま残す。
+
+依存ファイルの内容同一性と、CSVのproject由来・解析完全性は別である。
+後者、直接CSVを読む他consumer、結果構築全体での複数artifact/source版の固定は未完。

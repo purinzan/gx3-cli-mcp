@@ -341,3 +341,30 @@ traceのSQL24→26（multi-pou27→29）はmember capability確認と最早読�
 他phaseのSQL、全phaseのopen/rows/comments/labels/hash読込みは不変。
 定数ごとの全project再読込みやSQL発行は追加しない。OS cache未flush、RSSは累積process peak。
 初期・保持値の実行時保証やWindows性能の測定ではなく、順序ガードの正しさは別の実CLI回帰で確認。
+
+## index-lite外部CSV依存の照合（2026-09-06）
+
+比較元50ef132、変更版128996f。同じmacOS/Python 3.14.4で既存v2固定6検体×3を
+順次測定し、全入力hash一致。全phaseの時間・Python peak・累積RSSは既定予算内。
+coldのSQLはmanifest保存で+1、traceはlite readerのmanifest取得で+1
+（24→25、multi-pou 27→28）。他のSQL/open/loader/hash読込み回数は不変。
+trace中央値msはsmall9.62→9.97、wide60.85→59.66、deep78.47→78.73、
+large-span9.55→9.80、multi-pou78.96→79.89、ld-st78.57→79.15。
+
+別測定では同じ6種LDDBに64refresh範囲と1units行の固定CSVを与え、実lite build、
+実device JSON照会10回（引数解析込み）、workspace locate10回を各3 fresh process。
+以下は中央値ms。全phaseで時間・Python peak・累積RSSは既定予算内。
+
+| 検体 | lite build | device10回 | locate10回 |
+|---|---:|---:|---:|
+| small | 44.25→45.05 | 93.60→92.05 | 25.06→25.77 |
+| wide | 64.01→64.46 | 92.93→93.79 | 25.20→26.84 |
+| deep | 57.08→58.27 | 91.03→91.64 | 24.76→26.27 |
+| large-span | 43.76→46.87 | 89.59→97.43 | 24.05→27.77 |
+| multi-pou | 60.38→60.69 | 95.02→95.34 | 28.35→28.78 |
+| ld-st | 59.44→59.17 | 93.61→92.82 | 26.51→27.10 |
+
+lite buildはCSV2本×前後でhash読込み+4、照会/locateは各回2本（10回で+20）。
+device10回のSQL150→160、locateのSQLは不変、open/LDDB/コメント/ラベルの読込みは不変。
+CSV再照合はサイズに比例する追加I/Oであり、高速化とは主張しない。OS cache未flush、
+RSSは累積process peak。巨大CSV・Windows・実設備の速度やCSV由来の保証は対象外。
