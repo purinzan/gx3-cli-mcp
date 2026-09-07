@@ -36,21 +36,23 @@ def main() -> int:
             rss = values["process_peak_rss_bytes_after_phase"]
             assert rss is None or rss > 0, values
         # Two queries: 9 existing statements + one schema query and four
-        # SQLite-internal table_info statements each. No data scan added.
-        assert sample["warm_query"]["sql_statements"] == 28, sample
+        # SQLite-internal table_info statements and one build-contract read
+        # each. No project data scan added.
+        assert sample["warm_query"]["sql_statements"] == 30, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
-        # before constant proofs. These add two statements, not source reloads.
-        assert sample["trace"]["sql_statements"] == (25 if sample["case"] == "multi-pou" else 22), sample
+        # before constant proofs. Both artifact opens verify the build contract.
+        assert sample["trace"]["sql_statements"] == (27 if sample["case"] == "multi-pou" else 24), sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample
         assert sample["dependency_flow"]["load_rows"] == 1, sample
         assert sample["dependency_flow"]["load_comments"] == 1, sample
         # One checked connection replaces probe + reopen. BEGIN and ST scope
-        # query add two SQL statements; multi-pou reads three extra source DBs.
+        # query add two SQL statements, plus one build-contract read;
+        # multi-pou reads three extra source DBs.
         multi = sample["case"] == "multi-pou"
         assert sample["dependency_flow"]["sqlite_opens"] == (5 if multi else 2), sample
-        assert sample["dependency_flow"]["sql_statements"] == (14 if multi else 11), sample
+        assert sample["dependency_flow"]["sql_statements"] == (15 if multi else 12), sample
     print("synthetic benchmark determinism and instrumentation checks passed")
     return 0
 

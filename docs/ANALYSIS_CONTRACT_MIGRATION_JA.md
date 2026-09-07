@@ -38,6 +38,11 @@ xref/liteの明示buildはgx3_index_buildの一時SQLiteへ書込み、開始時
 残し、入力/出力のWALや入力DBへの出力を拒否する。STDB内容だけの途中変更も検証。
 全readerの実行中変更検出、外部CSVのprovenance、複数索引の同時公開は未完。
 
+公開前照合後に両索引へbuild_contractを保存し、共通open_xref_db/open_existingと
+workspaceで検証する。root省略時も構築契約は必須（入力同一性の照合にはrootが必要）。
+旧索引は書換えず拒否し、prepareがOLD_BUILDの側だけ再構築する実経路を確認。
+これは改ざん署名ではなく、接続を直接注入する内部API全体の保証でもない。
+
 定数証明の共通入口は供給された全LD行の未解析状態と選択rootのFBDも確認する。
 別ラングの未解析writerを候補行のexactで隠さない。ST/LD/FBD同時gapの3制約を
 JSONへ残す実builder回帰を追加。全CLI consumerはrootを渡す。全入力の途中変更、

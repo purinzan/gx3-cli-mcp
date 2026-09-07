@@ -152,6 +152,9 @@ def open_xref_db(
             # Value flow is an optional capability; its consumers check it
             # separately. Where-used still works without a data_flow table.
             check_schema(con, "xref", path, ("xref", "xref_members", "st_sources", "st_refs"))
+        from gx3cli.gx3_index_build import require_build_contract
+
+        require_build_contract(con, path)
     except BaseException:
         con.close()
         raise

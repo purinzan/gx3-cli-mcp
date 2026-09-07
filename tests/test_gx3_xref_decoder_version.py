@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from gx3cli.gx3_xref import XREF_DECODER, open_xref_db, stamp_decoder
+from gx3cli.gx3_xref import XREF_DECODER, open_xref_db
 
 
 def make_db(path: Path, decoder: str | None) -> None:
@@ -51,32 +51,39 @@ def test_a_database_from_another_decoder_is_refused() -> None:
         expect_refused(unstamped, "a database with no decoder recorded")
 
 
-def test_a_database_from_this_decoder_opens() -> None:
+def test_current_decoder_alone_is_not_a_verified_build() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         current = Path(tmp) / "current_xref.sqlite"
         make_db(current, XREF_DECODER)
-        con = open_xref_db(current)
-        con.close()
+        try:
+            con = open_xref_db(current)
+        except SystemExit as exc:
+            assert "build contract" in str(exc), exc
+        else:
+            con.close()
+            raise AssertionError("decoder stamp alone certified an old build")
 
 
 def test_the_build_stamp_and_the_reader_agree() -> None:
-    # stamp_decoder() is what a real build calls, so what it writes has to be
-    # what the reader accepts; the two drifting apart is the failure this
-    # whole guard exists to prevent.
+    # Exercise the actual builder: stamp_decoder alone does not establish
+    # stable-input construction provenance.
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli.gx3_xref import build, build_parser
+
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "built_xref.sqlite"
-        con = sqlite3.connect(path)
-        con.execute("create table xref (id integer primary key, device text)")
-        stamp_decoder(con)
-        con.commit()
-        con.close()
+        root = Path(tmp) / "project"
+        write_program(root, [("_guid/rung", generate_rung(
+            {"device": "M100"}, {"type": "coil", "device": "Y0"})[0])])
+        build(build_parser().parse_args(["--root", str(root), "--db", str(path), "build"]))
         con = open_xref_db(path, read_only=True)
         con.close()
 
 
 def main() -> int:
     test_a_database_from_another_decoder_is_refused()
-    test_a_database_from_this_decoder_opens()
+    test_current_decoder_alone_is_not_a_verified_build()
     test_the_build_stamp_and_the_reader_agree()
     print("xref decoder version checks passed")
     return 0

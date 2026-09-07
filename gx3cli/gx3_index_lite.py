@@ -470,6 +470,9 @@ def open_existing(path: Path, root: Path | None = None, *, required_tables: tupl
             from gx3cli.gx3_index_contract import check_schema
 
             check_schema(con, "index", path, required_tables)
+        from gx3cli.gx3_index_build import require_build_contract
+
+        require_build_contract(con, path)
     except BaseException:
         con.close()
         raise

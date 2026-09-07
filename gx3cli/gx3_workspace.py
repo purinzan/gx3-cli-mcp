@@ -31,6 +31,7 @@ from typing import Any, Callable
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_index_lite import DEVICE_NAMING
 from gx3cli.gx3_input_identity import fingerprint, short
+from gx3cli.gx3_index_build import BUILD_CONTRACT
 from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_version import package_version
@@ -182,6 +183,8 @@ def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
         return Artefact(kind, path, OLD_BUILD, f"built by {version}, this is {package_version()}")
     if gaps:
         return Artefact(kind, path, UNREADABLE, "; ".join(gaps))
+    if meta.get("build_contract") != BUILD_CONTRACT:
+        return Artefact(kind, path, OLD_BUILD, "stable-input build contract missing or obsolete; rebuild required")
     return Artefact(kind, path, READY, f"input {short(stored_input)}")
 
 
