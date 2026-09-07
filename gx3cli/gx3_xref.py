@@ -133,18 +133,20 @@ def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:
 
 
 def open_xref_db(
-    path: Path, read_only: bool = False, root: Path | None = None, *, snapshot: bool = False
+    path: Path, read_only: bool = True, root: Path | None = None, *, snapshot: bool | None = None
 ) -> sqlite3.Connection:
     """Open a database checked against the decoder and input.
 
-    snapshot pins validation and later queries to one read transaction. The
-    caller must close the returned handle; source files are not pinned.
+    Read-only snapshots are the default. Explicit writable maintenance callers
+    keep their existing transaction policy unless snapshot=True is supplied.
+    The caller must close the returned handle; source files are not pinned.
     """
-    uri = f"file:{path}?mode=ro" if read_only else str(path)
+    uri = f"file:{quote(path.absolute().as_posix(), safe='/:')}?mode=ro" if read_only else str(path)
     con = sqlite3.connect(uri, uri=read_only)
     con.row_factory = sqlite3.Row
+    pin_snapshot = read_only if snapshot is None else snapshot
     try:
-        if snapshot:
+        if pin_snapshot:
             con.execute("begin")
         check_decoder(path, con)
         check_input(path, con, root)

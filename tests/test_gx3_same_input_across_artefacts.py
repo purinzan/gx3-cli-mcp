@@ -391,6 +391,8 @@ def test_unverified_build_contract_is_rejected_and_only_that_index_rebuilt() -> 
 
 
 def main() -> int:
+    test_cli_queries_keep_the_validated_index_version()
+    test_index_readers_pin_validation_and_later_queries()
     test_lint_and_health_reject_foreign_lite_and_close_open_xref()
     test_three_artefacts_of_one_project_agree_on_the_input()
     test_an_artefact_from_a_changed_project_no_longer_agrees()
@@ -400,6 +402,92 @@ def main() -> int:
     test_unverified_build_contract_is_rejected_and_only_that_index_rebuilt()
     print("same input across artefacts checks passed")
     return 0
+
+
+def test_index_readers_pin_validation_and_later_queries() -> None:
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.gx3_index_lite import open_existing
+    from gx3cli.gx3_xref import open_xref_db
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = create_demo_line_project(Path(tmp) / "project", overwrite=True)
+        built = prepare(root)
+        for artifact, opener, table in ((built.index, open_existing, "devices"),
+                                         (built.xref, open_xref_db, "xref")):
+            # Start from real builder output; simulate an index-version commit
+            # between validation and subsequent result queries, not a fake DB.
+            with closing(sqlite3.connect(artifact.path)) as writer:
+                assert writer.execute("pragma journal_mode=wal").fetchone()[0] == "wal"
+                reader = opener(artifact.path, root=root)
+                try:
+                    assert reader.in_transaction, "validation was not pinned"
+                    before = reader.execute(f"select comment from {table} where device='X0'").fetchone()[0]
+                    with writer:
+                        writer.execute(f"update {table} set comment='new-index-version' where device='X0'")
+                        writer.execute("update meta set value='different-input' where key='input_sha256'")
+                    assert reader.execute(f"select comment from {table} where device='X0'").fetchone()[0] == before
+                    assert reader.execute("select value from meta where key='input_sha256'").fetchone()[0] != "different-input"
+                    try:
+                        reader.execute(f"update {table} set comment='reader-write'")
+                    except sqlite3.OperationalError as exc:
+                        assert "readonly" in str(exc).lower(), exc
+                    else:
+                        raise AssertionError("default reader mutated its index")
+                finally:
+                    reader.close()
+            try:
+                reader = opener(artifact.path, root=root)
+            except SystemExit as exc:
+                assert "different input" in str(exc), exc
+            else:
+                reader.close()
+                raise AssertionError("new connection accepted foreign index version")
+            moved = artifact.path.with_suffix(".moved")
+            artifact.path.rename(moved)
+            moved.rename(artifact.path)
+
+
+def test_cli_queries_keep_the_validated_index_version() -> None:
+    from gx3cli import gx3_index_lite as lite, gx3_xref as xref
+    from gx3cli.gx3_workspace import prepare, locate
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        special = work / "space # % 日本語"
+        special.mkdir()
+        root = create_demo_line_project(work / "project", overwrite=True)
+        built = prepare(root)
+        assert locate(root).ready
+        for module, name, artifact, table, args in (
+            (lite, "open_existing", built.index, "devices", ["device", "X0", "--root", str(root), "--db", str(built.index.path), "--json"]),
+            (xref, "open_xref_db", built.xref, "xref", ["--root", str(root), "--db", str(built.xref.path), "where-used", "X0", "--json"]),
+        ):
+            target = special / artifact.path.name
+            shutil.copy2(artifact.path, target)
+            args = [str(target) if item == str(artifact.path) else item for item in args]
+            from gx3cli.gx3_workspace import _metadata_and_schema
+            meta, gaps = _metadata_and_schema(target, "index" if module is lite else "xref")
+            assert meta and not gaps, (meta, gaps)
+            baseline = io.StringIO()
+            with redirect_stdout(baseline):
+                assert module.main(args) == 0
+            original = getattr(module, name)
+            with closing(sqlite3.connect(target)) as writer:
+                assert writer.execute("pragma journal_mode=wal").fetchone()[0] == "wal"
+                def update_after_validation(*a, **kw):
+                    con = original(*a, **kw)
+                    with writer:
+                        writer.execute(f"update {table} set comment='new-index-version' where device='X0'")
+                        writer.execute("update meta set value='different-input' where key='input_sha256'")
+                    return con
+                output = io.StringIO()
+                with patch.object(module, name, update_after_validation), redirect_stdout(output):
+                    assert module.main(args) == 0
+                assert "new-index-version" not in output.getvalue()
+                assert json.loads(output.getvalue()) == json.loads(baseline.getvalue())
+            moved = target.with_suffix(".moved")
+            target.rename(moved)
+            moved.rename(target)
 
 
 if __name__ == "__main__":

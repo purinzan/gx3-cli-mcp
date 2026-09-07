@@ -39,13 +39,15 @@ def main() -> int:
         # SQLite-internal table_info statements and one build-contract read
         # each, plus two member-capability checks (page and totals) per query.
         # No project data scan added.
-        assert sample["warm_query"]["sql_statements"] == 34, sample
+        # Each xref read now pins validation and result queries with BEGIN.
+        assert sample["warm_query"]["sql_statements"] == 36, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
         # before constant proofs. Both artifact opens verify the build contract.
         # One capability check and one batched first-read query certify that
         # constants are not substituted before their defining OUT.
         # Lite reader additionally reads its explicit CSV dependency manifest.
-        assert sample["trace"]["sql_statements"] == (30 if sample["case"] == "multi-pou" else 27), sample
+        # The lite boundary reader also pins its validation snapshot.
+        assert sample["trace"]["sql_statements"] == (31 if sample["case"] == "multi-pou" else 28), sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample

@@ -27,6 +27,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_index_lite import DEVICE_NAMING, external_dependency_problem
@@ -129,10 +130,11 @@ def _metadata_and_schema(path: Path, kind: str | None = None) -> tuple[dict[str,
     if not path.exists():
         return None, []
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{quote(path.absolute().as_posix(), safe='/:')}?mode=ro", uri=True)
     except sqlite3.Error:
         return {}, []
     try:
+        con.execute("begin")
         meta = {str(key): str(value) for key, value in con.execute("select key, value from meta")}
         from gx3cli.gx3_index_contract import schema_gaps
 
