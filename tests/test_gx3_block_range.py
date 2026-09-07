@@ -14,9 +14,12 @@ from the manuals rather than from a hand-kept list of block instructions.
 
 import argparse
 import io
+import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 from gx3cli.gx3_arg_decode import block_span, parse_row_occurrences
@@ -317,7 +320,75 @@ def test_device_map_merges_overlapping_named_and_covered_ranges_once() -> None:
         con.close()
 
 
+def test_real_lite_queries_do_not_prove_st_only_devices_unused() -> None:
+    import os
+    import shutil
+    from unittest.mock import patch
+    from gx3cli.gx3_mcp_server import handle
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_intermediate_tool import generate_rung
+    from gx3cli.gx3_workspace import prepare
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("first", generate_rung(
+            {"device": "M100"}, {"type": "coil", "device": "M110"})[0])])
+        with closing(sqlite3.connect(root / "002_STDB.db")) as st, st:
+            st.execute("create table Source(Pou text, Code text)")
+            st.execute("insert into Source values ('OnlyST', 'M105 := TRUE;')")
+        built = prepare(root)
+
+        def cli(*args: str):
+            return subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_index_lite", *args,
+                 "--db", str(built.index.path)],
+                capture_output=True, text=True, encoding="utf-8", timeout=20,
+            )
+
+        for device, expected_code in (("M105", 1), ("M100", 0)):
+            result = cli("device", device, "--root", str(root), "--json")
+            assert result.returncode == expected_code, result.stderr
+            payload = json.loads(result.stdout)
+            assert payload["reference_scope"]["kind"] == "index-lite-observed-ld"
+            assert payload["availability_analysis"]["state"] == "not_evaluated"
+            assert payload["availability_analysis"]["stage"] == "semantics"
+            if expected_code:
+                assert payload["results"] == []
+            else:
+                assert payload["results"][0]["device"] == device
+        missing = cli("device", "M105", "--root", str(root))
+        assert "unused status is not proven" in missing.stdout, missing.stdout
+        mapping = cli("device-map", "--types", "M", "--min-free", "1")
+        assert mapping.returncode == 0, mapping.stderr
+        assert "M101-M109(9)" in mapping.stdout, mapping.stdout
+        assert "not verified free allocations" in mapping.stdout, mapping.stdout
+        assert "ST/inline-ST/FBD" in mapping.stdout, mapping.stdout
+        wrapper = subprocess.run(
+            [sys.executable, "-m", "gx3cli.gx3_cli", "device-map",
+             "--root", str(root), "--db", str(built.index.path), "--min-free", "1"],
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
+        )
+        assert wrapper.returncode == 0, wrapper.stderr
+        assert "not verified free allocations" in wrapper.stdout
+
+        sandbox = Path(tmp) / "mcp-output"
+        (sandbox / ".gx3_index").mkdir(parents=True)
+        shutil.copyfile(built.index.path, sandbox / ".gx3_index" / "project.sqlite")
+        with patch.dict(os.environ, {"GX3_MCP_OUTPUT_DIR": str(sandbox)}):
+            for name, arguments in (
+                ("gx3_run_command", {"command": "device-map", "root": str(root),
+                                     "args": ["--db", str(built.index.path), "--min-free", "1"]}),
+                ("gx3_device_map", {"root": str(root), "min_free": 1}),
+            ):
+                response = handle({"jsonrpc": "2.0", "id": 153, "method": "tools/call",
+                                   "params": {"name": name, "arguments": arguments}})
+                result = response["result"]
+                assert not result["isError"], result
+                assert "not verified free allocations" in result["content"][0]["text"], result
+
+
 def main() -> int:
+    test_real_lite_queries_do_not_prove_st_only_devices_unused()
     test_the_destination_carries_the_length_the_manual_names()
     test_a_fill_reads_one_device_however_many_it_writes()
     test_a_double_word_fill_multiplies_element_count_by_width()
