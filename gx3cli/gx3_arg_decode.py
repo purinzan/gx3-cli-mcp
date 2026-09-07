@@ -24,6 +24,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     DEVICE_TYPES,
     extract_args_text,
     extract_elements,
+    element_meta,
     header_tokens,
     top_level_items,
 )
@@ -154,6 +155,7 @@ class DecodedOperation:
     raw_args: list[str]
     arg_tokens: list[str]
     op_index: int
+    element_position: str = ""
 
     @property
     def argc(self) -> int:
@@ -301,6 +303,7 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
                     raw_args=raw_args,
                     arg_tokens=arg_tokens or [hop.device_type],
                     op_index=op_index,
+                    element_position=str(element_meta(element).get("pos", "")) if element else "",
                 )
             )
             continue
@@ -363,6 +366,7 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None) -> tupl
                 raw_args=raw_args,
                 arg_tokens=arg_tokens,
                 op_index=op_index,
+                element_position=str(element_meta(element).get("pos", "")) if element else "",
             )
         )
     return results, status

@@ -12,9 +12,9 @@ from pathlib import Path
 
 
 XREF_COLUMNS = {
-    "xref": "id device device_type number range_len access role opcode arg_index const_args detail access_basis lddb pos pou step title comment parse_status",
+    "xref": "id device device_type number range_len access role opcode arg_index const_args detail access_basis lddb pos pou step title comment parse_status block_id op_index element_position",
     "xref_members": "src_id member_device device_type number run_offset",
-    "data_flow": "id source_device destination_device opcode source_arg_index destination_arg_index range_count source_word_width destination_word_width read_modify_write confidence parse_status lddb pos pou step title source_comment destination_comment source_range_len destination_range_len source_device_type source_number source_detail destination_detail",
+    "data_flow": "id source_device destination_device opcode source_arg_index destination_arg_index range_count source_word_width destination_word_width read_modify_write confidence parse_status lddb pos pou step title source_comment destination_comment source_range_len destination_range_len source_device_type source_number source_detail destination_detail block_id operation_index element_position",
     "st_sources": "id source_kind source_file source_location pou coverage reason",
     "st_refs": "id source_id symbol resolved_device access source_kind source_file source_location pou statement_index coverage reason",
 }

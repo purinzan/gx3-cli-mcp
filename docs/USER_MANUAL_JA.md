@@ -318,3 +318,15 @@ xrefのデータフロー索引は、読出し側・書込み側の物理範囲�
 - 一部コマンドは CSV、Markdown、ZIP、SQLite DB などをローカルに生成します。
 - `live-read` は実設備に TCP 接続します。現場ルール、PLC 設定、ネットワーク権限を確認してから使ってください。
 - AI に出力を渡す場合は、社内ルールと機密情報の扱いを確認してください。
+
+### 同じラング内の命令を区別する根拠位置
+
+xrefのLD参照にはblock_id、0始まりのop_index、element_position（保存されたx,y座標）を
+追加しています。arg_indexと合わせて、同じ行の同じ命令・同じデバイスを区別できます。
+テキストにもrow/op/xyを表示します。STの参照には架空のLD座標を付けずnullとし、
+既存のST source/statement情報を使います。座標は保存位置であって実行順やGX Works3 stepではありません。
+
+data-flowのoperation_index/ブロック/座標もxref DBを経由して保持し、dependency-flowの
+値フローedgeにはevidenceとして元行・命令・source/destination引数番号を残します。
+根拠位置を保存していない旧xrefは再構築が必要です。値フロー側の位置情報が欠けている場合は
+既知の辺を返せてもpartialと表示し、位置が分かるようには装いません。

@@ -67,6 +67,8 @@ class FlowRecord:
     destination_arg_index: int | None = None
     opcode: str = ""
     operation_index: int = 0
+    block_id: str = ""
+    element_position: str = ""
     lddb: str = ""
     pos: int = 0
     pou: str = ""
@@ -192,6 +194,8 @@ def records_for_operation(
     parse_status: str = "exact",
     const_args: str = "",
     operation_index: int = 0,
+    block_id: str = "",
+    element_position: str = "",
     lddb: str = "",
     pos: int = 0,
     pou: str = "",
@@ -208,6 +212,8 @@ def records_for_operation(
 
     metadata = {
         "operation_index": operation_index,
+        "block_id": block_id,
+        "element_position": element_position,
         "lddb": lddb,
         "pos": pos,
         "pou": pou,
@@ -365,6 +371,8 @@ def build_report(root: Path, device: str | None = None, opcode: str | None = Non
                     parse_status=status,
                     const_args=op.const_summary,
                     operation_index=op.op_index,
+                    block_id=str(raw["id"]),
+                    element_position=op.element_position,
                     lddb=lddb,
                     pos=pos,
                     pou=pou,

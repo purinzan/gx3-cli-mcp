@@ -110,6 +110,15 @@ dead-logicのwriter未検出接点は、物理memberを含むcounts_forで照会
 
 ## 性能と次の検証
 
+### operation/output位置の保存境界
+
+canonical parse_row_operationsのop_indexとelement_metaの座標、元LadderBlocks.idをxrefへ保存する。
+旧parse_row_occurrences facadeでこれらを落としていたbuilderをcanonical操作単位へ接続。
+同一ラング内の同じMOVを2か所へ置いた実LDDBで、decoder→xref→JSON/textの位置と引数を照合。
+data-flowが元から持っていたoperation_indexも保存し、dependency-flow CLIのvalue edgeへ
+元行・座標・引数のevidenceを渡す。旧版xref/必須column欠損の拒否、値フロー位置欠損時の
+partialも検証。STにLD座標を捏造しない。reachの代表経路と全命令列挙は引き続き異なる問い合わせ。
+
 cold build / warm query / traceの6種の固定fixtureで、同一環境の比較を実施した。
 詳細と制約・後続変更の予算は[性能基準](ANALYSIS_BENCHMARK_JA.md)に記録する。
 SQL/loader回数、wall時間、Python peakとprocess peak RSSを区別する。WindowsのRSSは
