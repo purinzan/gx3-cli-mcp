@@ -82,6 +82,32 @@ def short(value: str) -> str:
     return value[:12] if value else "(none)"
 
 
+def dependency_snapshot(paths: dict[str, Path]) -> tuple[dict, tuple]:
+    """Content identity plus transient change stamps for explicitly read files.
+
+    Missing optional files are dependencies too: their later arrival invalidates
+    the derived answer. Never glob generated output directories into a project.
+    """
+    records = {}
+    stamps = []
+    for name, supplied in sorted(paths.items()):
+        path = supplied.absolute()
+        try:
+            before = path.stat()
+        except FileNotFoundError:
+            records[name] = {"path": str(path), "sha256": None}
+            stamps.append((name, None))
+            continue
+        digest = file_digest(path)
+        after = path.stat()
+        stamp = lambda s: (s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_ino)
+        if stamp(before) != stamp(after):
+            raise OSError(f"dependency changed while reading: {path}")
+        records[name] = {"path": str(path), "sha256": digest}
+        stamps.append((name, stamp(after)))
+    return records, tuple(stamps)
+
+
 def mismatch_message(kind: str, path: Path, stored: str, actual: str, rebuild: str) -> str:
     problem = "was built from a different input" if stored and actual else "input identity cannot be verified"
     return "\n".join(
