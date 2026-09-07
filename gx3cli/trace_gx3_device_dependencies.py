@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli import gx3_trace_state as base
+from gx3cli.gx3_analysis_state import from_dict, worst
 from gx3cli.gx3_ladder_logic import condition_refs_from_logic, logic_to_text
 from gx3cli.gx3_topology_conditions import load_trace_constant_context, simplify_logic_for_trace
 
@@ -226,6 +227,11 @@ def prune_trace_result(
     comments = comments if comments is not None else base.load_comments_for_root(root)
     context = context or _load_constant_context(root)
     trace["constant_pruning"] = context.summary()
+    if context.analysis is not None:
+        combined = worst([from_dict(trace.get("analysis")), context.analysis])
+        trace["analysis"] = combined.as_dict()
+        if "verification" in trace:
+            trace["verification"]["semantic_scope_state"] = combined.state
     if not context.enabled:
         return trace
 

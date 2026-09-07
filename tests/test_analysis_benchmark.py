@@ -43,9 +43,11 @@ def main() -> int:
         assert sample["warm_query"]["sql_statements"] == 36, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
         # before constant proofs. Both artifact opens verify the build contract.
+        # One capability check and one batched first-read query certify that
+        # constants are not substituted before their defining OUT.
         # Lite reader additionally reads its explicit CSV dependency manifest.
         # The lite boundary reader also pins its validation snapshot.
-        assert sample["trace"]["sql_statements"] == (29 if sample["case"] == "multi-pou" else 26), sample
+        assert sample["trace"]["sql_statements"] == (31 if sample["case"] == "multi-pou" else 28), sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample
