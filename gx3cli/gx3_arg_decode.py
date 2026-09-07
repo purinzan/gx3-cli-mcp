@@ -30,6 +30,7 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
 )
 from gx3cli.gx3_intermediate_tool import parse_header_ops
 from gx3cli.gx3_operand_parse import CONST_VALUE_RE, M_CONST_MOD_RE, parse_operands
+from gx3cli.gx3_operand_display import apply_operand_modifiers
 
 from gx3cli.extract_gx3_extended_instruction_knowledge import LABEL_DEVICE_TYPE, LABEL_TOKEN_PREFIX
 from gx3cli.gx3_instruction_table import (
@@ -632,12 +633,12 @@ def decode_args(
                 except ValueError:
                     suffix = f".{operand.bit}"
                 detail += f" bit={operand.bit}"
-            elif operand.index_reg:
-                suffix = f"Z{operand.index_reg}"
+            if operand.index_reg:
+                suffix += f"Z{operand.index_reg}"
                 detail += f" Z{operand.index_reg} indexed"
             occs.append(
                 ArgOcc(
-                    device=f"U{operand.unit:X}\\G{operand.number}{suffix}",
+                    device=apply_operand_modifiers(f"U{operand.unit:X}\\G{operand.number}", operand) if operand.modifiers else f"U{operand.unit:X}\\G{operand.number}{suffix}",
                     device_type="UG",
                     number=int(operand.number),
                     access="",
@@ -670,7 +671,7 @@ def decode_args(
 
         if operand.index_reg:
             occs.append(
-                make_occ(operand.device_type, number, arg_index, detail=f"Z{operand.index_reg} indexed")
+                make_occ(operand.device_type, number, arg_index, detail=f"{operand.index_prefix}{operand.index_reg} indexed" + (f" bit=K{operand.bit}" if operand.bit else "") + (" indirect" if operand.indirect else ""))
             )
             occs.append(
                 make_occ("Z", int(operand.index_reg), arg_index, detail="index register", index_register=True)
@@ -697,7 +698,7 @@ def decode_args(
             occs.append(occ)
             continue
         if operand.bit:
-            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"bit=K{operand.bit}"))
+            occs.append(make_occ(operand.device_type, number, arg_index, detail=f"bit=K{operand.bit}" + (" indirect" if operand.indirect else "")))
             continue
 
         const_mod = M_CONST_MOD_RE.search(operand.raw)

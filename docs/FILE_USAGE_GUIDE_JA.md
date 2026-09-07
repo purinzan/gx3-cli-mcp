@@ -266,3 +266,6 @@
 | プロジェクト全体を棚卸ししたい | `audit` -> `project-survey` -> `reliability-report` |
 | 解析失敗を再発防止したい | `failure-corpus capture` -> `failure-corpus run` |
 | サポートへ渡す | `support-bundle` |
+
+- `gx3cli/gx3_comment_store.py`: コメントDBのデバイス種別・ビット・ユニットを区別する共通読取り。
+- `tests/test_gx3_comment_identity.py`: 合成SQLiteを使ったコメント識別の回帰テスト。
