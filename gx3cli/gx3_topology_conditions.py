@@ -92,6 +92,9 @@ def load_trace_constant_context(
     root: Path,
     rows: list[LadderRow],
     refresh_areas: list,
+    *,
+    boundaries: tuple[dict[str, str] | None, str] | None = None,
+    xref_path: Path | None = None,
 ) -> TraceConstantContext:
     """Load only constants that project evidence can prove safely.
 
@@ -101,8 +104,11 @@ def load_trace_constant_context(
     external/HMI/network-written value into a project constant.
     """
     from gx3cli.gx3_workspace import index_paths
-    lite_path, xref_path = index_paths(root)
-    externals, boundary_reason = _load_external_boundaries(root, path=lite_path)
+    if boundaries is None or xref_path is None:
+        lite_path, discovered_xref = index_paths(root)
+        xref_path = xref_path if xref_path is not None else discovered_xref
+        boundaries = boundaries if boundaries is not None else _load_external_boundaries(root, path=lite_path)
+    externals, boundary_reason = boundaries
     if externals is None:
         return TraceConstantContext({}, False, boundary_reason)
 
