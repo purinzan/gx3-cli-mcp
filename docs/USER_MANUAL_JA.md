@@ -330,3 +330,19 @@ alarm-map showはbothもwriterとして表示し、timing-chartはbothをreader�
 timing-chartのCSVは既存列の末尾にreceiver_conditionを追加、Markdownにも受信側の
 read-site条件を表示します。出力に対応付けられない読取り位置は接点一覧へのfallbackと明記し、
 「対応する出力が見つからない」をFALSEと断定しません。
+
+### index-liteの通信CSV更新検知
+
+index-liteは実際に読んだrefresh/units CSVの絶対パスと内容hashを保存します。
+未存在も記録し、内容変更・削除・後からの追加があれば、読取readerとworkspaceの
+再利用判定は再構築を要求します。更新時刻だけを戻しても内容が異なれば再利用しません。
+構築中の変更は旧索引を残して中止し、索引出力とCSV入力の同一パスも拒否します。
+
+`gx3-cli workspace --prepare --root <project>`は以前のCSV指定を保持して再構築します。
+指定を変更する場合は`index-lite build`の既存`--comm-dir`/`--comm-prefix`、または
+優先される`--refresh-csv <path>`/`--unit-csv <path>`を使います。旧索引のCSVパスが
+相対パスだけの場合、元の作業ディレクトリを推測せず、明示buildを案内します。
+
+これは「どのCSV内容から保存されたか」の整合性検査です。CSVがそのプロジェクトから
+生成されたこと、全外部writerを網羅すること、欠損CSVを既知の空と扱ってよいことは
+証明しません。CSV由来・読取り状態の全consumerへの伝達は別の契約です。

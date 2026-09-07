@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from gx3cli.gx3_cli import project_label_from_root
-from gx3cli.gx3_index_lite import DEVICE_NAMING
+from gx3cli.gx3_index_lite import DEVICE_NAMING, external_dependency_problem
 from gx3cli.gx3_input_identity import fingerprint, short
 from gx3cli.gx3_index_build import BUILD_CONTRACT
 from gx3cli.gx3_output import add_format_argument, emit
@@ -185,6 +185,10 @@ def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
         return Artefact(kind, path, UNREADABLE, "; ".join(gaps))
     if meta.get("build_contract") != BUILD_CONTRACT:
         return Artefact(kind, path, OLD_BUILD, "stable-input build contract missing or obsolete; rebuild required")
+    if kind == "index":
+        problem = external_dependency_problem(meta)
+        if problem:
+            return Artefact(kind, path, OLD_BUILD, problem)
     return Artefact(kind, path, READY, f"input {short(stored_input)}")
 
 
@@ -235,9 +239,18 @@ def prepare(root: Path, *, rebuild: bool = False, quiet: bool = True) -> Workspa
     workspace.directory.mkdir(parents=True, exist_ok=True)
 
     if rebuild or not workspace.index.usable:
+        # Preserve the actual external inputs selected by a prior explicit
+        # build. Rebuilding from CWD defaults would silently change the answer.
+        previous = meta_of(workspace.index.path) or {}
+        external_args = []
+        for key, flag in (("refresh_csv", "--refresh-csv"), ("unit_csv", "--unit-csv")):
+            if previous.get(key):
+                if not Path(previous[key]).is_absolute():
+                    raise SystemExit("legacy relative communication CSV path cannot be resolved safely; run index-lite build with explicit communication CSV paths")
+                external_args.extend((flag, previous[key]))
         _build(
             gx3_index_lite.main,
-            ["build", "--root", str(root), "--out", str(workspace.index.path)],
+            ["build", "--root", str(root), "--out", str(workspace.index.path), *external_args],
             quiet,
         )
         workspace.built.append("index")

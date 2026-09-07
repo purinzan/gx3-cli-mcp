@@ -17,6 +17,11 @@ import sqlite3
 import os
 import tempfile
 import shutil
+import csv
+import json
+import subprocess
+import sys
+from unittest.mock import patch
 from contextlib import closing
 from pathlib import Path
 
@@ -223,6 +228,7 @@ def test_new_analysis_dependencies_invalidate_real_indexes() -> None:
 
 
 def main() -> int:
+    test_external_csv_changes_reject_and_rebuild_real_index()
     test_rejected_xref_disables_only_optional_trace_pruning()
     test_new_analysis_dependencies_invalidate_real_indexes()
     test_a_folder_with_no_ladder_has_no_identity()
@@ -233,6 +239,122 @@ def main() -> int:
     test_real_indexes_reject_missing_identity_and_removed_inputs()
     print("input identity checks passed")
     return 0
+
+
+def test_external_csv_changes_reject_and_rebuild_real_index() -> None:
+    from gx3cli import gx3_index_lite as lite
+    from gx3cli.gx3_workspace import prepare, locate
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        project = create_demo_line_project(work / "line", overwrite=True)
+        workspace = prepare(project)
+        index = workspace.index.path
+        xref_bytes = workspace.xref.path.read_bytes()
+        csv_path = work / "explicit # comm_refresh_areas.csv"
+        units = work / "explicit # comm_units.csv"
+
+        def refresh(label: str) -> None:
+            with csv_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["device_start", "device_end", "network_label", "direction"])
+                writer.writerow(["X0", "X0", label, "receive"])
+
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        def query():
+            return subprocess.run([sys.executable, "-m", "gx3cli.gx3_index_lite", "device", "X0",
+                                   "--root", str(project), "--db", str(index), "--json"],
+                                  cwd=work, env=env, capture_output=True, text=True, timeout=20)
+
+        def rejected():
+            saved = index.read_bytes()
+            result = query()
+            assert result.returncode != 0 and "CSV" in result.stderr, result
+            assert index.read_bytes() == saved
+            assert not locate(project).index.usable
+            moved = index.with_suffix(".moved")
+            index.rename(moved)
+            moved.rename(index)
+
+        refresh("network-before")
+        args = ["build", "--root", str(project), "--out", str(index),
+                "--refresh-csv", str(csv_path), "--unit-csv", str(units)]
+        assert lite.main(args) == 0
+        result = query()
+        assert result.returncode == 0 and "network-before" in result.stdout, result
+        assert json.loads(result.stdout)
+        baseline = fingerprint(project)
+        stat = csv_path.stat()
+        refresh("network-after!")  # same bytes/mtime, different contents
+        assert csv_path.stat().st_size == stat.st_size
+        os.utime(csv_path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert fingerprint(project) == baseline
+        rejected()
+        previous_cwd = Path.cwd()
+        elsewhere = work / "elsewhere"
+        elsewhere.mkdir()
+        try:
+            os.chdir(elsewhere)
+            rebuilt = prepare(project)
+        finally:
+            os.chdir(previous_cwd)
+        assert rebuilt.built == ["index"] and rebuilt.reused == ["xref"], rebuilt
+        assert workspace.xref.path.read_bytes() == xref_bytes
+        assert "network-after!" in query().stdout
+        assert prepare(project).built == []
+
+        # Optional absent CSV becoming present is an input change, as are
+        # changed unit contents and removal. Refresh and units are independent.
+        units.write_text("start_io_dec,io_points\n0,16\n", encoding="utf-8")
+        rejected()
+        assert prepare(project).built == ["index"]
+        units.write_text("start_io_dec,io_points\n0,32\n", encoding="utf-8")
+        rejected()
+        assert prepare(project).built == ["index"]
+        units.unlink()
+        rejected()
+        assert prepare(project).built == ["index"]
+        csv_path.unlink()
+        rejected()
+        assert prepare(project).built == ["index"]
+        refresh("network-before")
+        rejected()
+        assert prepare(project).built == ["index"]
+
+        # A real decode followed by a changed dependency must not publish a
+        # mixed build or overwrite the prior usable artifact.
+        saved = index.read_bytes()
+        original = lite.load_refresh_areas
+        def change_after_read(path):
+            result = original(path)
+            refresh("network-after!")
+            return result
+        with patch.object(lite, "load_refresh_areas", change_after_read):
+            try:
+                lite.main(args)
+            except SystemExit as exc:
+                assert "CSV inputs changed during" in str(exc), exc
+            else:
+                raise AssertionError("mixed CSV build published")
+        assert index.read_bytes() == saved
+        assert not list(index.parent.glob("*.building"))
+        assert prepare(project).built == ["index"]
+
+        # Current project identity alone cannot validate a pre-dependency DB.
+        with closing(sqlite3.connect(index)) as con, con:
+            con.execute("delete from meta where key='external_dependencies'")
+        rejected()
+        assert prepare(project).built == ["index"]
+
+        csv_bytes = csv_path.read_bytes()
+        try:
+            lite.main(["build", "--root", str(project), "--out", str(csv_path),
+                       "--refresh-csv", str(csv_path), "--unit-csv", str(units)])
+        except SystemExit as exc:
+            assert "overlaps" in str(exc), exc
+        else:
+            raise AssertionError("index overwrote its CSV dependency")
+        assert csv_path.read_bytes() == csv_bytes
 
 
 if __name__ == "__main__":

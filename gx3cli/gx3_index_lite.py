@@ -16,7 +16,7 @@ from gx3cli.gx3_device_name import (
     split_device,
 )
 from gx3cli.gx3_external_inputs import collect_external_inputs, load_refresh_areas, load_unit_io_areas
-from gx3cli.gx3_input_identity import fingerprint, mismatch_message
+from gx3cli.gx3_input_identity import dependency_snapshot, fingerprint, mismatch_message
 from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root, load_rows
@@ -198,17 +198,57 @@ def build_index(args: argparse.Namespace) -> int:
 
     root = Path(args.root)
     out = Path(args.out or default_db_path(root))
-    with atomic_index_build(root, out, connect=connect) as con:
-        result = _populate_index(args, con)
+    paths = communication_paths(args)
+    if out.resolve() in {path.resolve() for path in paths.values()}:
+        raise SystemExit("index output overlaps a communication CSV input; choose a separate output")
+    try:
+        initial = dependency_snapshot(paths)
+        with atomic_index_build(root, out, connect=connect) as con:
+            result = _populate_index(args, con)
+            if dependency_snapshot(paths) != initial:
+                raise SystemExit("communication CSV inputs changed during index construction; previous index preserved; retry build")
+            con.execute("insert into meta values ('external_dependencies', ?)",
+                        (json.dumps({"version": 1, "files": initial[0]}, sort_keys=True),))
+    except OSError as exc:
+        raise SystemExit(f"communication CSV inputs cannot be verified: {exc}; previous index preserved") from exc
     print(f"index written: {out}")
     return result
 
 
+def communication_paths(args: argparse.Namespace) -> dict[str, Path]:
+    comm_dir = Path(args.comm_dir)
+    return {
+        "refresh_csv": Path(getattr(args, "refresh_csv", "") or comm_dir / f"{args.comm_prefix}_refresh_areas.csv").absolute(),
+        "unit_csv": Path(getattr(args, "unit_csv", "") or comm_dir / f"{args.comm_prefix}_units.csv").absolute(),
+    }
+
+
+def external_dependency_problem(meta: dict[str, str]) -> str:
+    """Shared reader/workspace reuse decision; provenance is not implied."""
+    try:
+        manifest = json.loads(meta.get("external_dependencies", ""))
+        if manifest.get("version") != 1 or set(manifest["files"]) != {"refresh_csv", "unit_csv"}:
+            return "external CSV dependency contract missing or obsolete"
+        files = manifest["files"]
+        paths = {}
+        for name, record in files.items():
+            path = Path(record["path"])
+            digest = record["sha256"]
+            if (not path.is_absolute() or str(path) != meta.get(name)
+                    or (digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)))):
+                return "invalid external CSV dependency identity"
+            paths[name] = path
+        if dependency_snapshot(paths)[0] != files:
+            return "external CSV inputs changed since index construction"
+    except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+        return f"external CSV dependencies cannot be verified: {exc}"
+    return ""
+
+
 def _populate_index(args: argparse.Namespace, con: sqlite3.Connection) -> int:
     root = Path(args.root)
-    comm_dir = Path(args.comm_dir)
-    refresh_csv = comm_dir / f"{args.comm_prefix}_refresh_areas.csv"
-    unit_csv = comm_dir / f"{args.comm_prefix}_units.csv"
+    paths = communication_paths(args)
+    refresh_csv, unit_csv = paths["refresh_csv"], paths["unit_csv"]
 
     comments = load_comments_for_root(root)
     rows = load_rows(root, comments)
@@ -474,6 +514,10 @@ def open_existing(path: Path, root: Path | None = None, *, required_tables: tupl
         from gx3cli.gx3_index_build import require_build_contract
 
         require_build_contract(con, path)
+        meta = dict(con.execute("select key, value from meta"))
+        problem = external_dependency_problem(meta)
+        if problem:
+            raise SystemExit(f"index db {problem}: {path}\nRebuild it: gx3-cli workspace --prepare --root <project> or index-lite build with the intended communication CSVs")
     except BaseException:
         con.close()
         raise
@@ -930,6 +974,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None, help="output SQLite path; default is .gx3_index/<project>.sqlite")
     p.add_argument("--comm-dir", default="outputs", help="directory containing communication CSV files")
     p.add_argument("--comm-prefix", default=default_comm_prefix(), help="communication CSV prefix")
+    p.add_argument("--refresh-csv", default="", help="explicit refresh CSV, overrides communication directory/prefix")
+    p.add_argument("--unit-csv", default="", help="explicit unit CSV, overrides communication directory/prefix")
     p.set_defaults(func=build_index)
 
     p = sub.add_parser("device", help="query one device")
