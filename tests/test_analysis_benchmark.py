@@ -48,6 +48,9 @@ def main() -> int:
         # Lite reader additionally reads its explicit CSV dependency manifest.
         # The lite boundary reader also pins its validation snapshot.
         assert sample["trace"]["sql_statements"] == (31 if sample["case"] == "multi-pou" else 28), sample
+        # In addition to two index validations, trace compares source content
+        # before loading and before returning. Rows/comments/labels stay single-load.
+        assert sample["trace"]["fingerprint_file_reads"] == expected_hash_reads // 2, sample
         for loader in ("load_rows", "load_comments", "load_labels"):
             assert sample["warm_query"][loader] == 0, sample
             assert sample["trace"][loader] == 1, sample

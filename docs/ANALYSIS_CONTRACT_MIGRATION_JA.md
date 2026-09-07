@@ -212,3 +212,18 @@ traceの定数判定は`workspace.index_paths`で既存と同じ候補順・同�
 探索だけではfingerprint検証・DB作成を行わず、検証済みという意味にはしない。
 別CWDでの実prepare→trace API/CLI JSONを回帰に追加し、読取中の索引作成がないことを確認。
 明示buildが選んだCSVのパスをtrace分類へ伝える契約は、CWD探索の統一とは別の残件。
+# traceの元入力版検証（#153 §2.4）
+
+索引builderの入力版検証を`gx3_input_identity.input_version`へ移し、traceも共用する。
+rows/comments/labelsの読込み前に元ファイル集合の指紋とstatを記録し、traceの
+返却前に内容を再照合する。解読済みrows等は再読込みしない。既存`TraceInputs`を
+再利用する場合も版を確認し、不一致は結果を返さず再試行を案内する。
+`input_sha256`をtrace JSONへ追加し、どの元入力の結果かを明示する。
+手作りの版情報なし`TraceInputs`は検証済み入力として受け付けず、`load_trace_inputs`を使う。
+
+回帰は実保存LD読込み中の変更と、探索中の既存STDB/DM依存ファイルの同サイズ更新
+（mtimeを元に戻す）を含む。後者は依存版の検証であってDMの意味解読対応の証明ではない。
+失敗後の再実行とファイル移動も確認する。共通の版検証はSQLite WAL sidecarのある
+元入力を拒否する。ファイルをロックする方式ではなく開始/終了の変更検出であり、
+保存中の入力は閉じてから再実行する。CSVや任意link-mapの変更検出、他consumerの
+結果全体を通した版検証まで、このtrace修正で完了扱いにしない。

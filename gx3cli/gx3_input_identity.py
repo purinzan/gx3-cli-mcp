@@ -78,6 +78,27 @@ def fingerprint(root: Path) -> str:
     return digest.hexdigest()
 
 
+def input_stamp(root: Path) -> tuple:
+    """Transient source version; content identity is provided by input_version."""
+    result = []
+    for path in input_files(root):
+        if path.suffix.lower() == ".db" and (Path(str(path) + "-wal").exists() or Path(str(path) + "-shm").exists()):
+            raise SystemExit(f"project input has active SQLite WAL sidecars: {path.name}; close source users before analysis")
+        stat = path.stat()
+        result.append((path.name, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
+    return tuple(result)
+
+
+def input_version(root: Path) -> tuple:
+    """Fingerprint a stable source set, shared by index builders and readers."""
+    before = input_stamp(root)
+    digest = fingerprint(root)
+    after = input_stamp(root)
+    if before != after:
+        raise SystemExit("project inputs changed while fingerprinting; retry the analysis")
+    return digest, after
+
+
 def short(value: str) -> str:
     return value[:12] if value else "(none)"
 
