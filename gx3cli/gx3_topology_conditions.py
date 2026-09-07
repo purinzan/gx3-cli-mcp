@@ -149,6 +149,8 @@ def _simplify(
     if op == "false":
         return dict(node), False, []
     if op == "contact":
+        if node.get("ct_code") in {"p", "f"}:
+            return dict(node), None, []
         device = str(node.get("raw_device") or node.get("device") or "")
         fact = facts.get(device)
         if fact is None:

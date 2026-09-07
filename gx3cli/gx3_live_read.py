@@ -449,6 +449,19 @@ def evaluate_logic(node: object, values: dict[str, object]) -> tuple[str, list[d
         state, leaves = evaluate_logic(node.get("arg"), values)
         return {"pass": "block", "block": "pass"}.get(state, state), leaves
     if op == "predicate":
+        if node.get("expression_operator") and len(node.get("args", [])) == 1:
+            if node.get("opcode") == "INV":
+                state, leaves = evaluate_logic(node["args"][0], values)
+                return {"pass": "block", "block": "pass"}.get(state, state), leaves
+            if node.get("requires_previous_scan"):
+                return "unknown", [{
+                    "kind": "predicate", "condition": "unknown",
+                    "opcode": node.get("opcode"), "position": node.get("position", ""),
+                    "devices": node.get("devices", []),
+                    "reason": "expression edge requires previous-scan state",
+                    "analysis_state": PARTIAL, "analysis_stage": SEMANTICS,
+                    "next_step": "use a scan-synchronized recording including the previous scan",
+                }]
         return "unknown", [{
             "kind": "predicate",
             "condition": "unknown",

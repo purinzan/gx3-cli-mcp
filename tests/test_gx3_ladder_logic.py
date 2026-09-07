@@ -48,7 +48,7 @@ def test_left_rail_is_not_assumed_on_every_y_row():
     assert logic_to_text(enable_logic_for_output(row, output)) == "FALSE"
 
 
-def test_driver_sink_does_not_feed_a_vertical_branch():
+def test_driver_input_can_feed_a_vertical_branch():
     contact_a = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
     coil_a = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
     wire = "e{s=wire:pos=1,1}"
@@ -64,7 +64,7 @@ def test_driver_sink_does_not_feed_a_vertical_branch():
     output_a = output_elements_for(row, "M200")[0]
     output_b = output_elements_for(row, "M201")[0]
     assert logic_to_text(enable_logic_for_output(row, output_a)) == "[M100]"
-    assert logic_to_text(enable_logic_for_output(row, output_b)) == "FALSE"
+    assert logic_to_text(enable_logic_for_output(row, output_b)) == "([M100] AND [M101])"
 
 
 def test_vertical_branch_can_feed_a_driver_sink():
@@ -99,7 +99,7 @@ def test_data_instruction_sink_does_not_feed_right_side():
     assert logic_to_text(enable_logic_for_output(row, coil_output)) == "FALSE"
 
 
-def test_data_instruction_sink_does_not_feed_vertical_branch():
+def test_data_instruction_input_can_feed_vertical_branch():
     contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
     mov = (
         "e{s=ce{op=in{op=#:ct=a:as=[as{vt=Abl}]}:args=["
@@ -116,7 +116,7 @@ def test_data_instruction_sink_does_not_feed_vertical_branch():
     data_output = output_elements_for(row, "D10")[0]
     coil_output = output_elements_for(row, "M200")[0]
     assert logic_to_text(enable_logic_for_output(row, data_output)) == "[M100]"
-    assert logic_to_text(enable_logic_for_output(row, coil_output)) == "FALSE"
+    assert logic_to_text(enable_logic_for_output(row, coil_output)) == "[M100]"
 
 
 def test_output_vertical_bus_fans_out_to_multiple_sinks():
@@ -166,10 +166,11 @@ def main():
     test_blank_horizontal_gap_is_not_inferred_as_a_wire()
     test_explicit_wire_carries_a_horizontal_gap()
     test_left_rail_is_not_assumed_on_every_y_row()
-    test_driver_sink_does_not_feed_a_vertical_branch()
+    test_driver_input_can_feed_a_vertical_branch()
     test_vertical_branch_can_feed_a_driver_sink()
     test_data_instruction_sink_does_not_feed_right_side()
-    test_data_instruction_sink_does_not_feed_vertical_branch()
+    test_data_instruction_input_can_feed_vertical_branch()
+    test_output_vertical_bus_fans_out_to_multiple_sinks()
     test_enable_logic_return_does_not_mutate_row_cache()
     test_digit_specified_bit_group_survives_shared_decode()
     cases = [

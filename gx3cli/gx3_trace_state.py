@@ -194,6 +194,16 @@ def semantic_gaps(driver_rows: list[dict]) -> list[str]:
     if temporal:
         listed = ", ".join(sorted(temporal)[:4])
         gaps.append(f"timer/counter contacts in the condition ({listed}): elapsed time is not modelled")
+    if any(
+        item.get("kind") == "expression_edge"
+        for row in driver_rows for item in row.get("temporal_predicates", [])
+    ):
+        gaps.append("MEP/MEF: the expression edge requires previous-scan state")
+    if any(
+        item.get("kind") == "edge_contact"
+        for row in driver_rows for item in row.get("temporal_predicates", [])
+    ):
+        gaps.append("pulse contacts require previous-scan state, not just the current device level")
     return gaps
 
 
@@ -320,7 +330,8 @@ def label_resolution_gaps(labels: LabelResolver, unresolved: list[str]) -> list[
 
 
 def temporal_predicates(
-    output_occs: list[DeviceOcc], condition_records: list[dict[str, Any]]
+    output_occs: list[DeviceOcc], condition_records: list[dict[str, Any]],
+    enable_logic: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Known temporal/state predicates, without inventing their runtime value."""
     out: list[dict[str, Any]] = []
@@ -378,6 +389,11 @@ def temporal_predicates(
 
     for condition in condition_records:
         device = str(condition.get("device", ""))
+        if condition.get("ct_code") in {"p", "f"}:
+            out.append({
+                "kind": "edge_contact", "device": device,
+                "edge": condition["ct_code"], "requires_runtime_state": True,
+            })
         try:
             dev_type, _number = parse_device(device)
         except ValueError:
@@ -396,6 +412,20 @@ def temporal_predicates(
                 "required_state": condition.get("required_state", ""),
                 "requires_runtime_state": True,
             })
+    def visit(node):
+        if node.get("expression_operator") and node.get("requires_previous_scan"):
+            record = {
+                "kind": "expression_edge", "opcode": node.get("opcode"),
+                "position": node.get("position"), "source": "enable_logic",
+                "requires_runtime_state": True,
+            }
+            if record not in out:
+                out.append(record)
+        for child in node.get("args", []):
+            visit(child)
+
+    if enable_logic:
+        visit(enable_logic)
     return out
 
 
@@ -576,6 +606,7 @@ def logic_condition_record(
         "has_driver": has_driver,
         "self_reference": device == active_device,
         "position": ref.get("position", ""),
+        "ct_code": ref.get("ct_code", ""),
         "predicate": predicate,
         **external,
     }
@@ -761,7 +792,7 @@ def build_trace(
                 "mc_zones": [zone.summary() for zone in row_zones],
                 "cj_upstream": [site.summary() for site in row_jumps],
                 "execution_guards": execution_guards(row_jumps),
-                "temporal_predicates": temporal_predicates(output_occs, condition_records),
+                "temporal_predicates": temporal_predicates(output_occs, condition_records, enable_logic),
                 "same_row_outputs": [simple_occ_record(occ, comments) for occ in row_driver_occurrences(row)],
                 "instruction_refs": [simple_occ_record(occ, comments) for occ in row_instruction_refs(row)],
             }

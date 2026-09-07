@@ -138,12 +138,16 @@ def logic_to_st(node: dict[str, Any], ctx: StBuildContext) -> str:
     if op == "false":
         return "FALSE"
     if op == "contact":
+        if node.get("ct_code") in {"p", "f"}:
+            return placeholder_for(ctx, node)
         device = str(node.get("raw_device") or node.get("device") or "")
         ident = identifier_for(ctx, device)
         if node.get("role") == "b":
             return f"(NOT {ident})"
         return ident
     if op == "predicate":
+        if node.get("expression_operator") and node.get("opcode") == "INV" and len(node.get("args", [])) == 1:
+            return f"(NOT {logic_to_st(node['args'][0], ctx)})"
         return placeholder_for(ctx, node)
     if op == "unknown":
         return placeholder_for(ctx, node)
