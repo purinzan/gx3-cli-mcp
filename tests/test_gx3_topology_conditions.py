@@ -392,6 +392,92 @@ def test_trace_inputs_are_loaded_once_and_calls_are_isolated() -> None:
         assert trace(roots[0])["driver_rows"]
 
 
+def test_trace_uses_one_communication_input_for_pruning_and_classification() -> None:
+    import json
+    import os
+    import subprocess
+    from unittest.mock import patch
+    from gx3cli import gx3_trace_state as base
+    from gx3cli import trace_gx3_device_dependencies as facade
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "p"
+        write_program(root, [("r", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0])])
+        (work / "outputs").mkdir()
+        header = "device_start,device_end,network_label\n"
+        # Conflicting real CSV inputs expose the old facade/base selection gap.
+        (work / "outputs" / "proof_refresh_areas.csv").write_text(header + "M100,M100,selected-network\n", encoding="utf-8")
+        (work / "proof_refresh_areas.csv").write_text(header + "M100,M100,legacy-network\n", encoding="utf-8")
+        previous = Path.cwd()
+        try:
+            os.chdir(work)
+            with patch.dict(os.environ, {"PROJECT_COMM_PREFIX": "proof"}), \
+                 patch.object(base, "load_refresh_areas", wraps=base.load_refresh_areas) as refresh, \
+                 patch.object(base, "load_unit_io_areas", wraps=base.load_unit_io_areas) as units, \
+                 patch.object(facade, "load_trace_constant_context", wraps=facade.load_trace_constant_context) as context:
+                result = facade.build_trace(root, "Y0", 4, 100, True, True)
+                assert refresh.call_count == units.call_count == 1, (refresh.call_count, units.call_count)
+                assert context.call_args.args[2][0].network_label == "selected-network"
+                conditions = [c for row in result["driver_rows"] for c in row["conditions"] if c["device"] == "M100"]
+                assert conditions and all(c["refresh_network_label"] == "selected-network" for c in conditions), conditions
+            # Exercise the real command entry point, not only its API facade.
+            environment = dict(os.environ, PROJECT_COMM_PREFIX="proof", PYTHONIOENCODING="utf-8",
+                               PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+            command = [sys.executable, "-m", "gx3cli.trace_gx3_device_dependencies", "Y0",
+                       "--root", str(root), "--strict-logic", "--no-link-map", "--format", "json"]
+            for expected in ("selected-network", "legacy-network"):
+                completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", env=environment)
+                assert completed.returncode == 0, completed.stderr
+                result = json.loads(completed.stdout)
+                conditions = [c for row in result["driver_rows"] for c in row["conditions"] if c["device"] == "M100"]
+                assert conditions and all(c["refresh_network_label"] == expected for c in conditions), conditions
+                if expected == "selected-network":
+                    (work / "outputs" / "proof_refresh_areas.csv").unlink()
+        finally:
+            os.chdir(previous)
+
+
+def test_trace_finds_prepared_indexes_outside_the_current_directory() -> None:
+    import json
+    import os
+    import subprocess
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "owner" / "project"
+        root.parent.mkdir()
+        write_program(root, [
+            ("writer", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("reader", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0]),
+        ])
+        built = prepare(root)
+        assert built.ready
+        unrelated = work / "unrelated"
+        unrelated.mkdir()
+        previous = Path.cwd()
+        try:
+            os.chdir(unrelated)
+            result = build_trace(root, "Y0", 4, 100, True, True)
+            assert result["constant_pruning"]["enabled"], result["constant_pruning"]
+            assert result["constant_pruning"]["proven_constants"] >= 1, result
+            environment = dict(os.environ, PYTHONIOENCODING="utf-8",
+                               PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+            completed = subprocess.run(
+                [sys.executable, "-m", "gx3cli.trace_gx3_device_dependencies", "Y0",
+                 "--root", str(root), "--strict-logic", "--no-link-map", "--format", "json"],
+                capture_output=True, text=True, encoding="utf-8", env=environment)
+            assert completed.returncode == 0, completed.stderr
+            cli_result = json.loads(completed.stdout)
+            assert cli_result["constant_pruning"]["enabled"], cli_result["constant_pruning"]
+            assert cli_result["constant_pruning"]["proven_constants"] >= 1, cli_result
+            assert not list(unrelated.glob(".gx3_index/*")), "read path created an index"
+        finally:
+            os.chdir(previous)
+
+
 def test_postfilter_row_key_includes_the_driven_device() -> None:
     from gx3cli.trace_gx3_device_dependencies import _row_device_key
 

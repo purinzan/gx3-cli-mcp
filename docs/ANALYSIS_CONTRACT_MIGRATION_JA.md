@@ -194,3 +194,21 @@ device/where-used実CLIが旧版の根拠を保持、新規接続は変更され
 
 読取り固定は接続ごと。sourceファイルの同時変更、複数索引を跨ぐ結果、traceのCSV二重読取りは
 未完であり、この変更だけで入力整合性全体の完了とはしない。
+# traceの通信CSV読込みを共有（#153 Phase 3）
+
+`TraceInputs`がrows/comments/labelsと通信refresh・unit I/Oの読取り結果を
+呼出し単位で保持し、定数判定とtrace本体の分類へ同じlistを渡す。
+旧facadeの独自CSV選択と再読込みを削除し、既存`find_comm_csv`の
+`outputs/`優先・CWD fallbackを両経路で使う。直接baseを呼ぶ場合も同じ方針。
+両場所に違うCSVがある場合に旧baseがCWDを選んでいた挙動は意図的に修正する。
+
+回帰: 合成保存LD→実loader→trace facade、実CLI JSONを通し、競合するCSVの
+選択一致・refresh/unit各1回読込み・outputs不在時の旧CWD fallbackを確認。
+元ファイル更新検出、CSVのproject由来・全外部writerの証明、
+CSV不正行の状態を全consumerへ伝える移行は、この読込み共有だけでは完了しない。
+
+traceの定数判定は`workspace.index_paths`で既存と同じ候補順・同一directoryの
+索引ペアを選び、実接続の検証は既存readerで行う。`locate`も同じpath選択を使う。
+探索だけではfingerprint検証・DB作成を行わず、検証済みという意味にはしない。
+別CWDでの実prepare→trace API/CLI JSONを回帰に追加し、読取中の索引作成がないことを確認。
+明示buildが選んだCSVのパスをtrace分類へ伝える契約は、CWD探索の統一とは別の残件。

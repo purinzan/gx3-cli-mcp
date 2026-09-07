@@ -100,18 +100,7 @@ def _condition_refs_provider(facts: dict, stats: dict[str, int]):
 
 def _load_constant_context(root: Path, inputs=None):
     inputs = inputs if inputs is not None else base.load_trace_inputs(root)
-    rows = inputs.rows
-    comm_prefix = base.default_comm_prefix()
-    refresh_path = Path("outputs") / f"{comm_prefix}_refresh_areas.csv"
-    # Keep compatibility with older/manual workflows that wrote the generated
-    # CSV in cwd, but prefer the same outputs/ location as comm-refresh and
-    # dead-logic. Missing evidence disables only this exclusion; it never
-    # invents a refresh range.
-    legacy_refresh_path = Path(f"{comm_prefix}_refresh_areas.csv")
-    if not refresh_path.exists() and legacy_refresh_path.exists():
-        refresh_path = legacy_refresh_path
-    refresh_areas = base.load_refresh_areas(refresh_path)
-    return load_trace_constant_context(root, rows, refresh_areas)
+    return load_trace_constant_context(root, inputs.rows, inputs.refresh_areas)
 
 
 def __getattr__(name: str) -> Any:

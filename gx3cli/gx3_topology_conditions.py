@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gx3cli.gx3_dead_logic import ConstantFact, ConstantProofUnavailable, lite_db_path, load_external_devices, propagate_constant_devices
+from gx3cli.gx3_dead_logic import ConstantFact, ConstantProofUnavailable, load_external_devices, propagate_constant_devices
 from gx3cli.gx3_analysis_state import AnalysisState, worst
 from gx3cli.gx3_ladder_logic import (
     and_logic,
@@ -33,7 +33,7 @@ from gx3cli.gx3_ladder_logic import (
     logic_true,
     or_logic,
 )
-from gx3cli.gx3_xref import default_db_path, open_xref_db
+from gx3cli.gx3_xref import open_xref_db
 from gx3cli.review_gx3_project import LadderRow
 
 
@@ -65,7 +65,7 @@ class TraceConstantContext:
         }
 
 
-def _load_external_boundaries(root: Path) -> tuple[dict[str, str] | None, str]:
+def _load_external_boundaries(root: Path, *, path: Path | None = None) -> tuple[dict[str, str] | None, str]:
     """Read external/HMI/communication ownership from a validated lite index.
 
     Constant pruning is destructive to the search graph, so an absent, stale,
@@ -76,7 +76,9 @@ def _load_external_boundaries(root: Path) -> tuple[dict[str, str] | None, str]:
     Use the same validated reader as dead-logic. It closes the handle on every
     path, and a failed table read cannot become an empty boundary set.
     """
-    path = lite_db_path(root)
+    if path is None:
+        from gx3cli.gx3_workspace import index_paths
+        path = index_paths(root)[0]
     if not path.exists():
         return None, f"index-lite database not found: {path}"
 
@@ -98,11 +100,12 @@ def load_trace_constant_context(
     malformed prerequisites must never make tracing fail or silently turn an
     external/HMI/network-written value into a project constant.
     """
-    externals, boundary_reason = _load_external_boundaries(root)
+    from gx3cli.gx3_workspace import index_paths
+    lite_path, xref_path = index_paths(root)
+    externals, boundary_reason = _load_external_boundaries(root, path=lite_path)
     if externals is None:
         return TraceConstantContext({}, False, boundary_reason)
 
-    xref_path = default_db_path(root)
     if not xref_path.exists():
         return TraceConstantContext({}, False, f"xref database not found: {xref_path}")
 

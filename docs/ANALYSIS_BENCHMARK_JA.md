@@ -404,3 +404,27 @@ cold SQL+2はworkspaceの検証開始、warm10 SQL170→180、trace27→28
 lite build SQLは不変、device10回160→170、locate10回80→90。
 OS cache未flush、RSSは累積process peak。これは版混在を防ぐ追加transactionの
 費用確認であり、高速化・元ファイル群の一括snapshot・Windows実測性能の保証ではない。
+# trace通信入力共有・workspace探索（2026-09-06）
+
+比較元da2426e（#186と同内容）、変更版c73683b。同じmacOS/Python 3.14.4で
+固定6検体×3 fresh processを前後順次測定。入力hash/options一致、全phaseで
+既存の時間・Python peak・累積RSS予算内。SQL/open/rows/comments/labels/
+fingerprint読込み回数は不変。中央値ms:
+
+| 検体 | cold | warm10 | trace | dependency-flow |
+|---|---:|---:|---:|---:|
+| small | 59.97→59.54 | 49.22→48.16 | 10.79→10.72 | 3.78→3.79 |
+| wide | 92.79→89.42 | 63.07→61.59 | 68.07→67.74 | 30.34→29.66 |
+| deep | 87.93→85.24 | 51.14→49.65 | 92.09→91.20 | 31.40→30.62 |
+| large-span | 132.63→133.25 | 50.69→49.10 | 10.73→10.66 | 19.17→18.92 |
+| multi-pou | 91.88→94.11 | 53.01→53.10 | 91.94→92.30 | 32.31→31.05 |
+| ld-st | 93.08→91.95 | 51.64→53.36 | 91.07→93.29 | 31.19→31.75 |
+
+途中版af4fcafの最初の比較では全6検体のwarm Python peakが約140KB増え、
+既存予算を約3〜6KB超過した。その比較は不合格として残す。同じ途中版のsmallを
+再測定すると前後約1.36MBで差は再現せず、GC callback付き診断でも前後の回収数と
+peakは同程度だった。回収タイミングによる感度が疑われるが原因断定はしない。
+上表はworkspace探索も統合した最終版の別比較であり、途中版の失敗を削除したり
+予算を緩めて合格させたものではない。GC強制回収など測定手順の変更もしていない。
+CSVの読込み1回は別の競合CSVを使う実consumer回帰で確認し、固定ベンチマークは
+巨大CSVの性能を保証しない。OS cache未flush、RSSは累積process peak。
