@@ -24,12 +24,10 @@ from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, device_radix, format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     LABEL_TOKEN_PREFIX,
     extract_args_text,
-    extract_elements,
     element_meta,
-    header_tokens,
     top_level_items,
 )
-from gx3cli.gx3_intermediate_tool import parse_header_ops
+from gx3cli.gx3_intermediate_tool import row_syntax
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES
 from gx3cli.gx3_ladder_logic import VERTICAL_RE, parse_pos
 from gx3cli.gx3_program_map import ProgramMap, load_program_map
@@ -256,10 +254,8 @@ def parse_rung(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> tuple[list[Op], list[tuple[int, int]], list[tuple[int, int, int]]]:
     """Return (ops, verticals[(x,y)], wires[(x,y,end_x)])."""
-    tokens = header_tokens(row.data)
-    header_ops = parse_header_ops(row.data)
-    raw_elements = extract_elements(row.data)
-    ce_elements = [e for e in raw_elements if "s=ce{" in e]
+    syntax = row_syntax(row)
+    tokens, header_ops, raw_elements = syntax.tokens, syntax.header_ops, syntax.elements
 
     ops: list[Op] = []
     wires: list[tuple[int, int, int]] = []

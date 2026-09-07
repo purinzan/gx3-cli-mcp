@@ -97,7 +97,7 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
             # Include empty LD databases in the inventory as well.
             raw_rows=read_ladder_rows(root)
             for lddb in raw_rows:groups[lddb]=[]
-            for row in load_rows(root,{}):groups[row.lddb].append(row)
+            for row in load_rows(root,{},rows_by_db=raw_rows):groups[row.lddb].append(row)
             selected=[db for db in sorted(groups) if not program or program in {pm.label(db),db}]
             if program and not selected:raise ValueError(f'program not found: {program}')
             if not selected and format=='gxworks3':raise ValueError('no LD programs to export')
