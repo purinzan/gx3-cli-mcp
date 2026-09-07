@@ -33,6 +33,12 @@
 
 ## 共通基盤の変更と残り
 
+通常OUTの定数候補について、CALL invocationが静的にtrueへ確定しない行を除外する。
+CALL不成立はOUTをfalseで実行するのではなく書込みをスキップするため、local enableが
+falseでも保持/初期値をOFFと証明できない。実LDDB→builder→定数facts/trace context/CSVで
+条件付き・SM401呼出しを除外し、SM400無条件呼出しと通常OUTは維持することを確認する。
+派生定数からのCALL成立証明、初回実行前の値や全POU実行順の証明は未完。
+
 xref単一プロジェクトのwhere-usedはページ・件数とも共通readerのcovered_queryを使う。
 member表を使う実builder経路でD+のboth/第2語、BK+のsource/destination/範囲外を確認。
 device_filterはreaderのinterval_filterへの互換facade。member表のない低水準呼出しは

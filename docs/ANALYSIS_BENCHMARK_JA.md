@@ -212,6 +212,14 @@ traceは22→24（multi-pou25→27）、value-flowは11→12（multi-pou14→15�
 
 ## xrefとindex-liteの照会契約
 
+CALL定数候補の保守化について、baseline `6373380`と本修正を既存v2固定6検体・各3回で
+比較した（同じmacOS/Python 3.14.4、入力hash一致）。全phaseでSQL/open/rows/comments/
+labels/hash読込みは不変、時間・Python peak・累積RSSは既定予算内。
+trace中央値msはsmall8.39→8.37、wide51.66→55.41、deep72.77→68.48、
+large-span8.48→9.20、multi-pou69.02→68.85、ld-st68.33→68.46。
+固定6検体はCALL密集ケースではない。条件付きCALLの正しさは別の実builder/CSV回帰で
+確認し、この測定をCALL密集プロジェクトの性能保証や一般的な高速化率として使わない。
+
 xrefの単一project照会を共通member readerへ移した比較（baseline `3868cac`、
 変更はgx3_xref/gx3_xref_readの照会経路のみ、同一v2固定6検体・各3回）。
 warm10照会の中央値msはsmall46.04→49.24、wide55.29→55.34、deep50.86→46.86、
