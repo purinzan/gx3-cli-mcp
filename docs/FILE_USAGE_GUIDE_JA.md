@@ -51,6 +51,8 @@
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
 | `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
+| `test_gx3_display_fidelity.py` | 合成LD行を通して文字列定数、命令幅、ZZ添字、間接指定の表示を検査する。実行意味やxrefの間接アドレス解決は対象外。 |
+| `test_gx3_input_bus.py` | 合成LDで共通入力配線、INV/MEP/MEFの入力式と分岐内の適用範囲、trace・dependency・snapshotへの伝達を検査する。 |
 | `docs/REVIEW_QUESTIONS_JA.md` | 変更を出す前にコードへ問う8つの質問。実際にバグを出した問いだけを載せ、それぞれに再現例を添える。テストではなくコード自身の契約と突き合わせるための手順で、AGENTS.md と CONTRIBUTING.md から必読として参照される。 |
 | `docs/ANALYSIS_CONTRACT_MIGRATION_JA.md` | #153の問い合わせ別移行台帳。正本・保存・reader・検証箇所と未完項目を区別し、部分修正を親Issue全体の完了と誤認しないための記録。 |
 | `docs/ANALYSIS_BENCHMARK_JA.md` | #153の固定合成検体によるcold/warm/trace比較。測定値、環境、計測の限界、後続変更の調査予算。 |
@@ -202,6 +204,7 @@
 | `gx3_index_contract.py` | 派生xref/liteの用途別の必須表・列を、照会やworkspace再利用の前に検証する。行内容の完全性・元言語の対応範囲の証明とは別の構造契約。 |
 | `gx3_module_params.py` | インテリジェント機能ユニットの設定を読む。ProfileTableInfo で記述子テーブルと設定値テーブルを判別し、既定値から変更された設定だけを型名・スロット・バッファU番号とともに出す。 |
 | `gx3_operand_parse.py` | ヘッダの型トークン列と要素の値を突き合わせてオペランドを読む共通処理。ladder-print（表示文字列）と gx3_arg_decode（occurrence）が同じ歩進を共有し、同じ解読バグが二重に入るのを防ぐ。 |
+| `gx3_operand_display.py` | 図面表示と条件式で使う命令名・順序付き引数の表記を共有する。文字列・添字・間接指定と型を保持する。 |
 | `gx3_arg_decode.py` | ラダー命令引数の共通 decoder。gx3_operand_parse の結果を occurrence と read/write 分類に変換する。 |
 | `gx3_data_flow.py` | 命令の read/write 意味付けから保守的な引数単位のデータフロー辺を生成する。 |
 | `gx3_output.py` | 出力形式の共通処理。`--format` を唯一の綴りにし、既存の `--json` は同義として残す。JSON は ensure_ascii=False / indent=2 に統一。 |

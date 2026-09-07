@@ -16,6 +16,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     extract_elements,
 )
 from gx3cli.gx3_arg_decode import parse_row_operations
+from gx3cli.gx3_operand_display import display_operands, instruction_opcode
+from gx3cli.gx3_operand_parse import parse_operands
 from gx3cli.review_gx3_project import LadderRow
 from gx3cli.gx3_label_resolve import LabelResolver
 
@@ -83,6 +85,7 @@ class FlowElement:
     # two operands -- so anything indexing the manuals' write positions needs
     # this rather than len(devices).
     argc: int = 0
+    operands: list[str] = field(default_factory=list)
 
     @property
     def is_wire(self) -> bool:
@@ -250,6 +253,8 @@ def positioned_elements(
         if str(meta.get("element_kind", "")) == "wire" or raw.startswith("e{s=wire"):
             elements.append(FlowElement("wire", "", "", "", "wire", x, y))
             continue
+        if "s=ce{" not in raw:
+            continue
         if op_index >= len(operations):
             continue
         operation = operations[op_index]
@@ -260,10 +265,13 @@ def positioned_elements(
         if operation.role in {"a", "b", "c"}:
             kind = "contact" if operation.role in {"a", "b"} else "coil"
         else:
-            opcode = operation.role
+            opcode = instruction_opcode(operation.role, bool(re.search(r"as=\[as\{vt=A32", raw)),
+                                        bool(re.search(r"as=\[as\{vt=Ass", raw)))
             category = str(row.operations[op_index].get("category", "")) if op_index < len(row.operations) else ""
 
         devices = device_refs_from_args(operation.args)
+        operands = display_operands(operation.raw_args, operation.arg_tokens, labels)
+        operand_kinds = parse_operands(operation.raw_args, operation.arg_tokens)
         elements.append(
             FlowElement(
                 kind=kind,
@@ -275,7 +283,8 @@ def positioned_elements(
                 y=y,
                 ct_code=str(meta.get("ct_code", "")),
                 devices=devices,
-                constants=[f"K{value}" for _, value in sorted(operation.constant_values.items())][:3],
+                constants=[value for value, operand in zip(operands, operand_kinds) if operand.kind == "const"],
+                operands=operands,
                 argc=operation.argc,
             )
         )
@@ -285,7 +294,7 @@ def positioned_elements(
         if element.is_sink:
             element.end_x = element.x
         elif element.kind == "instruction":
-            operand_cells = len(element.devices) + len(element.constants)
+            operand_cells = element.argc
             element.end_x = element.x + max(1, 1 + operand_cells)
         else:
             element.end_x = element.x + 1
@@ -512,7 +521,7 @@ def element_condition_logic(element: FlowElement) -> dict[str, Any]:
             }
         ref = element.devices[0]
         constant_value = CONSTANT_DEVICE_VALUES.get(ref.device)
-        if constant_value is not None:
+        if constant_value is not None and element.ct_code not in {"p", "f"}:
             effective_value = constant_value if element.role == "a" else not constant_value
             if effective_value:
                 return logic_true()
@@ -523,6 +532,7 @@ def element_condition_logic(element: FlowElement) -> dict[str, Any]:
             "state": "ON" if element.role == "a" else "OFF",
             "ct_code": element.ct_code,
             **device_ref_record(ref),
+            "device": element.operands[0] if element.operands else ref.display,
             "position": f"{element.x},{element.y}",
         }
 
@@ -533,6 +543,7 @@ def element_condition_logic(element: FlowElement) -> dict[str, Any]:
             "ct_code": element.ct_code,
             "devices": [device_ref_record(ref) for ref in element.devices],
             "constants": list(element.constants),
+            "operands": list(element.operands),
             "position": f"{element.x},{element.y}",
         }
 
@@ -542,6 +553,40 @@ def element_condition_logic(element: FlowElement) -> dict[str, Any]:
         "role": element.role,
         "opcode": element.opcode,
         "position": f"{element.x},{element.y}",
+    }
+
+
+def input_expression_logic(element: FlowElement, incoming: dict[str, Any]) -> dict[str, Any] | None:
+    """Inline INV/ME transform their entire input, not an independent contact.
+
+    Keep the input subtree on a predicate node so existing conservative
+    consumers do not mistake an edge for a steady-state contact. Its value
+    cannot be obtained from one snapshot when a previous scan is required.
+    """
+    if element.element_kind != "ct":
+        return None
+    if element.role == "INV":
+        opcode = "INV"
+    elif element.role == "ME" and element.ct_code in {"p", "f"}:
+        opcode = "MEP" if element.ct_code == "p" else "MEF"
+    else:
+        return None
+    if is_too_large(incoming):
+        return incoming
+    oversized = _within_budget([incoming])
+    if oversized is not None:
+        return oversized
+    refs = condition_refs_from_logic(incoming)
+    return {
+        "op": "predicate", "opcode": opcode, "expression_operator": True,
+        "ct_code": element.ct_code, "position": f"{element.x},{element.y}",
+        "args": [incoming], "constants": [],
+        "devices": [
+            {"device": ref["display_device"], "raw_device": ref["device"],
+             "device_type": ref["device_type"], "number": ref["number"]}
+            for ref in refs
+        ],
+        "requires_previous_scan": opcode in {"MEP", "MEF"},
     }
 
 
@@ -639,63 +684,138 @@ def topology_graph(row: LadderRow, elements: list[FlowElement], output_x: int | 
     )
 
 
+
+def expression_branch_scopes(graph: TopologyGraph) -> dict[tuple[int, int], tuple[int, int]]:
+    """Find the enclosing bypass branch of an inline expression operator.
+
+    An operator inside one arm of a parallel branch applies to that arm's
+    accumulator. The common input preceding the split is combined afterwards.
+    Only a dominating split with a bypass that rejoins past the operator
+    qualifies; a fan-out to an unrelated output does not reset its input.
+    """
+    aliases = {}
+    for x, components in graph.vertical_by_x.items():
+        for ys in components:
+            for y in ys:
+                aliases[(x, y)] = (x, min(ys))
+
+    def node(x, y):
+        return aliases.get((x, y), (x, y))
+
+    successors: dict[tuple[int, int], set[tuple[int, int]]] = defaultdict(set)
+    predecessors: dict[tuple[int, int], set[tuple[int, int]]] = defaultdict(set)
+    operators = []
+    for edges in graph.horizontal_by_x.values():
+        for edge in edges:
+            if (edge.x1, edge.y) in graph.sink_nodes:
+                continue
+            source, target = node(edge.x1, edge.y), node(edge.x2, edge.y)
+            successors[source].add(target)
+            predecessors[target].add(source)
+            el = edge.element
+            if el and el.element_kind == "ct" and (el.role == "INV" or (el.role == "ME" and el.ct_code in {"p", "f"})):
+                operators.append((edge, source, target))
+
+    if not operators:
+        return {}
+
+    rails = {node(0, y) for y in graph.left_rail_rows}
+    dominators = {}
+    for current in sorted(set(successors) | set(predecessors) | rails):
+        parents = [dominators[p] for p in predecessors[current] if p in dominators]
+        if current in rails:
+            dominators[current] = {current}
+        elif parents:
+            dominators[current] = {current} | set.intersection(*parents)
+
+    def reachable(start, excluded=None):
+        seen, pending = {start}, [start]
+        while pending:
+            source = pending.pop()
+            for target in successors.get(source, ()):
+                if (source, target) == excluded or target in seen:
+                    continue
+                seen.add(target)
+                pending.append(target)
+        return seen
+
+    scopes = {}
+    for edge, source, target in operators:
+        after = reachable(target)
+        for origin in sorted(dominators.get(source, ()), reverse=True):
+            if origin[0] >= source[0] or len(successors.get(origin, ())) < 2:
+                continue
+            if after & reachable(origin, (source, target)):
+                scopes[(edge.x1, edge.y)] = origin
+                break
+    return scopes
+
+
 def analyze_row_logic(row: LadderRow, labels: LabelResolver | None = None) -> RowLogicAnalysis:
     """Compute logic for every coordinate and driver output in one row.
 
-    Driver elements are sink nodes: they can receive power from the left or
-    from a vertical branch at the same coordinate, but they never source power
-    to the right or back into the vertical component.
+    A driver's coordinate is its input terminal. Vertical branches join those
+    inputs just like any other coordinate; the driver itself has no horizontal
+    edge and therefore cannot feed through its output to the right.
     """
 
     elements = positioned_elements(row, labels)
     width, height = parse_dim(row.dim or extract_dim(row.data))
     max_y = max([height - 1, *[element.y for element in elements], 0])
-    formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)
     graph = topology_graph(row, elements)
+    scopes = expression_branch_scopes(graph)
+    slices = {}
 
-    for y in graph.left_rail_rows:
-        if 0 <= y <= max_y:
-            formulas[(0, y)] = logic_true()
+    def evaluate(start=None, stop_x=None):
+        cache_key = (start, stop_x)
+        if cache_key in slices:
+            return slices[cache_key]
+        formulas: dict[tuple[int, int], dict[str, Any]] = defaultdict(logic_false)
+        if start is None:
+            for y in graph.left_rail_rows:
+                if 0 <= y <= max_y:
+                    formulas[(0, y)] = logic_true()
+        else:
+            formulas[start] = logic_true()
 
-    for x in graph.x_values:
-        for component in graph.vertical_by_x.get(x, ()):
-            source_ys = [
-                y
-                for y in sorted(component)
-                if (x, y) not in graph.sink_nodes
-            ]
-            sink_ys = [y for y in sorted(component) if (x, y) in graph.sink_nodes]
-            if not source_ys and len(sink_ys) > 1:
-                # GX uses a vertical branch at the output coordinate to fan one
-                # enable condition into several coils/instruction boxes. The
-                # branch is on the input side of those sinks, not driven by the
-                # first sink's output.
-                merged = formulas[(x, min(sink_ys))]
-                for y in sink_ys:
-                    formulas[(x, y)] = or_logic([formulas[(x, y)], merged])
+        for x in graph.x_values:
+            if start is not None and x < start[0]:
                 continue
-            if source_ys:
-                merged = or_logic([formulas[(x, y)] for y in source_ys])
-                for y in source_ys:
+            for component in graph.vertical_by_x.get(x, ()):
+                # These are input terminals, including coordinates that also
+                # host an output instruction. All incoming paths join here.
+                ys = sorted(component)
+                merged = or_logic([formulas[(x, y)] for y in ys])
+                for y in ys:
                     formulas[(x, y)] = merged
-                for y in sink_ys:
-                    formulas[(x, y)] = or_logic([formulas[(x, y)], merged])
+            if stop_x is not None and x >= stop_x:
+                break
 
-        for edge in graph.horizontal_by_x.get(x, ()):
-            if (edge.x1, edge.y) in graph.sink_nodes:
-                continue
-            incoming = formulas[(edge.x1, edge.y)]
-            if is_false(incoming):
-                continue
-            condition = element_condition_logic(edge.element) if edge.element is not None else logic_true()
-            if condition.get("op") == "unknown":
-                condition = {
-                    **condition,
-                    "warning": "treated_as_pass_through_condition",
-                }
-            candidate = and_logic([incoming, condition])
-            key = (edge.x2, edge.y)
-            formulas[key] = or_logic([formulas[key], candidate])
+            for edge in graph.horizontal_by_x.get(x, ()):
+                coordinate = (edge.x1, edge.y)
+                if coordinate in graph.sink_nodes:
+                    continue
+                incoming = formulas[coordinate]
+                scope = scopes.get(coordinate)
+                if scope is not None and (start is None or scope[0] >= start[0]):
+                    local = evaluate(scope, x)[coordinate]
+                    transformed = input_expression_logic(edge.element, local)
+                    candidate = and_logic([formulas[scope], transformed])
+                else:
+                    transformed = input_expression_logic(edge.element, incoming) if edge.element else None
+                    if transformed is not None:
+                        candidate = transformed
+                    else:
+                        if is_false(incoming):
+                            continue
+                        condition = element_condition_logic(edge.element) if edge.element else logic_true()
+                        candidate = and_logic([incoming, condition])
+                key = (edge.x2, edge.y)
+                formulas[key] = or_logic([formulas[key], candidate])
+        slices[cache_key] = formulas
+        return formulas
+
+    formulas = evaluate()
 
     output_logic = {
         (element.x, element.y): formulas[(element.x, element.y)]
@@ -753,13 +873,18 @@ def logic_to_text(node: dict[str, Any]) -> str:
         device = str(node.get("device") or node.get("raw_device", ""))
         prefix = "/" if node.get("role") == "b" else ""
         edge = str(node.get("ct_code") or "")
-        edge_prefix = "P " if edge == "p" else ""
+        edge_prefix = {"p": "P ", "f": "F "}.get(edge, "")
         return f"[{prefix}{edge_prefix}{device}]"
     if op == "predicate":
+        if node.get("expression_operator"):
+            args = node.get("args", [])
+            text = logic_to_text(args[0]) if len(args) == 1 else "[UNKNOWN INPUT]"
+            return f"{node.get('opcode', 'UNKNOWN')}({text})"
         opcode = str(node.get("opcode", "predicate"))
-        operands: list[str] = []
-        operands.extend(str(value) for value in node.get("constants", []))
-        operands.extend(str(ref.get("device", ref.get("raw_device", ""))) for ref in node.get("devices", []))
+        operands = node.get("operands")
+        if operands is None:
+            operands = [str(value) for value in node.get("constants", [])]
+            operands.extend(str(ref.get("device", ref.get("raw_device", ""))) for ref in node.get("devices", []))
         return f"[{opcode} {' '.join(operands)}]".strip()
     if op == "too_large":
         return "[TOO LARGE]"
@@ -785,6 +910,7 @@ def condition_refs_from_logic(node: dict[str, Any]) -> list[dict[str, Any]]:
                     "device_type": current.get("device_type", ""),
                     "number": current.get("number", 0),
                     "role": current.get("role", ""),
+                    "ct_code": current.get("ct_code", ""),
                     "required_state": current.get("state", ""),
                     "position": current.get("position", ""),
                     "predicate": "",
@@ -810,7 +936,7 @@ def condition_refs_from_logic(node: dict[str, Any]) -> list[dict[str, Any]]:
 
     visit(node)
 
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     unique: list[dict[str, Any]] = []
     for ref in refs:
         key = (
@@ -818,6 +944,7 @@ def condition_refs_from_logic(node: dict[str, Any]) -> list[dict[str, Any]]:
             str(ref.get("role", "")),
             str(ref.get("required_state", "")),
             str(ref.get("predicate", "")),
+            str(ref.get("ct_code", "")),
         )
         if key in seen:
             continue
@@ -842,6 +969,8 @@ def logic_stats(node: dict[str, Any]) -> dict[str, int]:
             stats["contacts"] += 1
         elif op == "predicate":
             stats["predicates"] += 1
+            for child in current.get("args", []):
+                visit(child)
         elif op == "unknown":
             stats["unknowns"] += 1
         elif op == "too_large":

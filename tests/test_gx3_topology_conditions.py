@@ -161,14 +161,15 @@ def test_alarm_self_contact_on_a_live_path_is_self_hold() -> None:
 def test_alarm_self_contact_on_a_dead_branch_is_not_self_hold() -> None:
     contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=500:vt=nn}]}:pos=0,0}"
     blocking_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=900:vt=nn}]}:pos=1,0}"
-    wire = "e{s=wire:pos=1,1}"
-    self_contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=2,1}"
-    alarm_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=3,1}"
+    # The branch is after the coil, not at its shared input terminal.
+    wire = "e{s=wire:pos=2,1}"
+    self_contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=3,1}"
+    alarm_coil = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=5:vt=nn}]}:pos=4,1}"
     row = manual_row(
         f"{contact}:{blocking_coil}:{wire}:{self_contact}:{alarm_coil}",
-        dim="4x2",
+        dim="5x2",
         header="V1:10:1:1:1:1:1:1:1:1:a:M:c:M:a:F:c:F",
-        verticals="v{pos=1,1}",
+        verticals="v{pos=2,1}",
     )
     con = commentless_xref()
     try:
