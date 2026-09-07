@@ -6,7 +6,7 @@ import re
 import sqlite3
 import sys
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -626,6 +626,10 @@ class TraceInputs:
     comments: Any
     labels: LabelResolver
     rows: list[LadderRow]
+    # Call-owned projections: both constant pruning and classification consume
+    # these exact lists. The shared CSV resolver prefers outputs/ over CWD.
+    refresh_areas: list[RefreshArea] = field(default_factory=lambda: load_refresh_areas())
+    unit_io_areas: list[UnitIoArea] = field(default_factory=lambda: load_unit_io_areas())
 
 
 def load_trace_inputs(root: Path) -> TraceInputs:
@@ -659,9 +663,7 @@ def build_trace(
     # hidden process-global state or a second LabelData read.
     mc_zones = build_mc_zones(rows, labels)
     jump_index = build_jump_index(rows, labels)
-    comm_prefix = default_comm_prefix()
-    refresh_areas = load_refresh_areas(Path(f"{comm_prefix}_refresh_areas.csv"))
-    unit_io_areas = load_unit_io_areas(Path(f"{comm_prefix}_units.csv"))
+    refresh_areas, unit_io_areas = inputs.refresh_areas, inputs.unit_io_areas
 
     target = normalize_trace_device(target_device)
     queue: deque[tuple[str, int, str]] = deque([(target, 0, "")])
