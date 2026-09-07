@@ -20,7 +20,7 @@
 | graph device-flow | flow_db→dependency_flow.build_flow→graph出力 | 同じ値フローconsumerを呼ぶ既存adapter | test_gx3_flow_consumers.py | 上記snapshotとvalue_flow_analysisを共有。JSONに制約、図に状態と未知範囲を表示。全graphの完全性ではない |
 | trace-device: 駆動条件と上流 | trace_stateのrows/labels/comments→出力別enable→provider→trace→text/JSON | #159でimport時関数差替えを除去。1回の入力ロードを明示注入 | test_gx3_topology_conditions.py, test_gx3_trace_state.py | 部分移行済み。外部CSV、未解析writer、実行条件を含む定数証明が未完。#161でxref拒否時にpruningだけ無効化 |
 | dead-logic: 単一writerに基づく定数 | xref/member→counts_for + named OUT位置→propagate_constant_devices | #155でcovered writerとboth集計、#165で共通外部readerと未取得状態のsidecarを追加 | test_gx3_dead_logic_runs.py, test_gx3_xref_reader_boundary.py | 未完。外部DBの欠損/SQL失敗の空集合化は解消。未解析ST/実行保証を含む証明境界が残る |
-| scan-order: 同じ物理デバイスの前後writer | xref/member→occurrences_ofまたは全memberのgrouping→writers | 単体照会と全デバイス列挙の問いを分けた既存経路 | test_gx3_xref_reader_boundary.py | 未完。dead-logic/xrefと同一fixtureの結果比較、旧member欠損時のscopeを確認する |
+| scan-order: 同じ物理デバイスの前後writer | xref/member→occurrences_ofまたは全memberのgrouping→writers | 単体照会と全デバイス列挙の問いを分けた既存経路 | test_gx3_xref_reader_boundary.py, test_gx3_dead_logic_runs.py | 同一実fixtureでxref/scan-order/定数判定のwriterを照合済み。単体/全件groupingのoccurrence ID一致、旧member欠損のCLI拒否も確認。ST/動的範囲と実行意味の全体scopeは引き続き未完 |
 | alarm-map: reset/駆動候補 | xref/member→device_match→目的別SQL→レポート | lookupは共通、alarmのfilterは目的別として維持 | test_gx3_xref_reader_boundary.py | 既存共通経路。scope/未解釈・外部証拠不足が出力まで残るか受入が必要 |
 | timing-chart: signalと条件 | link_mapのroot/xref→open_xref_db→device_match→signal selection | xref入力照合は既存経路。#161で指紋なしを拒否するため手書き選別fixtureにも実rootを使用 | test_gx3_timing_detect.py | 部分移行。link-map/外部証拠のprovenanceと未評価表示を監査する |
 | lint: writer/occupancy/外部値 | rows + xref device_match + lite covered_ranges→目的別checks→summarise | #164でliteもopen_checked_liteへ。linkは複数project用として別契約 | test_gx3_lint_block_runs.py, test_gx3_analysis_state.py, test_gx3_same_input_across_artefacts.py | 部分移行。lite入力照合とhandle管理は統合済み。schema/capabilityと外部CSVの制約が残る |
@@ -103,6 +103,19 @@ dead-logicのwriter未検出接点は、物理memberを含むcounts_forで照会
 これらの残課題を「整理済み」の名で対象外にしない。
 
 ## 性能と次の検証
+
+### 同じwriterを条件・レポートまで伝える受入
+
+実合成LDDBのBMOV+途中MOV、D+ both/上位語をxref・scan-order単体/全件・
+ladder-report・alarm-map・timing-chartで照合。桁指定MOV+OUTの同一検体では
+dead-logic/traceの定数除外とも比較する。member欠損のscan-order CLIはDBを変更せず拒否。
+
+成立条件の出力選択は、ArgOcc.range_lenの既知write範囲をDeviceRefへ伝える。
+DMOV/DMOVP/EDMOV/BMOVの途中語を名前不一致でFALSEにしない。read幅をwrite幅へ流用せず、
+未知/修飾範囲は追加展開しない。共通デコーダの範囲を使い、命令ごとの幅表を追加しない。
+alarm-map showのboth除外、timing readerのboth除外を修正し、後者の受信条件は実CLIの
+CSV/Markdownへ出力する。読取り位置を出力に対応付けられない場合は、接点一覧fallbackと明記する。
+全言語coverage・未知範囲の可能性・実行保証やlink-map由来の証明は、この受入では未完。
 
 cold build / warm query / traceの6種の固定fixtureで、同一環境の比較を実施した。
 詳細と制約・後続変更の予算は[性能基準](ANALYSIS_BENCHMARK_JA.md)に記録する。

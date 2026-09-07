@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from gx3cli.gx3_ladder_logic import enable_logic_for_device, logic_stats, logic_to_text
+from gx3cli.gx3_ladder_logic import enable_logic_for_device, output_elements_for, logic_stats, logic_to_text
 from gx3cli.review_gx3_project import load_comments_for_root, load_rows
 from gx3cli.gx3_xref_read import device_match
 from gx3cli.gx3_xref import open_xref_db
@@ -184,7 +184,7 @@ def same_row_conditions(
     contact list so it cannot masquerade as topology-derived logic.
     """
     row = rows.get(lddb, pos) if rows is not None else None
-    if row is not None and device:
+    if row is not None and device and output_elements_for(row, device):
         logic = enable_logic_for_device(row, device)
         if not logic_stats(logic).get("too_large"):
             return logic_to_text(logic)
@@ -291,7 +291,7 @@ def device_reader_condition(
     con: sqlite3.Connection, device: str, rows: "RowIndex | None" = None
 ) -> str:
     return _format_condition_alternatives(
-        _device_condition_rows(con, device, "x.access='read'", rows),
+        _device_condition_rows(con, device, "x.access in ('read', 'both')", rows),
         kind="reader",
     )
 
@@ -649,6 +649,7 @@ def render_detected_markdown(project_a: str, project_b: str, signals: list[Detec
                 sig.receiver_comment,
                 sig.sender_condition or "?",
                 sig.confidence,
+                sig.receiver_condition or "?",
             ]
         )
     data_rows = [
@@ -676,8 +677,8 @@ def render_detected_markdown(project_a: str, project_b: str, signals: list[Detec
         "",
         "## Detected Signals",
         markdown_table(
-            ["Role", "Direction", "Sender", "Sender Comment", "Receiver", "Receiver Comment", "Sender ON/Valid Condition", "Confidence"],
-            signal_rows or [["?", "?", "?", "?", "?", "?", "?", "?"]],
+            ["Role", "Direction", "Sender", "Sender Comment", "Receiver", "Receiver Comment", "Sender ON/Valid Condition", "Confidence", "Receiver Read-Site Condition"],
+            signal_rows or [["?", "?", "?", "?", "?", "?", "?", "?", "?"]],
         ),
         "",
         "## Data Capture Candidates",
@@ -763,7 +764,7 @@ def render_detected_csv(signals: list[DetectedSignal], data_groups: list[DataGro
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(["kind", "role", "direction", "sender", "receiver", "sender_comment", "receiver_comment", "condition", "confidence"])
+    writer.writerow(["kind", "role", "direction", "sender", "receiver", "sender_comment", "receiver_comment", "condition", "confidence", "receiver_condition"])
     for sig in signals:
         writer.writerow(
             [
@@ -776,6 +777,7 @@ def render_detected_csv(signals: list[DetectedSignal], data_groups: list[DataGro
                 sig.receiver_comment,
                 sig.sender_condition,
                 sig.confidence,
+                sig.receiver_condition,
             ]
         )
     for group in data_groups:
@@ -790,6 +792,7 @@ def render_detected_csv(signals: list[DetectedSignal], data_groups: list[DataGro
                 ", ".join(group.devices),
                 f"send={group.sender_condition}; receive={group.receiver_trigger}; action={group.receiver_action}",
                 group.confidence,
+                group.receiver_trigger,
             ]
         )
     return buffer.getvalue()
