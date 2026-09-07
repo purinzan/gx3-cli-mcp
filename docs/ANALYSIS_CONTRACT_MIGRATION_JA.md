@@ -47,6 +47,13 @@ device_filterはreaderのinterval_filterへの互換facade。member表のない�
 従来のinterval動作を維持するが、現在のCLIの検証済み索引にはmember表が必要。
 cross-project表示、exportの名前指定、comment取得などの目的別raw経路は別途監査する。
 
+index-liteのdevice照会は、JSONにreference_scopeとavailability_analysisを追加し、
+未検出を「未使用」と区別する。device-mapのfree_rangesは互換列名として残すが、
+観測済みLD索引の隙間であって割当可能性の証明ではないことを直前に表示する。
+STだけで使われるM105がLDのM100/M110間の隙間になる実builder→CLI検体で確認。
+ST/inline-ST/FBD参照の収録、動的範囲の完全性や全consumer移行は未完であり、
+この出力scopeの明示だけで完了扱いにしない。
+
 xref/liteの明示buildはgx3_index_buildの一時SQLiteへ書込み、開始時・完了時の
 入力指紋/ファイル状態と保存指紋を照合してから公開する。途中変更・例外で旧DBを
 残し、入力/出力のWALや入力DBへの出力を拒否する。STDB内容だけの途中変更も検証。

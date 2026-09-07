@@ -21,6 +21,7 @@ from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root
 from gx3cli.review_gx3_project import comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_output import add_format_alias, fold_format_alias
+from gx3cli.gx3_analysis_state import AnalysisState, NOT_EVALUATED, SEMANTICS
 
 
 DEVICE_RE = re.compile(r"^([A-Z]+)(-?\d+)$", re.IGNORECASE)
@@ -516,7 +517,37 @@ def print_json(command: str, root: str | None, results: list[sqlite3.Row | dict[
         "root": root or "",
         "results": [row_dict(row) for row in results],
     }
+    if command == "query-device":
+        payload["reference_scope"] = reference_scope()
+        payload["availability_analysis"] = availability_analysis().as_dict()
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def reference_scope() -> dict[str, object]:
+    """Describe this projection, not an assertion about absent source files."""
+    return {
+        "kind": "index-lite-observed-ld",
+        "includes": ["decoded LD named operands", "decoded fixed physical ranges"],
+        "does_not_prove": [
+            "absence of ST/inline-ST/FBD references",
+            "absence of undecoded or unresolved/indexed accesses",
+            "absence of external accesses or reserved allocations",
+        ],
+    }
+
+
+def availability_analysis() -> AnalysisState:
+    return AnalysisState(
+        NOT_EVALUATED,
+        "Index-lite observations do not prove that a device is unused or safe to allocate",
+        "verify all program languages, unresolved ranges and external/reserved allocations in GX Works3",
+        stage=SEMANTICS,
+    )
+
+
+def print_reference_scope() -> None:
+    print("Scope: index-lite observed LD operands and fixed ranges only.")
+    print("Availability: not_evaluated; ST/inline-ST/FBD, unresolved accesses and external/reserved allocations are not excluded.")
 
 
 def expanded_terms(text: str) -> list[str]:
@@ -595,6 +626,8 @@ def query_device(args: argparse.Namespace) -> int:
     con = open_existing(Path(args.db or default_db_path()), root_of(args))
     rec = con.execute("select * from devices where device=?", (device,)).fetchone()
     covered = covered_summary(covering_ranges(con, device))
+    if not args.json:
+        print_reference_scope()
     if not rec:
         if covered:
             # Named nowhere, and reached by a run. "Not found" would be the
@@ -609,7 +642,7 @@ def query_device(args: argparse.Namespace) -> int:
         if args.json:
             print_json("query-device", args.root, [])
         else:
-            print(f"device not found: {device}")
+            print(f"device not found in observed LD index: {device}; unused status is not proven")
         con.close()
         return 1
     ext = con.execute("select * from external_sources where device=?", (device,)).fetchone()
@@ -842,6 +875,8 @@ def device_map(args: argparse.Namespace) -> int:
     by_type = occupied_intervals(con)
     con.close()
 
+    print_reference_scope()
+    print("free_ranges lists gaps between indexed observations, not verified free allocations.")
     free_col = f"free_ranges(>= {min_free})"
     out_rows: list[dict[str, object]] = []
     for dev_type in sorted(by_type):
@@ -936,6 +971,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=query_cycle)
 
     p = sub.add_parser("device-map", help="device-type usage ranges, density, and free gaps")
+    p.add_argument("--root", default="")
     p.add_argument("--db", default=None)
     p.add_argument("--min-free", type=int, default=100, help="minimum contiguous free size to report")
     p.add_argument("--types", default=None, help="comma-separated device types to include, e.g. D,W,M")
