@@ -33,6 +33,12 @@
 
 ## 共通基盤の変更と残り
 
+通常OUTの定数候補について、CALL invocationが静的にtrueへ確定しない行を除外する。
+CALL不成立はOUTをfalseで実行するのではなく書込みをスキップするため、local enableが
+falseでも保持/初期値をOFFと証明できない。実LDDB→builder→定数facts/trace context/CSVで
+条件付き・SM401呼出しを除外し、SM400無条件呼出しと通常OUTは維持することを確認する。
+派生定数からのCALL成立証明、初回実行前の値や全POU実行順の証明は未完。
+
 cross-project where-usedのtext表示も、検証済みリンク先xrefを共通member照会へ接続。
 範囲内、both、総件数、表示上限による実打切り、indexed/STの注意を表示し、guardの
 該当KNOWN_UNMIGRATED_QUERYを除去した。2つの実合成LDDBと明示リンクfixtureで検証。

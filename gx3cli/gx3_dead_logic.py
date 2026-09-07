@@ -325,6 +325,13 @@ def propagate_constant_devices(
             continue
         if jumps_before(jump_index, row.lddb, row.pos):
             continue
+        row_zones = active_zones(zones, row.lddb, row.pos)
+        if any(zone.kind == "call_invocation" and zone.condition.get("op") != "true" for zone in row_zones):
+            # A false/unknown CALL enable skips the write; it does not execute
+            # an OUT with false power. Even FALSE AND local-FALSE cannot prove
+            # an OFF device when its previous/initial value can survive.
+            # Only a statically unconditional invocation is eligible here.
+            continue
         for output in positioned_elements(row):
             if output.role != "c" or not output.devices:
                 continue
@@ -352,7 +359,7 @@ def propagate_constant_devices(
                 continue
 
             logic = enable_logic_for_output(row, output)
-            logic = apply_zone_conditions(logic, active_zones(zones, row.lddb, row.pos))
+            logic = apply_zone_conditions(logic, row_zones)
             refs = condition_refs_from_logic(logic)
             for condition in refs:
                 dependency = str(condition.get("device") or "")
