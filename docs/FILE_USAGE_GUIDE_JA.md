@@ -269,3 +269,9 @@
 
 - `gx3cli/gx3_comment_store.py`: コメントDBのデバイス種別・ビット・ユニットを区別する共通読取り。
 - `tests/test_gx3_comment_identity.py`: 合成SQLiteを使ったコメント識別の回帰テスト。
+
+- `gx3cli/gx3_csv_export.py`: 保存済みGX Works3命令CSVと、選択可能な解析CSV・コメント・ラベル補助表の出力。
+- `tests/test_gx3_csv_export.py`: 合成GX3からCSVを出すCLIと原本保護の検査。
+
+- `gx3cli/gx3_native_csv.py`: RCPUの保存命令列・StepInfo・回路図の照合とGX Works3 CSV行への復号。未知形式は拒否。
+- `tests/test_gx3_native_csv.py`: 合成アーカイブからCLI経由の命令CSV出力、ステップ・分岐・修飾子・不一致時の出力中止を検査。

@@ -51,6 +51,7 @@ COMMAND_CATEGORIES = [
 
 
 COMMANDS: dict[str, CommandSpec] = {
+    "csv-export": CommandSpec("gx3_csv_export.py", "export saved GX Works3 instruction CSV or analysis tables", "Reports"),
     "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports", "Reports"),
     "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device", "Analysis"),
     "data-flow": CommandSpec("gx3_data_flow.py", "build argument-level source-to-destination value-flow edges", "Analysis"),
@@ -631,7 +632,7 @@ def hoist_global_options(argv: list[str]) -> list[str]:
 def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
     if command in GLOBAL_ROOT_BEFORE_SUBCOMMAND:
         argv = hoist_global_options(argv)
-    if command == "doctor":
+    if command in {"doctor", "csv-export"}:
         argv = normalize_project_options(argv)
     else:
         argv = normalize_project_options(normalize_root_options(argv))
