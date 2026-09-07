@@ -30,7 +30,7 @@ def test_cli_archive_export_preserves_inventory_and_source():
         digest=hashlib.sha256(archive.read_bytes()).hexdigest()
         out=work/'csv'
         env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]),'PYTHONIOENCODING':'utf-8'}
-        done=subprocess.run([sys.executable,'-m','gx3cli.gx3_cli','csv-export','--root',str(archive),'--output-dir',str(out)],cwd=work,env=env,capture_output=True,text=True,encoding='utf-8')
+        done=subprocess.run([sys.executable,'-m','gx3cli.gx3_cli','csv-export','--format','analysis','--root',str(archive),'--output-dir',str(out)],cwd=work,env=env,capture_output=True,text=True,encoding='utf-8')
         assert done.returncode==0,done.stdout+done.stderr
         manifest=json.loads((out/'manifest.json').read_text())
         assert manifest['project']=='demo' and manifest['source_sha256']==digest
@@ -47,11 +47,11 @@ def test_cli_archive_export_preserves_inventory_and_source():
         assert len(comments)>2
         assert hashlib.sha256(archive.read_bytes()).hexdigest()==digest
         sentinel=(out/'COMMENT.csv').read_bytes()
-        try:export_csv(root,out)
+        try:export_csv(root,out,format='analysis')
         except ValueError:pass
         else:raise AssertionError('overwrote existing destination')
         assert (out/'COMMENT.csv').read_bytes()==sentinel
-        try:export_csv(root,work/'missing',program='not-a-program')
+        try:export_csv(root,work/'missing',program='not-a-program',format='analysis')
         except ValueError:pass
         else:raise AssertionError('unknown selector succeeded')
         assert not (work/'missing').exists()
@@ -63,7 +63,7 @@ def test_non_ld_and_missing_comments_are_explicit():
         root=create_demo_line_project(Path(tmp)/'source',overwrite=True)
         (root/'other_STDB.db').touch()
         for f in root.glob('*_DC.db'):f.unlink()
-        manifest=export_csv(root,Path(tmp)/'out')
+        manifest=export_csv(root,Path(tmp)/'out',format='analysis')
         assert manifest['status']=='partial'
         assert any('non-LD' in i['reason'] for i in manifest['issues'])
         assert any('comment database absent' in i['reason'] for i in manifest['issues'])
@@ -82,12 +82,12 @@ def test_text_quoting_and_failed_snapshot_publish():
         db=next(root.glob('*_DC.db'));con=sqlite3.connect(db)
         value='tab\tquote"\r\n日本語😀'
         con.execute('update COMMENT_DATA set CmtData=?',(value,));con.commit();con.close()
-        result=export_csv(root,work/'text',kind='comments')
+        result=export_csv(root,work/'text',kind='comments',format='analysis')
         rows=read(work/'text'/'COMMENT.csv')
         assert rows[2][1]==value
         assert result['ladder_importable'] is False
         with patch('gx3cli.gx3_csv_export.fingerprint',side_effect=['before','after']):
-            try:export_csv(root,work/'changed',kind='comments')
+            try:export_csv(root,work/'changed',kind='comments',format='analysis')
             except ValueError as e:assert 'changed during export' in str(e)
             else:raise AssertionError('published changed snapshot')
         assert not (work/'changed').exists()

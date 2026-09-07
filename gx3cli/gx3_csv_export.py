@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-"""Export decoded GX3 evidence as CSV, without inventing executable IL."""
+"""Export saved GX Works3 instruction CSV or decoded analysis tables."""
 import argparse
 import csv
 import hashlib
 import json
 import os
 import shutil
+import sqlite3
+import xml.etree.ElementTree as ET
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -14,7 +16,8 @@ from pathlib import Path
 from gx3cli.gx3_comment_store import read_comment_records, preferred_text
 from gx3cli.gx3_format import build_format_inventory
 from gx3cli.gx3_input_identity import fingerprint
-from gx3cli.gx3_intermediate_tool import read_ladder_rows
+from gx3cli.gx3_intermediate_tool import read_ladder_rows, find_stepinfo_map
+from gx3cli.gx3_native_csv import export_program, cpu_heading, COLUMNS, native_comment_record
 from gx3cli.gx3_label_probe import build_probe
 from gx3cli.gx3_label_resolve import load_label_resolver
 from gx3cli.gx3_ladder_logic import row_logic_analysis, logic_to_text
@@ -38,9 +41,19 @@ LIMITS = [
 ]
 
 
-def write_rows(path, rows):
+NATIVE_LIMITS = [
+    'Ladder CSV contains the saved RCPU instruction sequence in GX Works3 CSV layout.',
+    'Saved instruction sizes, block identities, conversion flags and drawing operand inventories are checked.',
+    'This exports the saved conversion data; it does not compile drawings or prove compiled-cache freshness from wiring.',
+    'GX Works3 import and PLC execution have not been performed.',
+    'Unknown encodings or inconsistent metadata stop the native export without publishing a partial program.',
+    'COMMENT.csv uses the GX Works3 comment layout; label metadata tables are auxiliary, not Global.csv.',
+]
+
+
+def write_rows(path, rows, *, lineterminator='\r\n'):
     with path.open('w', encoding='utf-16', newline='') as stream:
-        writer=csv.writer(stream, delimiter='\t', quoting=csv.QUOTE_ALL, lineterminator='\r\n')
+        writer=csv.writer(stream, delimiter='\t', quoting=csv.QUOTE_ALL, lineterminator=lineterminator)
         writer.writerows(rows)
 
 
@@ -55,7 +68,10 @@ def comment_count(path):
     finally:con.close()
 
 
-def export_csv(source: Path, destination: Path, *, kind='all', program='', project_name=''):
+def export_csv(source: Path, destination: Path, *, kind='all', program='', project_name='', format='gxworks3'):
+    if kind not in {'all','ladder','comments','labels'}:raise ValueError('unknown export kind')
+    if program and kind not in {'all','ladder'}:raise ValueError('program selector requires ladder or all')
+    if format not in {'gxworks3','analysis'}:raise ValueError('unknown CSV format')
     source=source.resolve();destination=destination.absolute()
     if destination.exists() or destination.is_symlink():
         raise ValueError(f'output already exists: {destination}; choose a new directory')
@@ -84,10 +100,22 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
             for row in load_rows(root,{}):groups[row.lddb].append(row)
             selected=[db for db in sorted(groups) if not program or program in {pm.label(db),db}]
             if program and not selected:raise ValueError(f'program not found: {program}')
+            if not selected and format=='gxworks3':raise ValueError('no LD programs to export')
             if not selected:issues.append({'scope':'ladder','location':'','reason':'no LD programs to export'})
+            stepinfo=find_stepinfo_map(root,raw_rows) if format=='gxworks3' else {}
+            heading=cpu_heading(root) if format=='gxworks3' else ''
             sections=[];pointers=[];wiring=[]
             for number,db in enumerate(selected,1):
                 decoded=[];label=pm.label(db)
+                if format=='gxworks3':
+                    try:
+                        native,count=export_program(root,db,raw_rows[db],{r.pos:r for r in groups[db]},labels,stepinfo.get(db))
+                    except (ValueError,OSError,sqlite3.Error,ET.ParseError) as error:
+                        raise ValueError(f'native ladder export failed for {label}: {error}') from error
+                    filename=f'ladder_{number:04d}.csv'
+                    write_rows(stage/filename,[[name],['機種情報:',heading],COLUMNS,*native])
+                    files.append({'file':filename,'rows':len(native),'instructions':count,'program':label,'lddb':db,'format':'gxworks3-ladder'})
+                    continue
                 for raw in raw_rows[db]:
                     if int(raw['blocktype']) in {1,2}:
                         sections.append({'program':label,'lddb':db,'block_pos':raw['pos'],
@@ -113,9 +141,10 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
                     for x,y in vertical:wiring.append({'program':label,'lddb':db,'block_pos':row.pos,'kind':'vertical','x':x,'y':y,'end_x':''})
                     for x,y,end in horizontal:wiring.append({'program':label,'lddb':db,'block_pos':row.pos,'kind':'horizontal','x':x,'y':y,'end_x':end})
                 table(f'ladder_{number:04d}.csv',decoded,LADDER_COLUMNS,program=label,lddb=db)
-            table('statements.csv',sections,['program','lddb','block_pos','text'])
-            table('pointers.csv',pointers,['program','lddb','block_pos','y','pointer'])
-            table('wiring.csv',wiring,['program','lddb','block_pos','kind','x','y','end_x'])
+            if format=='analysis':
+                table('statements.csv',sections,['program','lddb','block_pos','text'])
+                table('pointers.csv',pointers,['program','lddb','block_pos','y','pointer'])
+                table('wiring.csv',wiring,['program','lddb','block_pos','kind','x','y','end_x'])
             for suffix in ('*_FBDDB.db','*_STDB.db'):
                 for path in root.glob(suffix):issues.append({'scope':path.name,'location':'','reason':'non-LD program not exported'})
         if kind in {'all','comments'}:
@@ -124,8 +153,9 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
                 issues.append({'scope':'comments','location':'','reason':'comment database absent'})
             else:
                 records=list(read_comment_records(db))
-                comment_rows=[[n,preferred_text(t)] for n,_,t in records if preferred_text(t)]
-                write_rows(stage/'COMMENT.csv',[[name],['デバイス名','コメント'],*comment_rows])
+                display_records=sorted(map(native_comment_record,records),key=lambda r:r[0]) if format=='gxworks3' else [(None,n,t) for n,_,t in records]
+                comment_rows=[[n,preferred_text(t)] for _,n,t in display_records if preferred_text(t)]
+                write_rows(stage/'COMMENT.csv',[[name],['デバイス名','コメント'],*comment_rows],lineterminator='\n' if format=='gxworks3' else '\r\n')
                 files.append({'file':'COMMENT.csv','rows':len(comment_rows),'format':'gxworks3-comment-layout','blank_records_omitted':len(records)-len(comment_rows)})
                 excluded=comment_count(db)-len(records)
                 if excluded:issues.append({'scope':'comments','location':'','reason':f'{excluded} unsupported identity records excluded'})
@@ -141,11 +171,12 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
         if fingerprint(root)!=before or (archive_hash and hashlib.sha256(source.read_bytes()).hexdigest()!=archive_hash):
             raise ValueError('source changed during export; no output published')
         table('issues.csv',issues,['scope','location','reason'])
-        manifest={'format':'gx3-analysis-csv-v1','project':name,'source_sha256':archive_hash or before,
-                  'selection':{'kind':kind,'program':program},'ladder_importable':False,
-                  'status':'partial' if issues else 'exported','issues':issues,'limits':LIMITS,'files':files}
+        limits=NATIVE_LIMITS if format=='gxworks3' else LIMITS
+        manifest={'format':'gx3-native-csv-v1' if format=='gxworks3' else 'gx3-analysis-csv-v1','project':name,'source_sha256':archive_hash or before,
+                  'selection':{'kind':kind,'program':program},'ladder_importable':None if format=='gxworks3' else False,'gxworks3_import_tested':False,
+                  'status':'partial' if issues else 'exported','issues':issues,'limits':limits,'files':files}
         (stage/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
-        (stage/'README.txt').write_text('\n'.join(LIMITS)+'\n',encoding='utf-8')
+        (stage/'README.txt').write_text('\n'.join(limits)+'\n',encoding='utf-8')
         if destination.exists() or destination.is_symlink():raise ValueError('output was created by another process')
         os.rename(stage,destination)
         return manifest
@@ -158,16 +189,17 @@ def main(argv=None):
     parser.add_argument('--root',required=True,help='GX3 file or extracted project')
     parser.add_argument('--output-dir',required=True,help='new directory outside the extracted project')
     parser.add_argument('--kind',choices=['all','ladder','comments','labels'],default='all')
+    parser.add_argument('--format',choices=['gxworks3','analysis'],default='gxworks3',help='native saved instruction CSV (default), or analysis tables')
     parser.add_argument('--program',default='',help='exact POU name or LDDB filename (ladder/all only)')
-    parser.add_argument('--project-name',default='',help='project heading for COMMENT.csv')
+    parser.add_argument('--project-name',default='',help='project heading for GX Works3 CSV files')
     args=parser.parse_args(argv)
     if args.program and args.kind not in {'all','ladder'}:parser.error('--program requires ladder or all')
     try:
-        result=export_csv(Path(args.root),Path(args.output_dir),kind=args.kind,program=args.program,project_name=args.project_name)
-    except (ValueError,OSError) as error:
+        result=export_csv(Path(args.root),Path(args.output_dir),kind=args.kind,program=args.program,project_name=args.project_name,format=args.format)
+    except (ValueError,OSError,sqlite3.Error,ET.ParseError) as error:
         parser.exit(2,f'CSV export failed: {error}\n')
     print(f"CSV exported: {args.output_dir} ({result['status']}; {len(result['files'])} files)")
-    print('Ladder CSV is analysis data, not a GX Works3 importable instruction list.')
+    print('Saved GX Works3 instruction CSV; import has not been executed.' if args.format=='gxworks3' else 'Ladder CSV contains analysis tables, not an instruction list.')
     return 0
 
 

@@ -415,8 +415,12 @@ gx3-cli csv-export --root project.gx3 --output-dir one-program --kind ladder --p
 
 新しい出力ディレクトリにUTF-16・タブ区切り・全項目引用符付きのCSVを作ります。既存ディレクトリへの上書きや展開済みプロジェクト内への出力は拒否します。入力の変化や途中エラーがあれば完成ディレクトリは公開しません。
 
-`ladder_0001.csv`などはプログラム別の解析表です。プログラム名、LDDB、ブロック位置・開始ステップ、配置座標、命令、引数配列、接点種別、出力条件を含みます。`block_step`は命令ごとのステップではなく、開始位置が不明なら空欄です。接点はCONTACT_A/CONTACT_Bで表し、LD/AND/ORやMPS/MPPへのコンパイルはしません。**ラダーCSVはGX Works3へ再インポートする命令リストではありません。**
+既定の`ladder_0001.csv`などは、GX Works3と同じ7列の命令リストです。保存済みRCPU変換データからLD/AND/OR、MPS/MRD/MPP、ANB/ORB、パルス命令、複数引数、ポインタ、END、命令ごとのステップ番号を読み出します。行間ステートメントとノートも出力します。プログラム名とファイル名の対応は`manifest.json`に記録します。
 
-`COMMENT.csv`は「プロジェクト名／デバイス名・コメント」のGX Works3コメントCSVのレイアウトです。アーカイブ名を見出しに使い、`--project-name`で変更できます。実際のGX Works3へのインポート動作は未検証です。`comment_languages.csv`には言語番号ごとのテキストを残します。ラベルは`labels_*.csv`の解析表で、Global.csvの再生成ではありません。
+変換済みフラグ、ブロックID、StepInfoの命令サイズ、回路図の命令・引数の重複件数、出力順を照合します。未知の命令コード・未変換回路・変換情報の不一致はエラーにし、途中までのプログラムを完成CSVとして出しません。対応する保存変換データが必要です。**GX Works3への実際のインポートとPLC実行は未検証です。また、配線変更に対する変換キャッシュの新旧を完全に証明する検査ではありません。**
 
-`statements.csv`、`pointers.csv`、`wiring.csv`は回路の補助情報です。`manifest.json`はファイルと件数・入力指紋・制約、`issues.csv`は未対応言語・解析欠落などを記録します。CSVを作れたことは元のGX3の完全な再現を意味しません。
+解析表が必要な場合は`--format analysis`を指定します。こちらは座標・ブロック位置・命令・引数配列・出力条件と、`statements.csv`、`pointers.csv`、`wiring.csv`を出力します。解析表の`block_step`は命令ごとのステップ番号ではありません。
+
+`COMMENT.csv`は「プロジェクト名／デバイス名・コメント」のGX Works3コメントCSVのレイアウトです。アーカイブ名を見出しに使い、`--project-name`で変更できます。`comment_languages.csv`には言語番号ごとのテキストを残します。ラベルは`labels_*.csv`の補助解析表で、Global.csvの再生成ではありません。
+
+`manifest.json`はファイルと件数・入力指紋・制約、`issues.csv`は未対応言語やコメントの除外を記録します。既定の命令CSV形式と、補助解析表・非LDの未対応範囲を区別してください。CSVの生成成功は、GX3全体の復元やGX Works3での受入確認を意味しません。
