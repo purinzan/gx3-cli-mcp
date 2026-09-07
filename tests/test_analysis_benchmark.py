@@ -24,6 +24,10 @@ def main() -> int:
     assert len(report["samples"]) == len(CASES), report
     for sample in report["samples"]:
         assert sample["trace_truncated"] is False, sample
+        # Two builders now check input before/after population, in addition
+        # to their saved identity and workspace validation. No source reload.
+        expected_hash_reads = 32 if sample["case"] == "multi-pou" else (16 if sample["case"] == "ld-st" else 8)
+        assert sample["cold_build"]["fingerprint_file_reads"] == expected_hash_reads, sample
         assert sample["dependency_flow_truncated"] is False, sample
         for phase in ("cold_build", "warm_query", "trace", "dependency_flow"):
             values = sample[phase]

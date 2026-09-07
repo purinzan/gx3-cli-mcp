@@ -212,6 +212,13 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact
 
 ## 注意
 
+xref/index-liteのbuildは一時SQLiteで構築し、前後の入力指紋・ファイル状態と保存指紋を
+照合してから出力を置き換えます。途中変更や構築失敗では以前のDBを残し、新規出力なら
+不完全なDBを公開しません。入力DBそのものを出力先にする指定は拒否します。
+入力/既存索引にSQLite WAL sidecarがある場合は、使用中のアプリを閉じて再実行してください。
+これはファイル変更の検出であり、元プロジェクトの排他ロックやxref/lite二つの同時更新、
+外部CSVの完全なprovenance、既存readerすべての実行中スナップショットを保証しません。
+
 定数証明は候補ラングだけでなく、供給された全LD行のparse_statusと、選択rootの
 FBD形式一覧も確認します。別のLD行が未解析、またはFBDが存在する場合、通常OUTの
 プロジェクト全体での定数証明を停止します。ST/LD/FBDの制約は同時に保持します。

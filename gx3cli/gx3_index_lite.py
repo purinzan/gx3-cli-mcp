@@ -193,8 +193,18 @@ def row_id(lddb: str, pos: int, block_id: str = "") -> str:
 
 
 def build_index(args: argparse.Namespace) -> int:
+    from gx3cli.gx3_index_build import atomic_index_build
+
     root = Path(args.root)
     out = Path(args.out or default_db_path(root))
+    with atomic_index_build(root, out, connect=connect) as con:
+        result = _populate_index(args, con)
+    print(f"index written: {out}")
+    return result
+
+
+def _populate_index(args: argparse.Namespace, con: sqlite3.Connection) -> int:
+    root = Path(args.root)
     comm_dir = Path(args.comm_dir)
     refresh_csv = comm_dir / f"{args.comm_prefix}_refresh_areas.csv"
     unit_csv = comm_dir / f"{args.comm_prefix}_units.csv"
@@ -205,7 +215,6 @@ def build_index(args: argparse.Namespace) -> int:
     unit_io_areas = load_unit_io_areas(unit_csv)
     external_sources = collect_external_inputs(rows, comments, refresh_areas, unit_io_areas)
 
-    con = connect(out)
     create_schema(con)
     con.executemany(
         "insert into meta(key, value) values (?, ?)",
@@ -403,8 +412,6 @@ def build_index(args: argparse.Namespace) -> int:
     # and is the difference.
     con.execute("analyze")
     con.commit()
-    con.close()
-    print(f"index written: {out}")
     print(f"ladder_rows={len(rows)} devices={len(device_rows)} usages={len(usage_rows)} external_sources={len(external_rows)}")
     return 0
 
