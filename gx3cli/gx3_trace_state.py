@@ -859,7 +859,14 @@ def build_trace(
     ]
     unresolved_labels = relevant_unresolved_labels(driver_rows)
     label_gaps = label_resolution_gaps(labels, unresolved_labels)
-    if absent and not label_gaps:
+    if target in labels.ambiguous_names:
+        analysis_state = AnalysisState(
+            NOT_EVALUATED,
+            reason=f"{target} names labels in multiple scopes",
+            next_step="use a scoped label name: " + ", ".join(labels.ambiguous_names[target]),
+            stage=DISCOVERY,
+        )
+    elif absent and not label_gaps:
         analysis_state = AnalysisState(
             NOT_EVALUATED,
             reason=f"{target} does not appear anywhere in this project",
