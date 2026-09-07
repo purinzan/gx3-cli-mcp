@@ -72,7 +72,7 @@ def test_printed_operands_spell_the_rung_as_gx_does() -> None:
     ops, _verticals, _wires = parse_rung(ladder_row())
     bmov = [op for op in ops if op.role == "BMOV"]
     assert len(bmov) == 1, [(op.role, op.operands) for op in ops]
-    assert bmov[0].operands == ["D48350Z1", "U96\\G196608Z0", "D48200Z2"], bmov[0].operands
+    assert bmov[0].operands == ["@D48350Z1", "U96\\G196608Z0", "D48200Z2"], bmov[0].operands
 
 
 def main() -> int:

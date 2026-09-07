@@ -35,7 +35,7 @@ def test_dependency_flow_uses_explicit_horizontal_wire() -> None:
     assert dependency_devices(row, "M200") == ["M100"]
 
 
-def test_dependency_flow_driver_sink_does_not_feed_vertical_branch() -> None:
+def test_dependency_flow_driver_input_feeds_vertical_branch() -> None:
     contact_a = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=100:vt=nn}]}:pos=0,0}"
     coil_a = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=200:vt=nn}]}:pos=1,0}"
     wire = "e{s=wire:pos=1,1}"
@@ -49,13 +49,13 @@ def test_dependency_flow_driver_sink_does_not_feed_vertical_branch() -> None:
         verticals="v{pos=1,1}",
     )
     assert dependency_devices(row, "M200") == ["M100"]
-    assert dependency_devices(row, "M201") == []
+    assert dependency_devices(row, "M201") == ["M100", "M101"]
 
 
 def main() -> int:
     test_dependency_flow_does_not_infer_blank_horizontal_wire()
     test_dependency_flow_uses_explicit_horizontal_wire()
-    test_dependency_flow_driver_sink_does_not_feed_vertical_branch()
+    test_dependency_flow_driver_input_feeds_vertical_branch()
     print("dependency-flow topology checks passed")
     return 0
 

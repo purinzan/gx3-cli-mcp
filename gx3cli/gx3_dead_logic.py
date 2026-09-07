@@ -140,6 +140,8 @@ def evaluate_constant_logic(node: dict[str, Any], facts: dict[str, ConstantFact]
         chain = (f"{source} -> FALSE",) if source else ()
         return LogicConstant(False, chain, roots)
     if op == "contact":
+        if node.get("ct_code") in {"p", "f"}:
+            return LogicConstant(None)
         device = str(node.get("raw_device") or node.get("device") or "")
         fact = facts.get(device)
         if fact is None:

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES, LABEL_TOKEN_PREFIX
 
 
-TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z"}
+TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z", "ZZs": "Z"}
 SKIP_ARG_TOKENS = {"Ks", "Dots", "Digits"}
 
 INNER_DEV_RE = re.compile(r"d\{[^{}]*?a=(-?\d+)[^{}]*?\}")
@@ -65,6 +65,8 @@ class Operand:
     const_value: str = ""
     label_token: str = ""
     extra_numbers: tuple[int, ...] = ()
+    index_prefix: str = "Z"
+    indirect: bool = False
 
 
 def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
@@ -122,6 +124,8 @@ def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
         return ""
 
     def take_if(*names: str) -> str:
+        if peek() in names:
+            return advance()
         skip_to_meaningful()
         if peek() in names:
             return advance()
@@ -148,13 +152,19 @@ def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
         if arg.startswith("c{"):
             token = take_if_const()
             value = CONST_VALUE_RE.search(arg)
+            literal = value.group(1) if value else ""
+            if token == "String" and ti + 1 < n_tokens:
+                # The element holds placeholders; the header carries the
+                # unquoted value followed by its quoted display spelling.
+                literal = advance()
+                advance()
             operands.append(
                 Operand(
                     "const",
                     arg_index,
                     raw=arg,
                     const_token=token,
-                    const_value=value.group(1) if value else "",
+                    const_value=literal,
                 )
             )
             continue
@@ -264,17 +274,24 @@ def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
                 continue
             number = int(m.group(1))
             operand = Operand("device", arg_index, raw=arg, device_type=dev_type, number=number)
-            if index_dev and index_dev.group(1) != m.group(1):
-                take_if("Zs", "Z")
+            if index_dev:
+                modifier = take_if("Zs", "Z", "ZZs")
                 operand.index_reg = index_dev.group(1)
+                operand.index_prefix = "ZZ" if modifier == "ZZs" else "Z"
             elif const_mod:
-                token = take_if("Ks", "Dots")
+                token = take_if("Ks", "Dots", "Ats")
                 if token == "Ks":
                     operand.digit = const_mod.group(1)
                 elif token == "Dots":
                     operand.bit = const_mod.group(1)
+                elif token == "Ats":
+                    operand.indirect = True
             else:
                 take_if("Ks", "Dots", "Zs")
+            # Indirection follows the base and any index modifier in the
+            # header, including nested M{b=M{...}:m=c{...}} operands.
+            if arg.startswith("M{b=M{"):
+                operand.indirect = bool(take_if("Ats"))
             operands.append(operand)
             continue
 

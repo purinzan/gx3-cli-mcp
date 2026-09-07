@@ -74,6 +74,9 @@ def logic_dependency_positions(logic: dict[str, Any]) -> list[str]:
             if position and position not in seen:
                 positions.append(position)
                 seen.add(position)
+            if node.get("expression_operator"):
+                for child in node.get("args", []):
+                    visit(child)
         elif op in {"and", "or"}:
             for child in node.get("args", []):
                 if isinstance(child, dict):
@@ -119,6 +122,10 @@ def dependency_refs_for_output(row: LadderRow, output: FlowElement) -> list[tupl
                     refs.append((element, ref))
                     return
         elif op == "predicate":
+            if node.get("expression_operator"):
+                for child in node.get("args", []):
+                    visit(child)
+                return
             element = elements_by_position.get(str(node.get("position", "")))
             if element is None:
                 return
