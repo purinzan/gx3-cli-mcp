@@ -194,31 +194,31 @@ def _judge(kind: str, path: Path, expected_input: str) -> Artefact:
     return Artefact(kind, path, READY, f"input {short(stored_input)}")
 
 
+def index_paths(root: Path) -> tuple[Path, Path]:
+    """Select the existing workspace directory without opening/validating DBs.
+
+    These paths are discovery only. A consumer must validate the actual opened
+    connection; selecting a path is not evidence that its index is usable.
+    """
+    label = project_label_from_root(root)
+    candidates = candidate_dirs(root)
+    for directory in candidates:
+        index, xref = directory / f"{label}.sqlite", directory / f"{label}_xref.sqlite"
+        if index.exists() or xref.exists():
+            return index, xref
+    return candidates[0] / f"{label}.sqlite", candidates[0] / f"{label}_xref.sqlite"
+
+
 def locate(root: Path) -> Workspace:
     """Find the index and cross-reference for a root, without building either."""
     root = Path(root)
     label = project_label_from_root(root)
     expected = fingerprint(root)
-    directory = candidate_dirs(root)[0]
-
-    for candidate in candidate_dirs(root):
-        index = _judge("index", candidate / f"{label}.sqlite", expected)
-        xref = _judge("xref", candidate / f"{label}_xref.sqlite", expected)
-        if index.state == MISSING and xref.state == MISSING:
-            continue
-        # A directory holding something for this project is the one in use,
-        # whatever state it is in: rebuilding means rebuilding that, not
-        # writing a second copy somewhere else and leaving a stale one behind.
-        return Workspace(root, candidate, label, expected, index, xref)
-
-    return Workspace(
-        root,
-        directory,
-        label,
-        expected,
-        Artefact("index", directory / f"{label}.sqlite", MISSING, "not built yet"),
-        Artefact("xref", directory / f"{label}_xref.sqlite", MISSING, "not built yet"),
-    )
+    index_path, xref_path = index_paths(root)
+    # Keep both projections in the selected directory, even if stale or only
+    # one is present. Never assemble a pair from different workspace copies.
+    return Workspace(root, index_path.parent, label, expected,
+                     _judge("index", index_path, expected), _judge("xref", xref_path, expected))
 
 
 def _build(module_main: Callable[[list[str]], int], argv: list[str], quiet: bool) -> None:

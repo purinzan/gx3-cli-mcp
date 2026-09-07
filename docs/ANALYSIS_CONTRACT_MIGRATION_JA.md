@@ -204,5 +204,11 @@ device/where-used実CLIが旧版の根拠を保持、新規接続は変更され
 
 回帰: 合成保存LD→実loader→trace facade、実CLI JSONを通し、競合するCSVの
 選択一致・refresh/unit各1回読込み・outputs不在時の旧CWD fallbackを確認。
-元ファイル更新検出、workspace索引探索、CSVのproject由来・全外部writerの証明、
+元ファイル更新検出、CSVのproject由来・全外部writerの証明、
 CSV不正行の状態を全consumerへ伝える移行は、この読込み共有だけでは完了しない。
+
+traceの定数判定は`workspace.index_paths`で既存と同じ候補順・同一directoryの
+索引ペアを選び、実接続の検証は既存readerで行う。`locate`も同じpath選択を使う。
+探索だけではfingerprint検証・DB作成を行わず、検証済みという意味にはしない。
+別CWDでの実prepare→trace API/CLI JSONを回帰に追加し、読取中の索引作成がないことを確認。
+明示buildが選んだCSVのパスをtrace分類へ伝える契約は、CWD探索の統一とは別の残件。

@@ -438,6 +438,46 @@ def test_trace_uses_one_communication_input_for_pruning_and_classification() -> 
             os.chdir(previous)
 
 
+def test_trace_finds_prepared_indexes_outside_the_current_directory() -> None:
+    import json
+    import os
+    import subprocess
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "owner" / "project"
+        root.parent.mkdir()
+        write_program(root, [
+            ("writer", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M100"})[0]),
+            ("reader", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0]),
+        ])
+        built = prepare(root)
+        assert built.ready
+        unrelated = work / "unrelated"
+        unrelated.mkdir()
+        previous = Path.cwd()
+        try:
+            os.chdir(unrelated)
+            result = build_trace(root, "Y0", 4, 100, True, True)
+            assert result["constant_pruning"]["enabled"], result["constant_pruning"]
+            assert result["constant_pruning"]["proven_constants"] >= 1, result
+            environment = dict(os.environ, PYTHONIOENCODING="utf-8",
+                               PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+            completed = subprocess.run(
+                [sys.executable, "-m", "gx3cli.trace_gx3_device_dependencies", "Y0",
+                 "--root", str(root), "--strict-logic", "--no-link-map", "--format", "json"],
+                capture_output=True, text=True, encoding="utf-8", env=environment)
+            assert completed.returncode == 0, completed.stderr
+            cli_result = json.loads(completed.stdout)
+            assert cli_result["constant_pruning"]["enabled"], cli_result["constant_pruning"]
+            assert cli_result["constant_pruning"]["proven_constants"] >= 1, cli_result
+            assert not list(unrelated.glob(".gx3_index/*")), "read path created an index"
+        finally:
+            os.chdir(previous)
+
+
 def test_postfilter_row_key_includes_the_driven_device() -> None:
     from gx3cli.trace_gx3_device_dependencies import _row_device_key
 
