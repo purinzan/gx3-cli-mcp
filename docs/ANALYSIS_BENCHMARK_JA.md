@@ -368,3 +368,39 @@ lite buildはCSV2本×前後でhash読込み+4、照会/locateは各回2本（10
 device10回のSQL150→160、locateのSQLは不変、open/LDDB/コメント/ラベルの読込みは不変。
 CSV再照合はサイズに比例する追加I/Oであり、高速化とは主張しない。OS cache未flush、
 RSSは累積process peak。巨大CSV・Windows・実設備の速度やCSV由来の保証は対象外。
+
+## 検証と照会のread-only snapshot固定（2026-09-06）
+
+比較元b06137a、変更版21d3458。同じmacOS/Python 3.14.4で既存v2固定6検体を
+各3 fresh process、前後順次測定。入力hashは一致し、全phaseの時間・Python peak・
+累積RSSは既存予算内。以下は中央値ms。この測定は#184統合前の比較である。
+
+| 検体 | cold | warm10 xref | trace | dependency-flow |
+|---|---:|---:|---:|---:|
+| small | 58.69→60.77 | 50.32→50.55 | 9.87→10.21 | 3.64→3.55 |
+| wide | 89.22→91.20 | 62.50→62.52 | 61.22→61.28 | 26.46→26.93 |
+| deep | 85.27→86.42 | 51.27→50.44 | 81.65→79.45 | 29.28→27.77 |
+| large-span | 130.02→133.27 | 50.94→51.28 | 9.83→9.84 | 19.08→19.06 |
+| multi-pou | 88.72→92.72 | 53.92→54.10 | 82.08→82.29 | 29.04→28.90 |
+| ld-st | 87.15→90.78 | 52.72→52.12 | 81.46→81.24 | 28.08→28.22 |
+
+cold SQL+2はworkspaceの検証開始、warm10 SQL170→180、trace27→28
+（multi-pou30→31）はreaderのBEGIN。dependency-flow SQLは不変。
+全phaseのopen/rows/comments/labels/fingerprint読込み回数は不変。
+
+別測定では同じ6種LDDBに固定64refresh範囲と1units行を与え、実lite build、
+実device JSON照会10回（引数解析込み）、workspace locate10回を各3 fresh process。
+全phaseで既存時間・heap・RSS予算内。LDDB hash一致、CSVは同じ生成手順を使用。
+
+| 検体 | lite build | device10回 | locate10回 |
+|---|---:|---:|---:|
+| small | 44.23→45.04 | 94.78→94.23 | 27.14→26.82 |
+| wide | 66.49→65.78 | 100.45→97.48 | 28.57→27.38 |
+| deep | 58.20→59.63 | 93.33→95.11 | 26.50→27.36 |
+| large-span | 45.31→47.06 | 94.47→95.17 | 27.66→27.51 |
+| multi-pou | 62.10→62.53 | 96.46→97.47 | 29.44→30.06 |
+| ld-st | 60.31→60.70 | 95.38→95.24 | 28.08→28.58 |
+
+lite build SQLは不変、device10回160→170、locate10回80→90。
+OS cache未flush、RSSは累積process peak。これは版混在を防ぐ追加transactionの
+費用確認であり、高速化・元ファイル群の一括snapshot・Windows実測性能の保証ではない。
