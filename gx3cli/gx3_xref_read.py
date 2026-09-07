@@ -175,3 +175,27 @@ def members_of(con: sqlite3.Connection, src_id: int) -> list[str]:
             (src_id,),
         )
     ]
+
+
+def first_reads_for(con: sqlite3.Connection, devices: Iterable[str]) -> dict[str, list[sqlite3.Row]]:
+    """Earliest covered read per device/source, not an execution schedule.
+
+    Include both-access and unknown locations. One grouped result per source
+    avoids expanding every member or doing a query for each candidate coil.
+    """
+    names = list(dict.fromkeys(devices))
+    found: dict[str, list[sqlite3.Row]] = {name: [] for name in names}
+    if not names:
+        return found
+    source, _ = device_match(con)
+    key = "m.member_device" if source != "xref x" else "x.device"
+    for offset in range(0, len(names), 500):
+        batch = names[offset:offset + 500]
+        marks = ",".join("?" for _ in batch)
+        sql = (f"select {key} as device, x.lddb, min(x.pos) as first_pos, "
+               f"sum(case when x.pos is null then 1 else 0 end) as missing_pos from {source} "
+               f"where {key} in ({marks}) and x.access in ('read','both','ref') "
+               f"group by {key}, x.lddb")
+        for row in con.execute(sql, batch):
+            found[str(row["device"])].append(row)
+    return found
