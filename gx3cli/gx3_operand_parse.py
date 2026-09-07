@@ -23,7 +23,7 @@ is the walk, and each caller builds its own answer from the result.
 import re
 from dataclasses import dataclass
 
-from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES, LABEL_TOKEN_PREFIX
+from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES, LABEL_TOKEN_PREFIX, top_level_items
 
 
 TYPE_TOKEN_ALIASES = {"Us": "U", "Zs": "Z", "ZZs": "Z"}
@@ -67,6 +67,7 @@ class Operand:
     extra_numbers: tuple[int, ...] = ()
     index_prefix: str = "Z"
     indirect: bool = False
+    modifiers: tuple[tuple[str, str], ...] = ()
 
 
 def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
@@ -218,80 +219,46 @@ def parse_operands(raw_args: list[str], arg_tokens: list[str]) -> list[Operand]:
             continue
 
         if arg.startswith("M{"):
-            const_base = M_CONST_BASE_RE.search(arg)
-            index_dev = M_INDEX_DEV_RE.search(arg)
-            const_mod = M_CONST_MOD_RE.search(arg)
-            inner = [int(v) for v in INNER_DEV_RE.findall(arg)] if "B{" in arg else []
-
-            if inner:
-                dev_type = take_type()
-                if dev_type == "U" and len(inner) >= 2:
-                    take_if("G")
-                    # Buffer memory takes either a bit position ("Dots") or an
-                    # index register ("Zs"); the index form spends a token too.
-                    index_reg = ""
-                    if const_mod is None and index_dev is not None:
-                        if take_if("Zs", "Z"):
-                            index_reg = index_dev.group(1)
-                    else:
-                        take_if("Dots")
-                    operands.append(
-                        Operand(
-                            "buffer",
-                            arg_index,
-                            raw=arg,
-                            unit=inner[0],
-                            number=inner[1],
-                            index_reg=index_reg,
-                            bit=const_mod.group(1) if const_mod else "",
-                        )
-                    )
-                    continue
-                operands.append(Operand("unknown", arg_index, raw=arg))
-                continue
-
-            if const_base:
-                # A constant base with an index register: K2400Z2, the offset
-                # form FROM/TO instructions use.
+            # Unwrap from the outside, then consume header modifiers in the
+            # base-to-outer order. A bit selector and an index are independent.
+            base = arg
+            layers = []
+            while base.startswith("M{"):
+                fields = dict(item.split("=", 1) for item in top_level_items(base[2:-1]))
+                layers.append(fields.get("m", ""))
+                base = fields.get("b", "")
+            if base.startswith("c{"):
                 token = take_if_const()
-                take_if("Zs", "Z")
-                operands.append(
-                    Operand(
-                        "const",
-                        arg_index,
-                        raw=arg,
-                        const_token=token,
-                        const_value=const_base.group(1),
-                        index_reg=index_dev.group(1) if index_dev else "",
-                    )
-                )
-                continue
-
-            dev_type = take_type()
-            m = INNER_DEV_RE.search(arg)
-            if not m:
-                operands.append(Operand("unknown", arg_index, raw=arg))
-                continue
-            number = int(m.group(1))
-            operand = Operand("device", arg_index, raw=arg, device_type=dev_type, number=number)
-            if index_dev:
-                modifier = take_if("Zs", "Z", "ZZs")
-                operand.index_reg = index_dev.group(1)
-                operand.index_prefix = "ZZ" if modifier == "ZZs" else "Z"
-            elif const_mod:
-                token = take_if("Ks", "Dots", "Ats")
-                if token == "Ks":
-                    operand.digit = const_mod.group(1)
+                value = CONST_VALUE_RE.search(base)
+                operand = Operand("const", arg_index, raw=arg, const_token=token,
+                                  const_value=value.group(1) if value else "")
+            else:
+                dev_type = take_type()
+                numbers = [int(v) for v in INNER_DEV_RE.findall(base)]
+                if base.startswith("B{") and dev_type == "U" and len(numbers) >= 2:
+                    take_if("G")
+                    operand = Operand("buffer", arg_index, raw=arg, unit=numbers[0], number=numbers[1])
+                elif numbers:
+                    operand = Operand("device", arg_index, raw=arg, device_type=dev_type, number=numbers[0])
+                else:
+                    operands.append(Operand("unknown", arg_index, raw=arg))
+                    continue
+            modifiers = []
+            for modifier in reversed(layers):
+                token = take_if("Zs", "Z", "ZZs", "Ks", "Dots", "Ats")
+                value = INNER_DEV_RE.search(modifier) if modifier.startswith("d{") else CONST_VALUE_RE.search(modifier)
+                value = value.group(1) if value else ""
+                modifiers.append((token, value))
+                if token in {"Zs", "Z", "ZZs"}:
+                    operand.index_reg = value
+                    operand.index_prefix = "ZZ" if token == "ZZs" else "Z"
                 elif token == "Dots":
-                    operand.bit = const_mod.group(1)
+                    operand.bit = value
+                elif token == "Ks":
+                    operand.digit = value
                 elif token == "Ats":
                     operand.indirect = True
-            else:
-                take_if("Ks", "Dots", "Zs")
-            # Indirection follows the base and any index modifier in the
-            # header, including nested M{b=M{...}:m=c{...}} operands.
-            if arg.startswith("M{b=M{"):
-                operand.indirect = bool(take_if("Ats"))
+            operand.modifiers = tuple(modifiers)
             operands.append(operand)
             continue
 

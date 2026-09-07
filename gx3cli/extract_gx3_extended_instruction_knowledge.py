@@ -339,8 +339,31 @@ def extract_title_text(data: str) -> str:
 
 
 def header_tokens(data: str) -> list[str]:
-    prefix = data.split(":cb{", 1)[0]
-    return prefix.split(":")
+    # Header strings can contain ':' and even the body delimiter. Lengths
+    # count UTF-16 code units, so splitting on punctuation corrupts literals.
+    try:
+        version, count, rest = data.split(":", 2)
+        n = int(count)
+        if version != "V1" or n < 0 or n > len(data):
+            raise ValueError("invalid header")
+        fields = rest.split(":", n)
+        sizes = [int(v) for v in fields[:n]]
+        payload = fields[n].encode("utf-16-le", errors="surrogatepass")
+        tokens = []
+        offset = 0
+        for size in sizes:
+            end = offset + size * 2
+            if size < 0 or end > len(payload):
+                raise ValueError("invalid token length")
+            tokens.append(payload[offset:end].decode("utf-16-le", errors="surrogatepass"))
+            if payload[end:end+2] != b":\x00":
+                raise ValueError("missing token separator")
+            offset = end + 2
+        return [version, count, *fields[:n], *tokens]
+    except (ValueError, IndexError):
+        # Older synthetic/intermediate records omit a usable length table.
+        return data.split(":cb{", 1)[0].split(":")
+
 
 
 def is_op_like(token: str) -> bool:

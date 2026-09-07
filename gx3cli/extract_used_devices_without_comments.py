@@ -92,38 +92,9 @@ def extract_title(data: str) -> str:
 
 def load_comments() -> tuple[dict[tuple[str, int], bool], dict[tuple[str, int], str]]:
     """Return device-existence and comment map keyed by (device_type, number)."""
-    con = open_sqlite(COMMENT_DB)
-    cur = con.cursor()
-
-    has_device: dict[tuple[str, int], bool] = {}
-    comments: dict[tuple[str, int], list[str]] = defaultdict(list)
-
-    for dev_type, dev_code in DEVICE_CODE_BY_TYPE.items():
-        device_rows = cur.execute(
-            "select SEQ, DevNoLow from DEVICE_DATA where DevCode=?",
-            (dev_code,),
-        ).fetchall()
-        for seq, dev_no in device_rows:
-            key = (dev_type, int(dev_no))
-            has_device[key] = True
-            rows = cur.execute(
-                """
-                select CmtData
-                from COMMENT_DATA
-                where DeviceSEQ=?
-                  and coalesce(DelFlag, 0)=0
-                  and trim(coalesce(CmtData, ''))<>''
-                order by CmtNo
-                """,
-                (seq,),
-            ).fetchall()
-            for (text,) in rows:
-                s = str(text).strip()
-                if s and s not in comments[key]:
-                    comments[key].append(s)
-
-    con.close()
-    return has_device, {k: " / ".join(v) for k, v in comments.items()}
+    from gx3cli.extract_hmi_build_info import load_comment_infos
+    infos = load_comment_infos(COMMENT_DB)
+    return {k: v.exists for k,v in infos.items()}, {k: v.all_text for k,v in infos.items()}
 
 
 def row_devices(operations: list) -> list[tuple[str, int]]:

@@ -7,8 +7,21 @@ from gx3cli.gx3_device_name import format_device
 from gx3cli.gx3_label_resolve import LabelResolver
 
 
+
+def apply_operand_modifiers(text, operand):
+    for token, value in operand.modifiers:
+        if token in {"Zs", "Z", "ZZs"}:
+            text += ("ZZ" if token == "ZZs" else "Z") + value
+        elif token == "Dots":
+            text += f".{int(value):X}"
+        elif token == "Ks":
+            text = "K" + value + text
+        elif token == "Ats":
+            text = "@" + text
+    return text
+
 def display_operands(
-    raw_args: list[str], arg_tokens: list[str], labels: LabelResolver | None = None
+    raw_args: list[str], arg_tokens: list[str], labels: LabelResolver | None = None, operand_types: list[str] | None = None
 ) -> list[str]:
     """Decode every argument into its display text, in instruction order.
 
@@ -16,6 +29,7 @@ def display_operands(
     cross-reference; this spells the result the way GX Works3 prints it, with
     the modifier folded into the name (K4M100, D100.5, D100Z2).
     """
+
     out: list[str] = []
     for operand in parse_operands(raw_args, arg_tokens):
         if operand.kind == "label":
@@ -26,21 +40,24 @@ def display_operands(
         if operand.kind == "const":
             token = operand.const_token
             value = operand.const_value if token == "String" else operand.const_value or "?"
-            if operand.raw.startswith("M{"):
-                # A constant base with an index register: K2400Z2.
-                index = f"Z{operand.index_reg}" if operand.index_reg else ""
-                out.append(f"K{value}{index}")
-                continue
             prefix = token.split("_", 1)[0] if token and token[0] in "KHE" else "K"
             if token == "String":
                 out.append(f'"{value}"')
             elif prefix == "H":
                 try:
-                    out.append(f"H{int(value):X}")
+                    width = None
+                    if operand_types and operand.arg_index < len(operand_types):
+                        match = re.match(r"A(16|32|64)", operand_types[operand.arg_index])
+                        width = int(match[1]) if match else None
+                    number = int(value)
+                    if number < 0 and width:
+                        number &= (1 << width) - 1
+                    out.append(f"H{number:X}")
                 except ValueError:
                     out.append(f"H{value}")
             else:
                 out.append(f"{prefix}{value}")
+            out[-1] = apply_operand_modifiers(out[-1], operand)
             continue
 
         if operand.kind == "pointer":
@@ -54,7 +71,7 @@ def display_operands(
                 modifier = f"Z{operand.index_reg}"
             else:
                 modifier = ""
-            out.append(f"U{operand.unit:X}\\G{operand.number}{modifier}")
+            out.append(apply_operand_modifiers(f"U{operand.unit:X}\\G{operand.number}", operand) if operand.modifiers else f"U{operand.unit:X}\\G{operand.number}{modifier}")
             continue
 
         if operand.kind != "device" or operand.number is None:
@@ -62,7 +79,10 @@ def display_operands(
             continue
 
         number = int(operand.number)
-        dev_text = format_device(operand.device_type, number) if operand.device_type else f"?{number}"
+        dev_text = (f"U{number:X}" if operand.device_type == "U" else format_device(operand.device_type, number)) if operand.device_type else f"?{number}"
+        if operand.modifiers:
+            out.append(apply_operand_modifiers(dev_text, operand))
+            continue
         if operand.indirect:
             dev_text = "@" + dev_text
         if operand.index_reg:

@@ -293,7 +293,7 @@ def parse_rung(
             else len(tokens)
         )
         arg_tokens = tokens[hop.token_index + 1 : next_op_token]
-        operands = display_operands(raw_args, arg_tokens, labels)
+        operands = display_operands(raw_args, arg_tokens, labels, re.findall(r"as\{vt=([^}]+)", raw))
         note = ""
         if ":note=" in raw and arg_tokens:
             note = arg_tokens[-1]
@@ -355,51 +355,30 @@ def box_cells(operands: list[str]) -> int:
 def load_print_comments(root: Path) -> dict[tuple[str, int], str]:
     """Display comments exactly as stored (no strip: GX wraps raw text,
     so leading/trailing fullwidth spaces are layout-significant)."""
-    import sqlite3
-
+    from gx3cli.gx3_comment_store import read_comment_records, preferred_text
     comment_db = find_comment_db(root)
     if comment_db is None or not comment_db.exists():
         return {}
-    con = sqlite3.connect(f"file:{comment_db}?mode=ro", uri=True)
-    cur = con.cursor()
-    type_by_code = {code: dev_type for dev_type, code in DEVICE_CODE_BY_TYPE.items()}
-    # In the comment DB ZR comments are stored under DevCode 40 (verified
-    # against a real GX Works3 print); plain code 35 rows do not appear.
-    type_by_code[40] = "ZR"
-    type_by_code[101] = "P"  # pointer comments
-    comments: dict[tuple[str, int], str] = {}
-    for seq, dev_code, ext_code, ext_no, dev_no in cur.execute(
-        "select SEQ, DevCode, ExtCode, ExtNo, DevNoLow from DEVICE_DATA"
-    ).fetchall():
-        if int(ext_code or 0) == 208:  # buffer memory U<unit>\G<no>
-            dev_type = f"U{int(ext_no):X}G"
-        else:
-            dev_type = type_by_code.get(int(dev_code), "")
-        if not dev_type:
-            continue
-        by_no: dict[int, str] = {}
-        for cmt_no, text in cur.execute(
-            """
-            select CmtNo, CmtData from COMMENT_DATA
-            where DeviceSEQ=? and coalesce(DelFlag, 0)=0
-              and coalesce(CmtData, '')<>''
-            order by CmtNo
-            """,
-            (seq,),
-        ).fetchall():
-            by_no.setdefault(int(cmt_no), str(text))
-        value = by_no.get(5) or by_no.get(6) or (next(iter(by_no.values())) if by_no else "")
+    comments = {}
+    for name, key, texts in read_comment_records(comment_db):
+        value = preferred_text(texts)
         if value:
-            comments[(dev_type, int(dev_no))] = value
-    con.close()
+            comments[name] = value
+            if key is not None:
+                comments[key] = value
     return comments
 
 
 def comment_text_for(device: str, comments: dict[tuple[str, int], str]) -> str:
-    parsed = parse_display_device(device)
-    if parsed is None:
-        return ""
-    return comments.get(parsed, "")
+    from gx3cli.gx3_comment_store import canonical_comment_name
+    name = canonical_comment_name(device.lstrip('#'))
+    if name is None:
+        return ''
+    if name in comments:
+        return comments[name]
+    if '.' in name:
+        return ''
+    return comments.get(parse_display_device(name), '')
 
 
 def live_value_label(value: object) -> str:

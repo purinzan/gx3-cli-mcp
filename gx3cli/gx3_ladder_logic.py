@@ -270,7 +270,7 @@ def positioned_elements(
             category = str(row.operations[op_index].get("category", "")) if op_index < len(row.operations) else ""
 
         devices = device_refs_from_args(operation.args)
-        operands = display_operands(operation.raw_args, operation.arg_tokens, labels)
+        operands = display_operands(operation.raw_args, operation.arg_tokens, labels, re.findall(r"as\{vt=([^}]+)", raw))
         operand_kinds = parse_operands(operation.raw_args, operation.arg_tokens)
         elements.append(
             FlowElement(

@@ -61,7 +61,7 @@ def test_every_command_reads_the_same_table() -> None:
 def test_no_module_keeps_its_own_copy() -> None:
     offenders: list[str] = []
     for path in sorted((ROOT / "gx3cli").glob("*.py")):
-        if path.name == "extract_hmi_build_info.py":
+        if path.name == "gx3_comment_store.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

@@ -78,7 +78,7 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   counted bases remain statically unexpanded.
 # v7 preserves independent physical spans in data_flow; count is not extent.
 # v8 preserves LD block/operation/element locations instead of dropping them.
-XREF_DECODER = "arg-decode-strefs-locations-8"
+XREF_DECODER = "arg-decode-modifiers-comments-9"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
