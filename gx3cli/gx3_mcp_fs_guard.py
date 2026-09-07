@@ -125,6 +125,14 @@ def _install_open_guards() -> None:
     Path.open = guarded_path_open
 
 
+def _guard_tempfile_event(event: str, args: tuple) -> None:
+    # tempfile retries PermissionError from os.open/os.mkdir on Windows as a
+    # possible random-name collision. Reject before entering that retry loop,
+    # including for nested CLI processes constructing staged SQLite indexes.
+    if event in {"tempfile.mkstemp", "tempfile.mkdtemp"}:
+        _require_inside(args[0], event)
+
+
 def _install_mutation_guards() -> None:
     original_mkdir = os.mkdir
     original_remove = os.remove
@@ -336,6 +344,7 @@ def install_from_env() -> None:
     if not root.is_dir():
         raise RuntimeError(f"MCP sandbox root does not exist: {root}")
     _ROOT = root
+    sys.addaudithook(_guard_tempfile_event)
     _install_open_guards()
     _install_mutation_guards()
     _install_sqlite_guard()
