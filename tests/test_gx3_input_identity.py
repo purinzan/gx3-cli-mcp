@@ -228,6 +228,7 @@ def test_new_analysis_dependencies_invalidate_real_indexes() -> None:
 
 
 def main() -> int:
+    test_fingerprint_buffers_preserve_digest_at_size_boundaries()
     test_external_csv_changes_reject_and_rebuild_real_index()
     test_rejected_xref_disables_only_optional_trace_pruning()
     test_new_analysis_dependencies_invalidate_real_indexes()
@@ -355,6 +356,17 @@ def test_external_csv_changes_reject_and_rebuild_real_index() -> None:
         else:
             raise AssertionError("index overwrote its CSV dependency")
         assert csv_path.read_bytes() == csv_bytes
+
+
+def test_fingerprint_buffers_preserve_digest_at_size_boundaries() -> None:
+    import hashlib
+    from gx3cli.gx3_input_identity import CHUNK, file_digest
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "content.db"
+        for size in (0, 1, 65535, 65536, 65537, CHUNK - 1, CHUNK, CHUNK + 1, CHUNK * 2 + 1):
+            payload = (b"source-version-" * (size // 15 + 1))[:size]
+            path.write_bytes(payload)
+            assert file_digest(path) == hashlib.sha256(payload).hexdigest(), size
 
 
 if __name__ == "__main__":
