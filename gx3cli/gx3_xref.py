@@ -28,11 +28,13 @@ import json
 import re
 import sqlite3
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
 from gx3cli.gx3_arg_decode import parse_row_operations, parse_row_occurrences  # legacy import facade
+from gx3cli.gx3_data_flow import decoded_rows, operation_records
 from gx3cli.gx3_reach import has_value_edges, reach
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
@@ -187,7 +189,7 @@ def member_rows(con: sqlite3.Connection) -> list[tuple]:
     return out
 
 
-def flow_edge_rows(root: Path) -> list[tuple]:
+def flow_edge_rows(root: Path, *, edges=None) -> list[tuple]:
     """The directed ladder value-flow edges of a project, ready to store.
 
     ST references intentionally do not invent value-flow edges here. A simple
@@ -196,9 +198,10 @@ def flow_edge_rows(root: Path) -> list[tuple]:
     """
     from gx3cli.gx3_data_flow import build_report
 
-    report = build_report(root)
+    if edges is None:
+        edges = build_report(root).get("edges", []) or []
     rows: list[tuple] = []
-    for edge in report.get("edges", []) or []:
+    for edge in edges:
         rows.append(
             (
                 edge.get("source_device", ""),
@@ -477,35 +480,26 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
 
     records: list[tuple] = []
     row_count = 0
-    for lddb, rows in rows_by_db.items():
-        pou = pm.label(lddb)
-        current_title = ""
-        for raw in rows:
-            data = str(raw["data"])
-            blocktype = int(raw["blocktype"])
-            if blocktype in {1, 2}:
-                t = extract_title(data)
-                if t:
-                    current_title = t
-            if blocktype != 0:
-                continue
-            row_count += 1
-            pos = int(float(raw["pos"]))
-            step = pm.step_of(lddb, pos)
-            ops, status = parse_row_operations(data, labels)
-            for operation in ops:
-                for occ in operation.args:
-                    info = comments.get((occ.device_type, occ.number), CommentInfo())
-                    comment = info.japanese or info.english or info.all_text or ""
-                    records.append(
-                        (
-                            occ.device, occ.device_type, occ.number, occ.range_len, occ.access,
-                            operation.role, operation.opcode, occ.arg_index, operation.const_summary, occ.detail,
-                            occ.access_basis,
-                            lddb, pos, pou, step, current_title, comment, status,
-                            str(raw["id"]), operation.op_index, operation.element_position,
-                        )
+    flow_edges = []
+    for ops, status, location in decoded_rows(rows_by_db, pm, labels):
+        row_count += 1
+        for operation in ops:
+            if operation.opcode:
+                flow_edges.extend(asdict(r) for r in operation_records(operation, status, comments, location)
+                                  if r.record_kind == "edge")
+            for occ in operation.args:
+                info = comments.get((occ.device_type, occ.number), CommentInfo())
+                comment = info.japanese or info.english or info.all_text or ""
+                records.append(
+                    (
+                        occ.device, occ.device_type, occ.number, occ.range_len, occ.access,
+                        operation.role, operation.opcode, occ.arg_index, operation.const_summary, occ.detail,
+                        occ.access_basis,
+                        location["lddb"], location["pos"], location["pou"], location["step"],
+                        location["title"], comment, status,
+                        location["block_id"], operation.op_index, operation.element_position,
                     )
+                )
 
     st_source_rows, st_ref_rows, st_xref_rows = collect_st_evidence(
         root, rows_by_db, pm, labels, comments
@@ -585,7 +579,7 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             source_number, source_detail, destination_detail, block_id, operation_index, element_position
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        flow_edge_rows(root),
+        flow_edge_rows(root, edges=flow_edges),
     )
     con.executescript(
         """
