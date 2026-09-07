@@ -48,6 +48,9 @@ class DeviceRef:
     group_members: tuple[str, ...] = ()
     access: str = ""
     arg_index: int = -1
+    # Canonical decoder span of written operands only. Read width must not
+    # enlarge a narrower write when the same base occurs in several arguments.
+    write_range_len: int = 1
 
     @property
     def display(self) -> str:
@@ -197,10 +200,12 @@ def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
                     group_members=bit_group_members(arg.device_type, arg.number, k_count),
                     access=arg.access,
                     arg_index=arg.arg_index,
+                    write_range_len=0 if "indexed" in arg.detail else arg.range_len,
                 )
             )
             continue
-        refs.append(DeviceRef(arg.device, arg.device_type, arg.number, access=arg.access, arg_index=arg.arg_index))
+        refs.append(DeviceRef(arg.device, arg.device_type, arg.number, access=arg.access, arg_index=arg.arg_index,
+                              write_range_len=0 if "indexed" in arg.detail else arg.range_len))
 
     # One device can be several operands of one instruction: D+ D32706 D37426
     # D32706 reads D32706 and writes it. Keeping the first reference and
@@ -217,9 +222,14 @@ def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
             unique.append(ref)
             continue
         first = unique[at]
+        merged = first.access
         if ref.access and ref.access != first.access:
             merged = "both" if {first.access, ref.access} <= {"read", "write", "both"} else ref.access
-            unique[at] = replace(first, access=merged)
+        spans = [item.write_range_len for item in (first, ref) if item.is_written]
+        # Unknown extent contributes no extra members, but must not erase a
+        # separate, known written operand with the same base.
+        write_span = max(spans, default=0)
+        unique[at] = replace(first, access=merged, write_range_len=write_span)
     return unique
 
 
@@ -284,10 +294,16 @@ def positioned_elements(
 
 def output_elements_for(row: LadderRow, device: str) -> list[FlowElement]:
     target = normalize_device(device)
+    device_type, number = parse_device(target)
     return [
         element
         for element in row_logic_analysis(row).elements
-        if element.is_sink and any(ref.device == target and ref.is_written for ref in element.devices)
+        if element.is_sink and any(
+            ref.is_written and (ref.device == target or (
+                ref.device_type == device_type and ref.write_range_len > 1
+                and ref.number <= number < ref.number + ref.write_range_len
+            )) for ref in element.devices
+        )
     ]
 
 

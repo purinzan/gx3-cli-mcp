@@ -221,6 +221,10 @@ def test_real_cli_range_writer_never_becomes_a_constant() -> None:
         cli("index-lite", "build")
         xref = json.loads(cli("xref", "where-used", "M100", "--format", "json"))
         assert xref["results"][0]["total_counts"]["writers"] == 2, xref
+        # Same actual project/index as the constant-proof and trace consumers.
+        for device, expected_writers in (("M100", 2), ("M112", 1)):
+            scan = cli("scan-order", device, "--no-sync-db")
+            assert f"writers={expected_writers} " in scan, scan
         dead = cli("dead-logic")
         assert "M100=OFF" not in dead and "Y0=OFF" not in dead, dead
         assert "M112=OFF" in dead, dead  # one past the end stays eligible
