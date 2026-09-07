@@ -260,11 +260,11 @@ def test_external_csv_changes_reject_and_rebuild_real_index() -> None:
                 writer.writerow(["device_start", "device_end", "network_label", "direction"])
                 writer.writerow(["X0", "X0", label, "receive"])
 
-        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1]), "PYTHONIOENCODING": "utf-8"}
         def query():
             return subprocess.run([sys.executable, "-m", "gx3cli.gx3_index_lite", "device", "X0",
                                    "--root", str(project), "--db", str(index), "--json"],
-                                  cwd=work, env=env, capture_output=True, text=True, timeout=20)
+                                  cwd=work, env=env, capture_output=True, text=True, encoding="utf-8", timeout=20)
 
         def rejected():
             saved = index.read_bytes()
