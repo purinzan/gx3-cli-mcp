@@ -165,3 +165,15 @@ external_dependency_problemをreader/workspaceの再利用判断に使う。
 
 依存ファイルの内容同一性と、CSVのproject由来・解析完全性は別である。
 後者、直接CSVを読む他consumer、結果構築全体での複数artifact/source版の固定は未完。
+
+## 検証済み索引の読取りスナップショット
+
+open_xref_dbの既定をread-only snapshot、open_existingとworkspace metadata/schema確認を
+読取りtransactionへ接続した。実builderの索引に別接続からWAL更新を注入し、検証後の
+device/where-used実CLIが旧版の根拠を保持、新規接続は変更された入力metaを拒否することを
+確認。既定readerによる書込み拒否と接続解放後のファイル移動も検証する。
+索引の特殊文字パスはURI escapeして読む。元プロジェクト自身の特殊文字パスには、
+別のsource readerに未escapeのURI生成が残っており、このテストで対応済みとはしない。
+
+読取り固定は接続ごと。sourceファイルの同時変更、複数索引を跨ぐ結果、traceのCSV二重読取りは
+未完であり、この変更だけで入力整合性全体の完了とはしない。

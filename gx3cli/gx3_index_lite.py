@@ -8,6 +8,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from gx3cli.gx3_device_name import (
     canonical_device as _canonical_device,
@@ -494,11 +495,16 @@ def root_of(args: argparse.Namespace) -> Path | None:
 
 
 def open_existing(path: Path, root: Path | None = None, *, required_tables: tuple[str, ...] | None = None) -> sqlite3.Connection:
+    """Validate and read one index snapshot; caller closes the connection.
+
+    Project/CSV source files are not locked by this SQLite transaction.
+    """
     if not path.exists():
         raise SystemExit(f"index db not found: {path}")
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con = sqlite3.connect(f"file:{quote(path.absolute().as_posix(), safe='/:')}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     try:
+        con.execute("begin")
         row = con.execute("select value from meta where key='device_naming'").fetchone()
         if row is None or row["value"] != DEVICE_NAMING:
             raise SystemExit(
