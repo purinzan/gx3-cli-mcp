@@ -225,6 +225,11 @@ index-liteのdevice照会は観測済みLDオペランドと固定範囲の検�
 動的アクセス、外部機器・予約領域が存在しないことは証明しません。device-mapの
 `free_ranges`は互換列名であり、索引上の隙間です。安全な空き領域と扱わないでください。
 
+定数伝播では、CALLが静的に無条件成立と分からないサブルーチン内のOUTを定数候補に
+しません。CALL不成立は「OUTにfalseを書込む」ではなく「書込みを行わない」ためです。
+この場合も通常の静的traceは継続します。初回実行前の値・全POUの実行順まで証明する
+変更ではありません。
+
 xref/index-liteのbuildは一時SQLiteで構築し、前後の入力指紋・ファイル状態と保存指紋を
 照合してから出力を置き換えます。途中変更や構築失敗では以前のDBを残し、新規出力なら
 不完全なDBを公開しません。入力DBそのものを出力先にする指定は拒否します。
@@ -281,6 +286,12 @@ dead-logic / trace / Doctorのconstant-chainは、保存された外部境界分
 境界に依存する判定や定数pruningを未評価にします。dead-logicはCSVに加えて
 `<prefix>_analysis.json`に評価状態を出力します。正常な空の分類表とは区別しますが、
 正常に読めた場合でも、実設備の全外部writerや実行時の定数を保証するものではありません。
+
+lintの`external-value-source`は、refresh CSVの未取得・不正なheader・不正な範囲・
+文字コード/CSV構文の不正を、正常な空CSVと区別します。不正な入力では依存するcheckを
+`not_evaluated`とし、JSONに原因・段階・CSV読取り範囲を残します。`--require-evaluated`も
+失敗します。有効な空CSVは「指定CSV内に範囲なし」の意味に限定され、別プロジェクトの
+CSVでないことや実設備の全外部writerの不存在を証明するものではありません。
 
 lintとDoctorのproject-healthもlite索引の入力指紋・device naming版を検証します。
 別入力・指紋欠損・旧版のlite索引は拒否し、欠損している場合は従来どおり依存する検査を未評価にします。

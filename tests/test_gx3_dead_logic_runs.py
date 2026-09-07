@@ -519,7 +519,56 @@ def test_source_gaps_preserve_all_reasons_and_block_other_exact_rungs() -> None:
                 raise AssertionError("an exact candidate hid gaps elsewhere in the project")
 
 
+def test_skipped_call_is_not_a_constant_off_write() -> None:
+    from test_gx3_shared_reach import write_program
+    from test_gx3_mc_interlock import call_row, pointer_row, ret_row
+    from gx3cli.gx3_workspace import prepare
+    from gx3cli.review_gx3_project import load_rows, load_comments_for_root
+    from gx3cli.gx3_topology_conditions import load_trace_constant_context
+
+    for contact, family, expected in ((10, "M", False), (401, "SM", False), (400, "SM", True)):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            write_program(root, [
+                ("call", call_row(contact, 240, 0, device_type=family).data),
+                ("ordinary", generate_rung({"device": "SM401"}, {"type": "coil", "device": "M200"})[0]),
+                ("subroutine", pointer_row(240, "SM401", "M100", 2).data),
+                ("return", ret_row(3).data),
+            ])
+            built = prepare(root)
+            rows = load_rows(root, load_comments_for_root(root))
+            with closing(sqlite3.connect(built.xref.path)) as con:
+                con.row_factory = sqlite3.Row
+                facts, findings = propagate_constant_devices(rows, con, root=root)
+            assert ("M100" in facts) == expected, (contact, facts)
+            assert (any(f["device"] == "M100" for f in findings)) == expected
+            assert "M200" in facts and facts["M200"].value is False
+            previous = Path.cwd()
+            try:
+                os.chdir(tmp)
+                context = load_trace_constant_context(root, rows, [])
+            finally:
+                os.chdir(previous)
+            assert context.enabled, context.reason
+            assert ("M100" in context.facts) == expected
+            repo = Path(__file__).resolve().parents[1]
+            process = subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_dead_logic", "--root", str(root),
+                 "--db", str(built.xref.path), "--lite-db", str(built.index.path),
+                 "--output-dir", str(Path(tmp) / "reports"), "--prefix", "call-proof"],
+                cwd=tmp, env=dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8"),
+                capture_output=True, text=True, encoding="utf-8", timeout=20,
+            )
+            assert process.returncode == 0, (process.stdout, process.stderr)
+            with (Path(tmp) / "reports" / "call-proof.csv").open(encoding="utf-8-sig") as stream:
+                report = list(csv.DictReader(stream))
+            constant_devices = {r["device"] for r in report if r["category"] in {"constant-device", "constant-output"}}
+            assert ("M100" in constant_devices) == expected, report
+            assert "M200" in constant_devices
+
+
 def main() -> int:
+    test_skipped_call_is_not_a_constant_off_write()
     tests = [
         (name, obj)
         for name, obj in sorted(globals().items())

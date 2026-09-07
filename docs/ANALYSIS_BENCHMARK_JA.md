@@ -225,6 +225,14 @@ MCP通信・多数のリンク先・ネットワーク設備の性能を保証�
 
 ## xrefとindex-liteの照会契約
 
+CALL定数候補の保守化について、baseline `6373380`と本修正を既存v2固定6検体・各3回で
+比較した（同じmacOS/Python 3.14.4、入力hash一致）。全phaseでSQL/open/rows/comments/
+labels/hash読込みは不変、時間・Python peak・累積RSSは既定予算内。
+trace中央値msはsmall8.39→8.37、wide51.66→55.41、deep72.77→68.48、
+large-span8.48→9.20、multi-pou69.02→68.85、ld-st68.33→68.46。
+固定6検体はCALL密集ケースではない。条件付きCALLの正しさは別の実builder/CSV回帰で
+確認し、この測定をCALL密集プロジェクトの性能保証や一般的な高速化率として使わない。
+
 xrefの単一project照会を共通member readerへ移した比較（baseline `3868cac`、
 変更はgx3_xref/gx3_xref_readの照会経路のみ、同一v2固定6検体・各3回）。
 warm10照会の中央値msはsmall46.04→49.24、wide55.29→55.34、deep50.86→46.86、
@@ -290,3 +298,14 @@ multi-pou 9.91→9.19、ld-st 9.07→8.77。cold/各consumerの全時間・heap�
 timingのSQLはwide 31で不変、その他は32→33（multi-pou 38→39）。出力未対応をFALSEで
 返していた箇所で明示接点一覧fallbackを実行するため。alarmはlarge-spanで15→17、他は不変。
 入力hash一致、OS cacheは未flush、RSSは累積process peak。実設備やWindows実測性能の保証ではない。
+
+## refresh CSV evidence → lint consumer（2026-09-06）
+
+比較元628d720、同じmacOS/Python 3.14環境で既存v2の6種固定LDDBを各3 fresh process。
+各検体に同じ64範囲の明示refresh CSVを与え、prepareと実lint CLI external-value-source
+（JSON/CSV書出しまで）のphaseを順次測定した。時間/heap/RSS予算は既存のものを変更しない。
+lint中央値msはsmall 10.20→11.17、wide 16.00→17.02、deep 16.22→17.13、
+large-span 10.57→11.60、multi-pou 16.86→19.70、ld-st 16.38→17.61。
+cold/CLIの全検体で時間・heap・RSS予算内。SQLはcold/CLIとも変化なし
+（CLI 21、multi-pouのみ24）。入力hashは一致。OS cacheは未flush、RSSは累積process peak。
+この測定はCSV由来の保証や全外部consumer移行、巨大CSV/Windows実測性能を示すものではない。
