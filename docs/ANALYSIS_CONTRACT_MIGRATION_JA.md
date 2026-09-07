@@ -110,6 +110,15 @@ dead-logicのwriter未検出接点は、物理memberを含むcounts_forで照会
 
 ## 性能と次の検証
 
+### operation/output位置の保存境界
+
+canonical parse_row_operationsのop_indexとelement_metaの座標、元LadderBlocks.idをxrefへ保存する。
+旧parse_row_occurrences facadeでこれらを落としていたbuilderをcanonical操作単位へ接続。
+同一ラング内の同じMOVを2か所へ置いた実LDDBで、decoder→xref→JSON/textの位置と引数を照合。
+data-flowが元から持っていたoperation_indexも保存し、dependency-flow CLIのvalue edgeへ
+元行・座標・引数のevidenceを渡す。旧版xref/必須column欠損の拒否、値フロー位置欠損時の
+partialも検証。STにLD座標を捏造しない。reachの代表経路と全命令列挙は引き続き異なる問い合わせ。
+
 ### 同じwriterを条件・レポートまで伝える受入
 
 実合成LDDBのBMOV+途中MOV、D+ both/上位語をxref・scan-order単体/全件・

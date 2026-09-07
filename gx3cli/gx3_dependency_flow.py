@@ -28,6 +28,7 @@ from gx3cli.gx3_ladder_logic import (
     row_logic_analysis,
 )
 from gx3cli.gx3_project_paths import default_project_root
+from gx3cli.gx3_flow_db import flow_xref_db
 from gx3cli.gx3_analysis_state import AnalysisState, PARTIAL, SEMANTICS, checked, not_evaluated, worst
 
 
@@ -138,6 +139,9 @@ def dependency_refs_for_output(row: LadderRow, output: FlowElement) -> list[tupl
     return refs
 
 
+VALUE_EVIDENCE_FIELDS = ("lddb", "pos", "block_id", "operation_index", "element_position", "source_arg_index", "destination_arg_index")
+
+
 def value_sources(xref_db: Path | None, root: Path | None = None) -> dict[str, list[dict[str, Any]]]:
     """Compatibility projection; build_flow also exposes the capability state."""
     return _value_sources_with_state(xref_db, root)[0]
@@ -166,11 +170,13 @@ def _value_sources_with_state(xref_db: Path | None, root: Path | None) -> tuple[
     except sqlite3.Error as exc:
         return {}, not_evaluated(f"value-flow xref cannot be opened: {exc}", "rebuild xref for this project")
     try:
-        rows = con.execute(
-            "select source_device, destination_device, opcode, pou, step, range_count, "
-            "source_range_len, destination_range_len, source_detail, destination_detail, "
-            "read_modify_write from data_flow"
-        ).fetchall()
+        cursor = con.execute("select * from data_flow")
+        columns = {item[0] for item in cursor.description}
+        required = {"source_device", "destination_device", "opcode", "pou", "step", "range_count",
+                    "source_range_len", "destination_range_len", "source_detail", "destination_detail", "read_modify_write"}
+        if required - columns:
+            return {}, not_evaluated("stored value-flow columns missing: " + ", ".join(sorted(required - columns)), "rebuild xref for this project")
+        rows = cursor.fetchall()
         st_present = bool(con.execute("select count(*) from st_sources").fetchone()[0]) if root is not None else False
     except sqlite3.Error as exc:
         return {}, not_evaluated(f"stored value-flow capability unavailable: {exc}", "rebuild xref for this project")
@@ -180,6 +186,7 @@ def _value_sources_with_state(xref_db: Path | None, root: Path | None) -> tuple[
     found: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         record = {
+            **{key: row[key] if key in columns else None for key in VALUE_EVIDENCE_FIELDS},
             "device": row["source_device"],
             "opcode": row["opcode"],
             "pou": row["pou"],
@@ -204,6 +211,15 @@ def _value_sources_with_state(xref_db: Path | None, root: Path | None) -> tuple[
         for member in _run_members(destination, record["destination_range_len"]):
             found.setdefault(member, []).append(record)
     states = [checked({"scope": "stored LD value edges", "project_verified": root is not None})]
+    if set(VALUE_EVIDENCE_FIELDS) - columns or any(
+        row[key] is None or row[key] == ""
+        for row in rows for key in ("lddb", "pos", "block_id", "operation_index", "element_position")
+        if key in columns
+    ):
+        from gx3cli.gx3_analysis_state import DECODE
+        states.append(AnalysisState(PARTIAL, stage=DECODE,
+            reason="stored value-flow lacks operation-level source locations",
+            next_step="rebuild xref for this project"))
     if st_present:
         states.append(AnalysisState(PARTIAL, stage=SEMANTICS,
             reason="ST references are indexed, but ST value flow is not inferred",
@@ -288,6 +304,7 @@ def build_flow(
                     "destination_base": source["destination_base"],
                     "span_uncertain": source["span_uncertain"],
                     "position": f"{source['pou']}:{source['step']}",
+                    "evidence": {key: source[key] for key in VALUE_EVIDENCE_FIELDS},
                 }
             )
             if source["device"] not in visited:

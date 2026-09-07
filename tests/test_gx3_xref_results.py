@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 from contextlib import closing, redirect_stdout
 from pathlib import Path
@@ -324,7 +327,79 @@ def test_cross_project_member_counts_and_limits() -> None:
         assert empty["targets"] == [] and empty["analysis"]["state"] == "checked"
 
 
+def test_same_rung_operations_keep_source_locations() -> None:
+    from test_gx3_shared_reach import write_program
+    from gx3cli.gx3_arg_decode import parse_row_operations
+
+    # Stored LD syntax: two identical MOVs on one row, at distinct output cells.
+    contact = "e{s=ce{op=ct{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=1:vt=nn}]}:pos=0,0}"
+    instruction = "e{s=ce{op=cl{op=#:ct=a:as=[as{vt=A16}:as{vt=A16}]}:args=[d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}]}:pos="
+    data = "V1:9:1:1:1:1:1:1:a:M:MOV:D:D:MOV:D:D:cb{fg=fg{dim=4x2:es=[" + contact + ":" + instruction + "1,0}:" + instruction + "1,1}]}}"
+    operations, status = parse_row_operations(data)
+    assert status == "exact" and len(operations) == 3
+    assert [(op.op_index, op.element_position) for op in operations] == [(0, "0,0"), (1, "1,0"), (2, "1,1")]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("_guid/two-outputs", data)])
+        assert invoke(root, "build")[0] == 0
+        code, report = result(root, "D200", "--limit", "-1")
+        assert code == 0 and report["total_counts"]["writers"] == 2, report
+        writers = report["writers"]
+        assert {(row["op_index"], row["element_position"], row["arg_index"]) for row in writers} == {(1, "1,0", 1), (2, "1,1", 1)}
+        assert all(row["block_id"] == "_guid/two-outputs" and row["pos"] == 0 for row in writers)
+        code, text = invoke(root, "where-used", "D200")
+        assert code == 0 and "op=1 xy=1,0" in text and "op=2 xy=1,1" in text, text
+        _, report = result(root, "D100", "--limit", "-1")
+        assert {(row["op_index"], row["arg_index"]) for row in report["readers"]} == {(1, 0), (2, 0)}
+        db = root / "xref.sqlite"
+        with closing(sqlite3.connect(db)) as con:
+            saved = con.execute("select operation_index, element_position, block_id, source_arg_index, destination_arg_index from data_flow").fetchall()
+        assert set(saved) == {(1, "1,0", "_guid/two-outputs", 0, 1), (2, "1,1", "_guid/two-outputs", 0, 1)}, saved
+        repo = Path(__file__).resolve().parents[1]
+        process = subprocess.run(
+            [sys.executable, "-m", "gx3cli.gx3_dependency_flow", "D200", "--root", str(root), "--xref-db", str(db), "--format", "json"],
+            cwd=tmp, env=dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8"),
+            capture_output=True, text=True, encoding="utf-8", timeout=20)
+        assert process.returncode == 0, (process.stdout, process.stderr)
+        flow = json.loads(process.stdout)
+        edges = [edge for edge in flow["edges"] if edge["kind"] == "value"]
+        assert {(edge["evidence"]["operation_index"], edge["evidence"]["element_position"]) for edge in edges} == {(1, "1,0"), (2, "1,1")}, edges
+        assert all(edge["evidence"]["source_arg_index"] == 0 and edge["evidence"]["destination_arg_index"] == 1 for edge in edges)
+        with closing(sqlite3.connect(db)) as con, con:
+            con.execute("alter table data_flow drop column operation_index")
+        limited = subprocess.run(process.args, cwd=tmp, env=dict(os.environ, PYTHONPATH=str(repo), PYTHONIOENCODING="utf-8"),
+                                 capture_output=True, text=True, encoding="utf-8", timeout=20)
+        assert limited.returncode == 0, (limited.stdout, limited.stderr)
+        partial = json.loads(limited.stdout)
+        assert partial["value_flow_analysis"]["state"] == "partial", partial
+        assert partial["value_flow_analysis"]["stage"] == "decode", partial
+        assert len([edge for edge in partial["edges"] if edge["kind"] == "value"]) == 2
+        assert invoke(root, "build")[0] == 0
+        with closing(sqlite3.connect(db)) as con, con:
+            con.execute("update meta set value='arg-decode-strefs-flowspans-7' where key='decoder'")
+        before = db.read_bytes()
+        try:
+            result(root, "D200")
+        except SystemExit as exc:
+            assert "rebuild" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("a v7 index cannot certify preserved operation locations")
+        assert db.read_bytes() == before
+        assert invoke(root, "build")[0] == 0
+        with closing(sqlite3.connect(db)) as con, con:
+            con.execute("alter table xref drop column op_index")
+        before = db.read_bytes()
+        try:
+            result(root, "D200")
+        except SystemExit as exc:
+            assert "op_index" in str(exc), str(exc)
+        else:
+            raise AssertionError("missing operation evidence schema must be rejected")
+        assert db.read_bytes() == before
+
+
 def main() -> int:
+    test_same_rung_operations_keep_source_locations()
     test_cross_project_member_counts_and_limits()
     test_range_and_read_modify_write_counts()
     test_real_read_modify_write_is_one_occurrence()

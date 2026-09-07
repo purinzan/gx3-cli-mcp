@@ -32,7 +32,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from gx3cli.gx3_device_name import format_device as _format_device, split_device as _split_device
-from gx3cli.gx3_arg_decode import parse_row_occurrences
+from gx3cli.gx3_arg_decode import parse_row_operations, parse_row_occurrences  # legacy import facade
 from gx3cli.gx3_reach import has_value_edges, reach
 from gx3cli.gx3_input_identity import fingerprint, mismatch_message
 from gx3cli.gx3_intermediate_tool import read_ladder_rows
@@ -77,7 +77,8 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   DFMOV, WTOB, BTOW and BK+ therefore change persisted coverage; indexed
 #   counted bases remain statically unexpanded.
 # v7 preserves independent physical spans in data_flow; count is not extent.
-XREF_DECODER = "arg-decode-strefs-flowspans-7"
+# v8 preserves LD block/operation/element locations instead of dropping them.
+XREF_DECODER = "arg-decode-strefs-locations-8"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
@@ -222,6 +223,9 @@ def flow_edge_rows(root: Path) -> list[tuple]:
                 (_split_device(edge.get("source_device", "")) or ("", 0))[1],
                 edge.get("source_detail", ""),
                 edge.get("destination_detail", ""),
+                edge.get("block_id"),
+                edge.get("operation_index"),
+                edge.get("element_position"),
             )
         )
     return rows
@@ -438,7 +442,10 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             step integer,
             title text,
             comment text,
-            parse_status text
+            parse_status text,
+            block_id text,
+            op_index integer,
+            element_position text
         );
         create table st_sources(
             id integer primary key,
@@ -483,32 +490,34 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             row_count += 1
             pos = int(float(raw["pos"]))
             step = pm.step_of(lddb, pos)
-            ops, status = parse_row_occurrences(data, labels)
-            for role, opcode, occs, consts in ops:
-                for occ in occs:
+            ops, status = parse_row_operations(data, labels)
+            for operation in ops:
+                for occ in operation.args:
                     info = comments.get((occ.device_type, occ.number), CommentInfo())
                     comment = info.japanese or info.english or info.all_text or ""
                     records.append(
                         (
                             occ.device, occ.device_type, occ.number, occ.range_len, occ.access,
-                            role, opcode, occ.arg_index, consts, occ.detail,
+                            operation.role, operation.opcode, occ.arg_index, operation.const_summary, occ.detail,
                             occ.access_basis,
                             lddb, pos, pou, step, current_title, comment, status,
+                            str(raw["id"]), operation.op_index, operation.element_position,
                         )
                     )
 
     st_source_rows, st_ref_rows, st_xref_rows = collect_st_evidence(
         root, rows_by_db, pm, labels, comments
     )
-    records.extend(st_xref_rows)
+    # ST has its own source/statement locations; never invent LD coordinates.
+    records.extend((*record, None, None, None) for record in st_xref_rows)
 
     con.executemany(
         """
         insert into xref(
             device, device_type, number, range_len, access, role, opcode, arg_index,
             const_args, detail, access_basis, lddb, pos, pou, step, title, comment,
-            parse_status
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            parse_status, block_id, op_index, element_position
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         records,
     )
@@ -556,7 +565,10 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             source_device_type text not null,
             source_number integer not null,
             source_detail text,
-            destination_detail text
+            destination_detail text,
+            block_id text,
+            operation_index integer,
+            element_position text
         );
         """
     )
@@ -568,8 +580,8 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             destination_word_width, read_modify_write, confidence, parse_status,
             lddb, pos, pou, step, title, source_comment, destination_comment,
             source_range_len, destination_range_len, source_device_type,
-            source_number, source_detail, destination_detail
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source_number, source_detail, destination_detail, block_id, operation_index, element_position
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         flow_edge_rows(root),
     )
@@ -655,7 +667,10 @@ def fmt_row(r: sqlite3.Row) -> str:
     consts = f" k={r['const_args']}" if r["const_args"] else ""
     basis = f" basis={r['access_basis']}" if "access_basis" in r.keys() and r["access_basis"] else ""
     title = f" | {r['title']}" if r["title"] else ""
-    return f"  {r['pou']:<6} {step:<7} {opcode:<9} {r['access']:<5}{detail}{consts}{basis}{title}"
+    location = ""
+    if "op_index" in r.keys() and r["op_index"] is not None:
+        location = f" row={r['pos']} op={r['op_index']} xy={r['element_position'] or '?'}"
+    return f"  {r['pou']:<6} {step:<7} {opcode:<9} {r['access']:<5}{detail}{consts}{basis}{location}{title}"
 
 
 def row_dict(row: sqlite3.Row) -> dict[str, object]:
