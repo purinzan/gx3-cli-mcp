@@ -342,7 +342,7 @@ def test_real_lite_queries_do_not_prove_st_only_devices_unused() -> None:
             return subprocess.run(
                 [sys.executable, "-m", "gx3cli.gx3_index_lite", *args,
                  "--db", str(built.index.path)],
-                capture_output=True, text=True, timeout=20,
+                capture_output=True, text=True, encoding="utf-8", timeout=20,
             )
 
         for device, expected_code in (("M105", 1), ("M100", 0)):
@@ -366,7 +366,7 @@ def test_real_lite_queries_do_not_prove_st_only_devices_unused() -> None:
         wrapper = subprocess.run(
             [sys.executable, "-m", "gx3cli.gx3_cli", "device-map",
              "--root", str(root), "--db", str(built.index.path), "--min-free", "1"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
         )
         assert wrapper.returncode == 0, wrapper.stderr
         assert "not verified free allocations" in wrapper.stdout
