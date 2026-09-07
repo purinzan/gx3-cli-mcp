@@ -210,7 +210,15 @@ traceは22→24（multi-pou25→27）、value-flowは11→12（multi-pou14→15�
 全case/phaseで不変、時間・Python peak・累積RSSも既存予算内。揺らぎを含む少数測定で、
 新しい速度改善の主張ではない。SQL予算テストにも用途別の固定増分を反映した。
 
-## LD/FBDを含む定数証明scopeの確認
+## xrefとindex-liteの照会契約
+
+xrefの単一project照会を共通member readerへ移した比較（baseline `3868cac`、
+変更はgx3_xref/gx3_xref_readの照会経路のみ、同一v2固定6検体・各3回）。
+warm10照会の中央値msはsmall46.04→49.24、wide55.29→55.34、deep50.86→46.86、
+large-span46.82→50.29、multi-pou49.67→49.45、ld-st48.95→47.92。
+warm SQL150→170はページ/件数それぞれのmember表存在確認。cold/trace/flowのSQL、
+全phaseのopen/rows/comments/labels/hash読込みは不変。全phaseの時間・Python peak・
+累積RSSは既存予算内。旧DB低水準呼出しへの互換判定であり、性能改善とは主張しない。
 
 ### index-liteの観測scope表示
 
@@ -231,6 +239,8 @@ cold prepare後に実query_device(JSON)を10回、実device_map(text)を1回実�
 全検体の入力hash一致。各phaseでSQL/open/rows/comments/labels/hash読込みは不変。
 query10回のSQLは150、mapは11。時間・Python peak・累積RSSは既定予算内。
 プロセス起動・MCP通信の速度や全CLIの性能を保証する測定ではない。
+
+## LD/FBDを含む定数証明scopeの確認
 
 `8edcee6b1e2aee714cb91a47b7710c4895c99276`→`32bdda4967df42a6928b982bd02c749c5b0e3508`。
 同じv2 harness・固定6検体・各3回、前後を順次測定。入力hash全一致。

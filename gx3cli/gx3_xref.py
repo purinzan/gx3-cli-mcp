@@ -662,22 +662,18 @@ def row_dict(row: sqlite3.Row) -> dict[str, object]:
 
 
 def device_filter(device: str) -> tuple[str, tuple[object, ...]]:
-    """Use the same exact/range predicate for page rows and total counts."""
-    parsed = _split_device(device)
-    if parsed is None:
-        return "device = ?", (device,)
-    dev_type, number = parsed
-    return (
-        "device = ? or (device_type = ? and number <= ? "
-        "and range_len > 1 and ? < number + range_len)",
-        (device, dev_type, number, number),
-    )
+    """Compatibility facade; the interval contract lives in the reader."""
+    from gx3cli.gx3_xref_read import interval_filter
+
+    return interval_filter(device)
 
 
 def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sqlite3.Row]:
-    predicate, params = device_filter(device)
+    from gx3cli.gx3_xref_read import covered_query
+
+    source, predicate, params = covered_query(con, device)
     return con.execute(
-        f"select * from xref where {predicate} order by pou, pos, id limit ?",
+        f"select x.* from {source} where {predicate} order by x.pou, x.pos, x.id limit ?",
         (*params, limit),
     ).fetchall()
 
@@ -689,11 +685,13 @@ def device_counts(con: sqlite3.Connection, device: str) -> dict[str, int]:
 
 def device_count_summary(con: sqlite3.Connection, device: str) -> tuple[dict[str, int], int]:
     """Access totals overlap for `both`; raw occurrences are counted once."""
-    predicate, params = device_filter(device)
+    from gx3cli.gx3_xref_read import covered_query
+
+    source, predicate, params = covered_query(con, device)
     counts = {"writers": 0, "readers": 0, "refs": 0}
     total = 0
     for row in con.execute(
-        f"select access, count(*) as n from xref where {predicate} group by access", params
+        f"select x.access, count(*) as n from {source} where {predicate} group by x.access", params
     ):
         n = int(row["n"])
         total += n

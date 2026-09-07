@@ -37,8 +37,9 @@ def main() -> int:
             assert rss is None or rss > 0, values
         # Two queries: 9 existing statements + one schema query and four
         # SQLite-internal table_info statements and one build-contract read
-        # each. No project data scan added.
-        assert sample["warm_query"]["sql_statements"] == 30, sample
+        # each, plus two member-capability checks (page and totals) per query.
+        # No project data scan added.
+        assert sample["warm_query"]["sql_statements"] == 34, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
         # before constant proofs. Both artifact opens verify the build contract.
         assert sample["trace"]["sql_statements"] == (27 if sample["case"] == "multi-pou" else 24), sample
