@@ -8,6 +8,7 @@ and output spellings, so the assertions below pin the common execution path.
 """
 
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -22,10 +23,16 @@ from test_gx3_shared_reach import coil, write_program
 @contextmanager
 def mcp_output(path: Path):
     old = os.environ.get("GX3_MCP_OUTPUT_DIR")
+    old_cwd = Path.cwd()
     os.environ["GX3_MCP_OUTPUT_DIR"] = str(path)
     try:
+        # Isolate filesystem-boundary tests from checkout artifacts named
+        # "build"; MCP's existing-argument path normalization is a separate
+        # contract and must not turn the subcommand into a packaging path.
+        os.chdir(path.parent)
         yield
     finally:
+        os.chdir(old_cwd)
         if old is None:
             os.environ.pop("GX3_MCP_OUTPUT_DIR", None)
         else:
@@ -146,6 +153,7 @@ def test_xref_build_cannot_create_an_outside_database() -> None:
             result = generic("xref", ["build", "--db", str(outside_db)], root)
 
         assert result["isError"] is True, result
+        assert "sandbox blocked" in text(result), text(result)
         assert not outside_db.exists()
 
 
@@ -160,7 +168,45 @@ def test_index_lite_out_alias_cannot_escape() -> None:
             result = generic("index-lite", ["build", "--out", str(outside_db)], root)
 
         assert result["isError"] is True, result
+        assert "sandbox blocked" in text(result), text(result)
         assert not outside_db.exists()
+
+
+def test_tempfile_refusal_precedes_platform_collision_retry() -> None:
+    # Install in a subprocess: the audit hook intentionally lasts for its
+    # process lifetime. Prove refusal happens before the low-level operation,
+    # regardless of the host's Windows-specific tempfile retry behavior.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        sandbox = work / "mcp-output"
+        sandbox.mkdir()
+        code = '''
+import os, sys, tempfile
+from pathlib import Path
+from unittest.mock import patch
+from gx3cli.gx3_mcp_fs_guard import install_from_env
+os.environ["GX3_MCP_SANDBOX_ROOT"] = sys.argv[1]
+install_from_env()
+for maker, operation in [(tempfile.mkstemp, "open"), (tempfile.mkdtemp, "mkdir")]:
+    with patch.object(os, operation, wraps=getattr(os, operation)) as attempt:
+        try:
+            maker(dir=sys.argv[2])
+        except PermissionError as exc:
+            assert "sandbox blocked" in str(exc), exc
+        else:
+            raise AssertionError("outside temporary output accepted")
+        assert attempt.call_count == 0, attempt.call_count
+fd, name = tempfile.mkstemp(dir=sys.argv[1])
+os.close(fd)
+Path(name).unlink()
+name = tempfile.mkdtemp(dir=sys.argv[1])
+Path(name).rmdir()
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(sandbox), str(work)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 def test_typed_tool_uses_the_same_boundary() -> None:
@@ -201,6 +247,7 @@ def main() -> int:
     test_normal_relative_output_is_created_inside_the_sandbox()
     test_xref_build_cannot_create_an_outside_database()
     test_index_lite_out_alias_cannot_escape()
+    test_tempfile_refusal_precedes_platform_collision_retry()
     test_typed_tool_uses_the_same_boundary()
     print("MCP filesystem sandbox checks passed")
     return 0
