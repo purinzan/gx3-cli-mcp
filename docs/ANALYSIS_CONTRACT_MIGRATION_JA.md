@@ -33,6 +33,12 @@
 
 ## 共通基盤の変更と残り
 
+xref単一プロジェクトのwhere-usedはページ・件数とも共通readerのcovered_queryを使う。
+member表を使う実builder経路でD+のboth/第2語、BK+のsource/destination/範囲外を確認。
+device_filterはreaderのinterval_filterへの互換facade。member表のない低水準呼出しは
+従来のinterval動作を維持するが、現在のCLIの検証済み索引にはmember表が必要。
+cross-project表示、exportの名前指定、comment取得などの目的別raw経路は別途監査する。
+
 xref/liteの明示buildはgx3_index_buildの一時SQLiteへ書込み、開始時・完了時の
 入力指紋/ファイル状態と保存指紋を照合してから公開する。途中変更・例外で旧DBを
 残し、入力/出力のWALや入力DBへの出力を拒否する。STDB内容だけの途中変更も検証。

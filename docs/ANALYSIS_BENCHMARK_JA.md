@@ -212,6 +212,14 @@ traceは22→24（multi-pou25→27）、value-flowは11→12（multi-pou14→15�
 
 ## LD/FBDを含む定数証明scopeの確認
 
+xrefの単一project照会を共通member readerへ移した比較（baseline `3868cac`、
+変更はgx3_xref/gx3_xref_readの照会経路のみ、同一v2固定6検体・各3回）。
+warm10照会の中央値msはsmall46.04→49.24、wide55.29→55.34、deep50.86→46.86、
+large-span46.82→50.29、multi-pou49.67→49.45、ld-st48.95→47.92。
+warm SQL150→170はページ/件数それぞれのmember表存在確認。cold/trace/flowのSQL、
+全phaseのopen/rows/comments/labels/hash読込みは不変。全phaseの時間・Python peak・
+累積RSSは既存予算内。旧DB低水準呼出しへの互換判定であり、性能改善とは主張しない。
+
 `8edcee6b1e2aee714cb91a47b7710c4895c99276`→`32bdda4967df42a6928b982bd02c749c5b0e3508`。
 同じv2 harness・固定6検体・各3回、前後を順次測定。入力hash全一致。
 trace中央値msはsmall 7.42→9.37、wide 50.43→53.30、deep 66.66→67.63、

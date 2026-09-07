@@ -30,10 +30,39 @@ not four occurrences, and nothing here reports them as such.
 
 import sqlite3
 from typing import Any, Iterable
+from gx3cli.gx3_device_name import split_device
 
 
 NAMED_ONLY = "named"
 COVERED = "covered"
+
+
+def interval_filter(device: str) -> tuple[str, tuple[object, ...]]:
+    """Legacy interval projection for callers without a materialized index."""
+    parsed = split_device(device)
+    if parsed is None:
+        return "device = ?", (device,)
+    dev_type, number = parsed
+    return (
+        "device = ? or (device_type = ? and number <= ? "
+        "and range_len > 1 and ? < number + range_len)",
+        (device, dev_type, number, number),
+    )
+
+
+def covered_query(con: sqlite3.Connection, device: str) -> tuple[str, str, tuple[object, ...]]:
+    """Shared member lookup, preserving the CLI's legacy interval fallback.
+
+    Unlike occurrences_of's documented named-only legacy behavior, the xref
+    CLI historically handled fixed intervals even without xref_members.
+    Validated current indexes require that table; this fallback supports only
+    existing low-level callers, not unverified index reuse in the public CLI.
+    """
+    source, predicate = device_match(con)
+    if source == "xref x":
+        predicate, params = interval_filter(device)
+        return source, predicate, params
+    return source, predicate, (device,)
 
 
 def has_members(con: sqlite3.Connection) -> bool:

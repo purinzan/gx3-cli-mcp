@@ -79,17 +79,32 @@ def test_empty_json_without_indexed_access(root: Path) -> None:
     assert data["total_counts"] == {"writers": 0, "readers": 0, "refs": 0}
 
 
-def test_range_and_read_modify_write_counts(root: Path) -> None:
-    with closing(sqlite3.connect(root / "xref.sqlite")) as con:
-        con.execute("update xref set access='both', range_len=3 where device='M1200'")
-        con.commit()
-    for device in ("M1200", "M1201", "M1202"):
-        code, data = result(root, device)
-        assert code == 0 and data["total_count"] == 1, data
-        assert data["total_counts"]["writers"] == 1, data
-        assert data["total_counts"]["readers"] == 1, data
-        assert len(data["readers"]) == 1, data
-        assert len(data["writers"]) == 1 and not data["truncated"], data
+def test_range_and_read_modify_write_counts() -> None:
+    from test_gx3_shared_reach import write_program, rung
+    from gx3cli.gx3_xref_read import counts_for, occurrences_of
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_program(root, [("double-add", rung(
+            "D+:D:D", "d{s=#:a=500:vt=nn}:d{s=#:a=600:vt=nn}")),
+            ("block-add", rung("BK+:D:D:D:K_1",
+             "d{s=#:a=300:vt=nn}:d{s=#:a=400:vt=nn}:d{s=#:a=700:vt=nn}:c{s=#:v=3}"))])
+        assert invoke(root, "build")[0] == 0
+        expected = {"D599": (0, 0), "D600": (1, 1), "D601": (1, 1), "D602": (0, 0),
+                    "D301": (1, 0), "D303": (0, 0), "D401": (1, 0),
+                    "D701": (0, 1), "D702": (0, 1), "D703": (0, 0)}
+        with closing(sqlite3.connect(root / "xref.sqlite")) as con:
+            con.row_factory = sqlite3.Row
+            counts = counts_for(con, expected)
+            for device, (reads, writes) in expected.items():
+                code, data = result(root, device)
+                assert code == (0 if reads or writes else 1), data
+                assert data["total_counts"] == {"readers": reads, "writers": writes, "refs": 0}, data
+                assert counts[device] == {"read": reads, "write": writes}
+                shared = occurrences_of(con, device)
+                assert data["total_count"] == len(shared), data
+                assert data["total_count"] == (1 if reads or writes else 0), data
+                assert {r["id"] for r in data["readers"] + data["writers"]} == {r["id"] for r in shared}
 
 
 def test_real_read_modify_write_is_one_occurrence() -> None:
@@ -234,6 +249,7 @@ def test_st_xref_bridge(root: Path) -> None:
 
 
 def main() -> int:
+    test_range_and_read_modify_write_counts()
     test_real_read_modify_write_is_one_occurrence()
     with tempfile.TemporaryDirectory(prefix="gx3_xref_results_") as tmp:
         root = Path(tmp)
@@ -242,7 +258,6 @@ def main() -> int:
         test_unlimited_query_and_zero_limit(root)
         test_index_warning_survives_json_and_no_matches(root)
         test_empty_json_without_indexed_access(root)
-        test_range_and_read_modify_write_counts(root)
 
     test_partial_st_parser_contract()
     with tempfile.TemporaryDirectory(prefix="gx3_xref_st_") as tmp:
