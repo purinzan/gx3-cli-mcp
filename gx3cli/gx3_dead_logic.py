@@ -39,7 +39,7 @@ from gx3cli.gx3_mc_zones import (
 )
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
 from gx3cli.gx3_device_name import split_device
-from gx3cli.gx3_xref_read import counts_for, device_match, has_members
+from gx3cli.gx3_xref_read import counts_for, device_match, first_reads_for, has_members
 from gx3cli.gx3_xref import default_db_path, open_xref_db
 from gx3cli.review_gx3_project import LadderRow, load_comments_for_root, load_rows
 
@@ -288,6 +288,7 @@ def propagate_constant_devices(
     externals: dict[str, str] | None = None,
     refresh_areas: list | None = None,
     root: Path | None = None,
+    proof_constraints: list[AnalysisState] | None = None,
 ) -> tuple[dict[str, ConstantFact], list[dict[str, object]]]:
     """Prove project-wide constants for ordinary single-writer bit coils.
 
@@ -296,6 +297,10 @@ def propagate_constant_devices(
     never enter the propagation graph. Rows under unresolved jump/CALL context
     are also excluded. Resolved MC/CALL enable conditions are folded into the
     rung condition through the existing execution-context model.
+    Substitution also requires every known read to be later in the same LDDB.
+    Same-rung/cross-program/unknown read order cannot certify an initial value.
+    This is a necessary condition within the static model, not a PLC schedule
+    or a guarantee of external-writer coverage.
     """
     check_constant_source_coverage(rows, con, root)
     externals = externals or {}
@@ -304,9 +309,11 @@ def propagate_constant_devices(
     # Ask the same boundary as xref about physical ownership. Keep the named
     # rows solely to locate the normal OUT once exclusivity is established.
     writer_counts = counts_for(con, writers)
+    first_reads = first_reads_for(con, writers)
     uncertain_types: set[str] = set()
+    uncertain_read_types: set[str] = set()
     members_available = has_members(con)
-    for occurrence in con.execute("select * from xref where access in ('write', 'both', 'ref')"):
+    for occurrence in con.execute("select * from xref where access in ('read', 'write', 'both', 'ref')"):
         fields = set(occurrence.keys())
         span = int(occurrence["range_len"]) if "range_len" in fields else 1
         detail = str(occurrence["detail"] or "") if "detail" in fields else ""
@@ -314,7 +321,10 @@ def propagate_constant_devices(
                 or (span > 1 and not members_available)):
             # Unknown endpoints cannot establish single-writer ownership.
             # An old named-only index must not turn a covered writer invisible.
-            uncertain_types.add(str(occurrence["device_type"]))
+            if occurrence["access"] in ("write", "both", "ref"):
+                uncertain_types.add(str(occurrence["device_type"]))
+            if occurrence["access"] in ("read", "both", "ref"):
+                uncertain_read_types.add(str(occurrence["device_type"]))
     special_roots = _special_constant_roots(con)
     zones = build_mc_zones(rows)
     jump_index = build_jump_index(rows)
@@ -373,6 +383,11 @@ def propagate_constant_devices(
                 "pou": str(writer["pou"] or row.lddb),
                 "step": writer["step"],
                 "comment": str(writer["comment"] or ""),
+                "order_unproven": ref.device_type in uncertain_read_types or any(
+                    site["lddb"] != row.lddb or site["missing_pos"]
+                    or site["first_pos"] is None or site["first_pos"] <= row.pos
+                    for site in first_reads.get(device, [])
+                ),
             }
 
     facts: dict[str, ConstantFact] = {
@@ -399,6 +414,17 @@ def propagate_constant_devices(
         assert isinstance(logic, dict)
         result = evaluate_constant_logic(logic, facts)
         if result.value is None:
+            continue
+        if candidate["order_unproven"]:
+            if proof_constraints is not None:
+                proof_constraints.append(AnalysisState(
+                    PARTIAL, stage=SEMANTICS,
+                    reason="constant substitution lacks write-before-read order; initial/retained values may be read",
+                    next_step="check initialization, retained values, same-rung execution and program scheduling before constant substitution",
+                    detail={"device": device, "writer_lddb": candidate["row"].lddb,
+                            "writer_pos": candidate["row"].pos,
+                            "read_sites": [dict(site) for site in first_reads.get(device, [])]},
+                ))
             continue
         row = candidate["row"]
         assert isinstance(row, LadderRow)
@@ -688,13 +714,15 @@ def main(argv: list[str] | None = None) -> int:
         comments = load_comments_for_root(root)
         rows = load_rows(root, comments)
         try:
+            proof_constraints: list[AnalysisState] = []
             facts, propagated = propagate_constant_devices(
                 rows, con, externals=externals, refresh_areas=refresh_areas, root=root,
+                proof_constraints=proof_constraints,
             )
         except ConstantProofUnavailable as exc:
             constant_state = exc.analysis
         else:
-            constant_state = checked({"scope": "supported indexed writer and saved boundary model"})
+            constant_state = worst([checked({"scope": "supported indexed writer and saved boundary model"}), *proof_constraints])
             findings.extend(propagated)
             proven = [fact for device, fact in facts.items() if device not in SPECIAL_CONSTANTS]
             print(f"project-wide proven constant coils: {len(proven)}")

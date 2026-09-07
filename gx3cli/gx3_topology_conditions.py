@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from gx3cli.gx3_dead_logic import ConstantFact, ConstantProofUnavailable, lite_db_path, load_external_devices, propagate_constant_devices
-from gx3cli.gx3_analysis_state import AnalysisState
+from gx3cli.gx3_analysis_state import AnalysisState, worst
 from gx3cli.gx3_ladder_logic import (
     and_logic,
     condition_refs_from_logic,
@@ -112,12 +112,14 @@ def load_trace_constant_context(
         return TraceConstantContext({}, False, f"xref unavailable for constant pruning: {exc}")
 
     try:
+        proof_constraints: list[AnalysisState] = []
         facts, _findings = propagate_constant_devices(
             rows,
             con,
             externals=externals,
             refresh_areas=refresh_areas,
             root=root,
+            proof_constraints=proof_constraints,
         )
     except ConstantProofUnavailable as exc:
         return TraceConstantContext({}, False, str(exc), exc.analysis)
@@ -126,7 +128,7 @@ def load_trace_constant_context(
     finally:
         con.close()
 
-    return TraceConstantContext(facts, True)
+    return TraceConstantContext(facts, True, analysis=worst(proof_constraints) if proof_constraints else None)
 
 
 def _contact_key(ref: dict[str, Any]) -> tuple[str, str, str]:
