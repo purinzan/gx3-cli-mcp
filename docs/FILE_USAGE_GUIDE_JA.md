@@ -269,3 +269,6 @@
 
 - `gx3cli/gx3_comment_store.py`: コメントDBのデバイス種別・ビット・ユニットを区別する共通読取り。
 - `tests/test_gx3_comment_identity.py`: 合成SQLiteを使ったコメント識別の回帰テスト。
+
+- `gx3cli/gx3_csv_export.py`: 命令・配線・条件・コメント・ラベルのCSV出力。
+- `tests/test_gx3_csv_export.py`: 合成GX3からCSVを出すCLIと原本保護の検査。

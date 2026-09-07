@@ -404,3 +404,19 @@ closeしてください。索引パスの空白・#・%等はURIとしてescape�
 コメントの共通読取りはワード本体、各ビット、ユニット番号を区別します。ラダー表示は完全なデバイス名に対応するコメントを使い、動的な添字・間接アドレスへ固定アドレスのコメントを推測で付けません。ワード単位の解析ではビット単位コメントをワード本体へ上書きしません。未知のデバイスコード・ローカル領域・未対応の上位アドレスは推測せず対象外にします。旧xref/index-liteは再構築してください。
 
 これらの表示修正はジャンプやループの実行順、前スキャンの状態、実行時アドレス解決を証明しません。巨大条件式の上限と未検証状態は維持します。
+
+### CSVエクスポート
+
+```powershell
+gx3-cli csv-export --root project.gx3 --output-dir csv-output
+gx3-cli csv-export --root project.gx3 --output-dir comments-output --kind comments
+gx3-cli csv-export --root project.gx3 --output-dir one-program --kind ladder --program MAIN
+```
+
+新しい出力ディレクトリにUTF-16・タブ区切り・全項目引用符付きのCSVを作ります。既存ディレクトリへの上書きや展開済みプロジェクト内への出力は拒否します。入力の変化や途中エラーがあれば完成ディレクトリは公開しません。
+
+`ladder_0001.csv`などはプログラム別の解析表です。プログラム名、LDDB、ブロック位置・開始ステップ、配置座標、命令、引数配列、接点種別、出力条件を含みます。`block_step`は命令ごとのステップではなく、開始位置が不明なら空欄です。接点はCONTACT_A/CONTACT_Bで表し、LD/AND/ORやMPS/MPPへのコンパイルはしません。**ラダーCSVはGX Works3へ再インポートする命令リストではありません。**
+
+`COMMENT.csv`は「プロジェクト名／デバイス名・コメント」のGX Works3コメントCSVのレイアウトです。アーカイブ名を見出しに使い、`--project-name`で変更できます。実際のGX Works3へのインポート動作は未検証です。`comment_languages.csv`には言語番号ごとのテキストを残します。ラベルは`labels_*.csv`の解析表で、Global.csvの再生成ではありません。
+
+`statements.csv`、`pointers.csv`、`wiring.csv`は回路の補助情報です。`manifest.json`はファイルと件数・入力指紋・制約、`issues.csv`は未対応言語・解析欠落などを記録します。CSVを作れたことは元のGX3の完全な再現を意味しません。
