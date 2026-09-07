@@ -44,8 +44,12 @@ CHUNK = 1024 * 1024
 
 def file_digest(path: Path) -> str:
     digest = hashlib.sha256()
+    # read(CHUNK) can transiently allocate the whole requested buffer even for
+    # a tiny SQLite file. Keep large-file throughput but bound small-file peaks
+    # when verifying source identity with an already-decoded result in memory.
+    chunk_size = min(CHUNK, max(64 * 1024, path.stat().st_size))
     with path.open("rb") as handle:
-        while chunk := handle.read(CHUNK):
+        while chunk := handle.read(chunk_size):
             digest.update(chunk)
     return digest.hexdigest()
 
