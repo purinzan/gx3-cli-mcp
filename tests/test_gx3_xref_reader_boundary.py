@@ -17,6 +17,7 @@ The list of exceptions is meant to stay short and each entry to say why. An
 allowlist that grows without reasons is the convention it replaced.
 """
 
+import ast
 import re
 import sqlite3
 import sys
@@ -39,52 +40,88 @@ from test_gx3_shared_reach import build_xref, write_program
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Modules allowed to look a device up without the reader, and why. A raw
-# lookup is right when the question really is about the device an instruction
-# spells, rather than the devices it reaches.
-EXEMPT = {
-    # Builds the member index itself, and its own range predicate is the one
-    # the reader was extracted from.
-    "gx3_xref.py": "defines the range predicate and builds xref_members",
-    # The reader.
-    "gx3_xref_read.py": "is the boundary",
-    # Groups occurrences by the rung they sit on, not by device reach.
-    "gx3_link_map.py": "matches devices across projects by name, not by run",
+# Exact query exceptions, never a module/function-wide permission to add SQL.
+APPROVED_NAMED_QUERIES = {
+    ("gx3_xref.py", "downstream", "select comment from xref where device=? and comment<>'' limit 1"):
+        "A comment belongs to the named device, not its covering writer's base address.",
+    ("gx3_xref.py", "export", "select * from xref where device=? order by pou, pos"):
+        "Raw stored-occurrence export with an explicit name filter, not a physical where-used query.",
 }
 
-LOOKUP = re.compile(r"""(?:where|and)\s+device\s*=\s*\?""", re.IGNORECASE)
+# A known incomplete consumer, tracked explicitly rather than calling the
+# whole module safe. Remove this entry when that consumer is migrated.
+KNOWN_UNMIGRATED_QUERIES = {
+    ("gx3_xref.py", "print_cross_where_used", "select * from xref where device=? order by pou, pos limit ?"):
+        "#153 cross-project where-used still loses covered members; not an approved long-term query.",
+}
+
+LOOKUP = re.compile(r"\b(?:where|and|or)\s+(?:\w+\.)?device\s*=\s*\?", re.IGNORECASE)
 
 
-def statement_around(lines: list[str], index: int, span: int = 6) -> str:
-    """The lines a SQL statement is likely spread across.
+def direct_xref_queries(source: str) -> list[tuple[str, str, int]]:
+    """Inspect literal/adjacent-literal/f-string SQL at execute call sites.
 
-    The lookup and the table it reads are often on different lines, and a
-    device filter against another table -- `external_sources`, say -- is not
-    what this is about.
+    This deliberately does not claim to resolve SQL built via variables or
+    arbitrary control flow. Behavioral builder-to-consumer tests remain needed.
+    Nearby unrelated strings must not change which table a lookup targets.
     """
-    start = max(0, index - span)
-    return " ".join(lines[start : index + span + 1])
+    tree = ast.parse(source)
+    found = []
+
+    def visit(node: ast.AST, owner: str = "<module>") -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = node.name
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"execute", "executemany"} and node.args:
+            query = node.args[0]
+            if isinstance(query, ast.Constant) and isinstance(query.value, str):
+                sql = query.value
+            elif isinstance(query, ast.JoinedStr):
+                sql = "".join(v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else "{expression}" for v in query.values)
+            else:
+                sql = ""
+            normalized = " ".join(sql.lower().split())
+            if re.search(r"\bfrom\s+xref\b", normalized) and LOOKUP.search(normalized):
+                found.append((owner, normalized, node.lineno))
+        for child in ast.iter_child_nodes(node):
+            visit(child, owner)
+
+    visit(tree)
+    return found
 
 
 def test_no_new_reader_looks_a_device_up_by_hand() -> None:
     offenders: list[str] = []
+    seen = set()
     for path in sorted((ROOT / "gx3cli").glob("*.py")):
-        if path.name in EXEMPT:
-            continue
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for index, line in enumerate(lines):
-            if not LOOKUP.search(line):
-                continue
-            context = statement_around(lines, index)
-            if not re.search("from" + chr(92) + "s+xref", context, re.IGNORECASE):
-                continue  # a device filter on some other table
-            offenders.append(f"{path.name}:{index + 1}: {line.strip()}")
+        for owner, query, line in direct_xref_queries(path.read_text(encoding="utf-8")):
+            key = (path.name, owner, query)
+            seen.add(key)
+            if key not in APPROVED_NAMED_QUERIES and key not in KNOWN_UNMIGRATED_QUERIES:
+                offenders.append(f"{path.name}:{line} {owner}: {query}")
     assert not offenders, (
         "these look a device up without the range-aware reader; use "
         "gx3_xref_read.occurrences_of / counts_for / device_match, or add an "
-        "entry to EXEMPT saying why the exact name is what the question means:\n"
+        "an exact query exception with its reason (never exempt a module):\n"
         + "\n".join(offenders)
     )
+    assert set(APPROVED_NAMED_QUERIES) | set(KNOWN_UNMIGRATED_QUERIES) == seen, "remove stale query exceptions"
+
+
+def test_guard_detects_bypasses_and_allows_other_projections() -> None:
+    source = '''
+def new_reader(con):
+    con.execute("select x.* from xref x " "where x.device = ?", ("D401",))
+    con.execute(f"select {columns} from xref where device=?", ("D401",))
+    con.execute("select * from comments where device=?", ("D401",))
+    con.execute("select * from xref where role='c'")
+    con.execute("select x.* from xref x join xref_members m on m.src_id=x.id where m.member_device=?", ("D401",))
+'''
+    found = direct_xref_queries(source)
+    assert len(found) == 2, found
+    assert all(owner == "new_reader" for owner, _, _ in found)
+    assert all(("gx3_xref.py", owner, query) not in APPROVED_NAMED_QUERIES for owner, query, _ in found)
+    comment = direct_xref_queries("def downstream(con):\n con.execute(\"select comment from xref where device=? and comment<>'' limit 1\")")
+    assert ("gx3_xref.py", comment[0][0], comment[0][1]) in APPROVED_NAMED_QUERIES
 
 
 def a_project(work: Path) -> tuple[Path, Path]:
@@ -300,6 +337,7 @@ def test_the_decoder_version_moved_so_older_databases_are_rebuilt() -> None:
 
 
 def main() -> int:
+    test_guard_detects_bypasses_and_allows_other_projections()
     test_no_new_reader_looks_a_device_up_by_hand()
     test_the_member_index_holds_every_device_a_row_covers()
     test_asking_about_the_middle_of_a_run_finds_the_instruction()
