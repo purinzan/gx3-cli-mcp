@@ -18,10 +18,16 @@ allowlist that grows without reasons is the convention it replaced.
 """
 
 import ast
+import csv
+import io
+import json
+import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -163,6 +169,107 @@ def test_asking_about_the_middle_of_a_run_finds_the_instruction() -> None:
         assert past_end == [], past_end
 
 
+def test_scan_order_and_xref_share_physical_writers_end_to_end() -> None:
+    from gx3cli.gx3_scan_order import load_rows_for_device, load_all_device_rows, writers, readers
+    from gx3cli.gx3_xref import open_xref_db
+    from gx3cli.gx3_timing_chart import device_reader_condition, RowIndex
+    from test_gx3_shared_reach import rung
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root, db = work / "p", work / "xref.sqlite"
+        write_program(root, [
+            ("block", bmov(300, 400, 4)), ("single", mov(500, 401)),
+            ("read", mov(401, 900)),
+            ("both", rung("D+:D:D", "d{s=#:a=500:vt=nn}:d{s=#:a=600:vt=nn}")),
+        ])
+        build_xref(root, db)
+        # Hand-specified expectations, not golden values copied from another consumer.
+        expected = {"D400": (0, 1), "D401": (1, 2), "D403": (0, 1),
+                    "D404": (0, 0), "D600": (1, 1), "D601": (1, 1), "D602": (0, 0)}
+        con = open_xref_db(db, root=root)
+        try:
+            totals = counts_for(con, expected)
+            all_rows = load_all_device_rows(con)
+            condition = device_reader_condition(con, "D601", RowIndex(root))
+            assert condition == "[M1]", ("timing consumer lost the both-access high-word reader", condition)
+            for device, (read_count, write_count) in expected.items():
+                one = load_rows_for_device(con, device)
+                all_device = all_rows.get(device, [])
+                assert {row.row_id for row in one} == {row.row_id for row in all_device}
+                assert (len(readers(one)), len(writers(one))) == (read_count, write_count)
+                assert totals[device] == {"read": read_count, "write": write_count}
+        finally:
+            con.close()
+        env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
+        for device, (read_count, write_count) in expected.items():
+            scan = subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_scan_order", device, "--root", str(root),
+                 "--db", str(db), "--no-sync-db"], cwd=tmp, env=env,
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            xref = subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_xref", "--root", str(root), "--db", str(db),
+                 "where-used", device, "--json", "--limit", "-1"], cwd=tmp, env=env,
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            code = 0 if read_count + write_count else 1
+            assert scan.returncode == xref.returncode == code, (scan.stdout, scan.stderr, xref.stdout, xref.stderr)
+            result = json.loads(xref.stdout)["results"][0]
+            assert result["total_counts"]["readers"] == read_count, result
+            assert result["total_counts"]["writers"] == write_count, result
+            if code == 0:
+                assert f"writers={write_count} readers={read_count}" in scan.stdout, scan.stdout
+        alarm = subprocess.run(
+            [sys.executable, "-m", "gx3cli.gx3_alarm_map", "--root", str(root), "--db", str(db), "show", "D601"],
+            cwd=tmp, env=env, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        assert alarm.returncode == 0 and "[M1]" in alarm.stdout, (alarm.stdout, alarm.stderr)
+        from gx3cli.gx3_ladder_report import build as build_report, render_html
+        report = build_report(root, db, "001_LDDB.db")
+        assert report.devices["D401"]["project"] == {"read": 1, "write": 2}
+        assert "D401" in render_html(report)
+        # A legacy/missing member table must not silently fall back at the CLI.
+        with closing(sqlite3.connect(db)) as corrupt, corrupt:
+            corrupt.execute("drop table xref_members")
+        before = db.read_bytes()
+        rejected = subprocess.run(
+            [sys.executable, "-m", "gx3cli.gx3_scan_order", "D401", "--root", str(root),
+             "--db", str(db), "--no-sync-db"], cwd=tmp, env=env,
+            capture_output=True, text=True, encoding="utf-8", timeout=20)
+        assert rejected.returncode != 0 and "xref_members" in rejected.stderr, rejected
+        assert "writers=0" not in rejected.stdout and db.read_bytes() == before
+
+
+def test_timing_reports_preserve_covered_both_reader() -> None:
+    from test_gx3_shared_reach import rung
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        roots = [work / "a", work / "b"]
+        databases = [work / "a.sqlite", work / "b.sqlite"]
+        instructions = [rung("DMOV:D:D", "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}"),
+                        rung("D+:D:D", "d{s=#:a=500:vt=nn}:d{s=#:a=600:vt=nn}")]
+        for root, db, instruction in zip(roots, databases, instructions):
+            write_program(root, [("operation", instruction)])
+            build_xref(root, db)
+        links = work / "links.sqlite"
+        # Explicit link metadata is input; both xrefs come from real decoders.
+        with closing(sqlite3.connect(links)) as con, con:
+            con.execute("create table project(label, root, xref_db)")
+            con.executemany("insert into project values (?,?,?)", [(label, str(root), str(db)) for label, root, db in zip(("A", "B"), roots, databases)])
+            con.execute("create table link_map(project_a,device_a,project_b,device_b,link_type,link_addr,direction,confidence,role,evidence)")
+            con.execute("insert into link_map values ('A','D201','B','D601','comment-role','','A_to_B','high','request','synthetic mapping')")
+        for format_name in ("csv", "markdown"):
+            result = subprocess.run(
+                [sys.executable, "-m", "gx3cli.gx3_timing_chart", "detect", "A", "B", "--link-db", str(links), "--format", format_name],
+                cwd=tmp, env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8"),
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            if format_name == "csv":
+                signal, = list(csv.DictReader(io.StringIO(result.stdout)))
+                assert signal["sender"] == "A:D201" and signal["receiver"] == "B:D601", signal
+                assert signal["condition"] == signal["receiver_condition"] == "[M1]", signal
+            else:
+                assert "Receiver Read-Site Condition" in result.stdout and "[M1]" in result.stdout
+
+
 def test_counts_follow_the_same_rule() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         _, db = a_project(Path(tmp))
@@ -247,13 +354,39 @@ def test_a_multi_word_operand_covers_the_words_it_occupies() -> None:
 
 def multiword_project(work: Path, opcode: str) -> Path:
     from test_gx3_shared_reach import rung
+    from gx3cli.review_gx3_project import load_rows
+    from gx3cli.gx3_ladder_logic import enable_logic_for_device, logic_to_text
 
     instruction = rung(
         f"{opcode}:D:D",
         "d{s=#:a=100:vt=nn}:d{s=#:a=200:vt=nn}",
     )
     write_program(work / "p", [("_guid/op", instruction)])
+    row = load_rows(work / "p", {})[0]
+    width = 4 if opcode == "EDMOV" else 2
+    for number in range(200, 200 + width):
+        assert logic_to_text(enable_logic_for_device(row, f"D{number}")) == "[M1]"
+    assert logic_to_text(enable_logic_for_device(row, f"D{200 + width}")) == "FALSE"
+    assert logic_to_text(enable_logic_for_device(row, "D101")) == "FALSE", "a wide read is not an output"
     return build_xref(work / "p", work / "x.sqlite")
+
+
+def test_merging_operand_names_does_not_promote_read_width_to_write_width() -> None:
+    # Supplementary adapter unit contract; real decoder/DB/consumer above.
+    from gx3cli.gx3_arg_decode import ArgOcc
+    from gx3cli.gx3_ladder_logic import device_refs_from_args
+    read = ArgOcc("D100", "D", 100, "read", 0, range_len=4)
+    write = ArgOcc("D100", "D", 100, "write", 1, range_len=1)
+    for args in ([read, write], [write, read]):
+        ref, = device_refs_from_args(args)
+        assert ref.access == "both" and ref.write_range_len == 1, ref
+    for uncertain in (ArgOcc("D100", "D", 100, "write", 0, range_len=0),
+                      ArgOcc("D100", "D", 100, "write", 0, detail="indexed Z0", range_len=4)):
+        ref, = device_refs_from_args([uncertain])
+        assert ref.write_range_len == 0, ref
+        known = ArgOcc("D100", "D", 100, "write", 1, range_len=2)
+        ref, = device_refs_from_args([uncertain, known])
+        assert ref.write_range_len == 2, ref
 
 
 def opcodes_for(db: Path, device: str, access: tuple[str, ...]) -> list[str]:
@@ -334,6 +467,9 @@ def test_the_decoder_version_moved_so_older_databases_are_rebuilt() -> None:
 
 
 def main() -> int:
+    test_timing_reports_preserve_covered_both_reader()
+    test_merging_operand_names_does_not_promote_read_width_to_write_width()
+    test_scan_order_and_xref_share_physical_writers_end_to_end()
     test_guard_detects_bypasses_and_allows_other_projections()
     test_no_new_reader_looks_a_device_up_by_hand()
     test_the_member_index_holds_every_device_a_row_covers()

@@ -330,3 +330,15 @@ data-flowのoperation_index/ブロック/座標もxref DBを経由して保持�
 値フローedgeにはevidenceとして元行・命令・source/destination引数番号を残します。
 根拠位置を保存していない旧xrefは再構築が必要です。値フロー側の位置情報が欠けている場合は
 既知の辺を返せてもpartialと表示し、位置が分かるようには装いません。
+
+### 範囲内デバイスの成立条件とread/write両用命令
+
+成立条件の出力選択は、命令デコーダが確定した書込み範囲を使います。DMOV/D+の上位語や
+BMOVの途中語を、先頭語と名前が異なるだけでFALSEにはしません。同じデバイスを別引数で
+読み書きするとき、広いread範囲を狭いwrite範囲へ流用しません。未知/インデックス修飾の
+終端は追加展開せず、既知の範囲だけを扱います。これは実行保証・値・外部writerの証明ではありません。
+
+alarm-map showはbothもwriterとして表示し、timing-chartはbothをreaderにも含めます。
+timing-chartのCSVは既存列の末尾にreceiver_conditionを追加、Markdownにも受信側の
+read-site条件を表示します。出力に対応付けられない読取り位置は接点一覧へのfallbackと明記し、
+「対応する出力が見つからない」をFALSEと断定しません。

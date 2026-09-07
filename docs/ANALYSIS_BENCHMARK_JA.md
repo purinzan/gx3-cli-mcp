@@ -281,7 +281,25 @@ traceの時間/Python peak/累積RSSは既存予算内だが、特に小検体�
 中央値8696→8865bytes。各版の命令と引数で同じ解読結果を再利用する。
 これは要約関数だけの小測定で、project読込み・SQL・ファイルI/Oや全CLIの速度を
 測ったものではない。未解析時の注記は別の実CLI/CSV回帰で確認する。
-# refresh CSV evidence → lint consumer（2026-09-06）
+
+## covered writer成立条件とconsumer照合（2026-09-06）
+
+比較元8fe331d。同じmacOS/Python 3.14で既存v2の6固定検体×3 fresh processを順次実行。
+cold/warm-query/trace/dependency-flowは全検体で既存時間・heap・RSS予算内。
+trace中央値msはsmall 8.84→8.39、wide 53.29→55.35、deep 70.30→67.83、
+large-span 9.08→8.52、multi-pou 68.82→68.81、ld-st 67.64→68.15。
+
+別途、各検体を2プロジェクトとして実buildし、明示リンクを入力してtiming CLIのMarkdown出力、
+alarm showの実command handlerを測定（alarmのargparse/stdout設定は測定外）。
+timing中央値msはsmall 6.53→6.64、wide 22.92→24.23、deep 18.95→19.44、
+large-span 7.40→7.62、multi-pou 21.82→20.85、ld-st 20.19→19.74。
+alarmはsmall 2.33→2.32、wide 20.48→20.76、deep 8.54→8.55、large-span 2.78→3.08、
+multi-pou 9.91→9.19、ld-st 9.07→8.77。cold/各consumerの全時間・heap・RSS予算内。
+timingのSQLはwide 31で不変、その他は32→33（multi-pou 38→39）。出力未対応をFALSEで
+返していた箇所で明示接点一覧fallbackを実行するため。alarmはlarge-spanで15→17、他は不変。
+入力hash一致、OS cacheは未flush、RSSは累積process peak。実設備やWindows実測性能の保証ではない。
+
+## refresh CSV evidence → lint consumer（2026-09-06）
 
 比較元628d720、同じmacOS/Python 3.14環境で既存v2の6種固定LDDBを各3 fresh process。
 各検体に同じ64範囲の明示refresh CSVを与え、prepareと実lint CLI external-value-source

@@ -269,10 +269,11 @@ def cmd_show(args: argparse.Namespace) -> int:
     rows = RowIndex(Path(args.root))
     drivers = con.execute(
         f"select x.* from {device_match(con)[0]} "
-        f"where {device_match(con)[1]} and x.access='write' order by x.pos", (device,)
+        f"where {device_match(con)[1]} and x.access in ('write', 'both') order by x.pos", (device,)
     ).fetchall()
     if not drivers:
         print(f"no driver rows: {device}")
+        con.close()
         return 1
     comment = next((d["comment"] for d in drivers if d["comment"]), "")
     print(f"{device} {comment}".rstrip())
