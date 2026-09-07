@@ -212,6 +212,26 @@ traceは22→24（multi-pou25→27）、value-flowは11→12（multi-pou14→15�
 
 ## LD/FBDを含む定数証明scopeの確認
 
+### index-liteの観測scope表示
+
+`3868cac`→`0e7c18d`、同じ既存v2固定6検体・各3回の新規プロセスで比較。
+macOS/Python 3.14.4、既存measureのSQL/loader/tracemalloc/RSS計測を利用し、
+cold prepare後に実query_device(JSON)を10回、実device_map(text)を1回実行した。
+この測定はxref warmとは別の問い合わせであり、以前のwarm表と直接比較しない。
+
+| 検体 | cold ms | lite query 10回 ms | map ms |
+|---|---:|---:|---:|
+| small | 73.09→70.30 | 11.65→12.13 | 1.11→1.12 |
+| wide | 93.27→91.95 | 15.23→15.42 | 1.18→1.19 |
+| deep | 88.91→89.23 | 12.11→12.58 | 1.19→1.21 |
+| large-span | 136.38→146.69 | 11.86→13.30 | 1.10→1.14 |
+| multi-pou | 96.58→96.75 | 14.73→15.12 | 1.46→1.45 |
+| ld-st | 93.41→93.22 | 13.20→13.49 | 1.30→1.29 |
+
+全検体の入力hash一致。各phaseでSQL/open/rows/comments/labels/hash読込みは不変。
+query10回のSQLは150、mapは11。時間・Python peak・累積RSSは既定予算内。
+プロセス起動・MCP通信の速度や全CLIの性能を保証する測定ではない。
+
 `8edcee6b1e2aee714cb91a47b7710c4895c99276`→`32bdda4967df42a6928b982bd02c749c5b0e3508`。
 同じv2 harness・固定6検体・各3回、前後を順次測定。入力hash全一致。
 trace中央値msはsmall 7.42→9.37、wide 50.43→53.30、deep 66.66→67.63、
