@@ -309,3 +309,23 @@ large-span 10.57→11.60、multi-pou 16.86→19.70、ld-st 16.38→17.61。
 cold/CLIの全検体で時間・heap・RSS予算内。SQLはcold/CLIとも変化なし
 （CLI 21、multi-pouのみ24）。入力hashは一致。OS cacheは未flush、RSSは累積process peak。
 この測定はCSV由来の保証や全外部consumer移行、巨大CSV/Windows実測性能を示すものではない。
+
+## operation根拠位置の保存・読戻し（2026-09-06）
+
+比較元5509176、変更版8eb5f29。同じmacOS/Python 3.14.4で既存v2固定6検体を
+各3 fresh process、前後順次実行。全入力hash一致、SQL/open/rows/comments/labels/
+fingerprint読込み回数は全phaseで不変。時間・Python peak・累積RSSは既存予算内。
+
+| 検体 | cold ms | warm10照会 ms | trace ms | dependency-flow ms |
+|---|---:|---:|---:|---:|
+| small | 52.90→57.20 | 48.52→47.86 | 9.14→9.35 | 3.11→3.34 |
+| wide | 77.50→87.60 | 58.30→64.10 | 53.58→61.22 | 22.37→27.46 |
+| deep | 73.84→81.13 | 48.47→49.78 | 71.16→77.17 | 23.59→26.76 |
+| large-span | 121.90→125.17 | 48.15→50.55 | 8.91→9.24 | 16.93→18.34 |
+| multi-pou | 85.60→88.66 | 55.03→52.31 | 75.44→76.89 | 25.87→27.71 |
+| ld-st | 78.50→84.63 | 49.99→51.22 | 70.01→77.77 | 24.21→27.52 |
+
+中央値。根拠位置の解読・保存・値edge出力には追加コストがあり、高速化の変更ではない。
+時間予算はbaseline×1.20+2msで、wideの値フローもこの絶対許容分を含めて判定した。
+OS cache未flush、RSSは累積process peak。同一ラングの同一命令を区別できることは
+別の保存LD→実builder→実CLI回帰で確認し、全言語・実設備・Windowsの速度保証とはしない。
