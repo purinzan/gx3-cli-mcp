@@ -9,6 +9,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from gx3cli.gx3_input_identity import input_stamp, input_version
 
 from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_hmi_build_info import CommentInfo
@@ -630,14 +631,24 @@ class TraceInputs:
     # these exact lists. The shared CSV resolver prefers outputs/ over CWD.
     refresh_areas: list[RefreshArea] = field(default_factory=lambda: load_refresh_areas())
     unit_io_areas: list[UnitIoArea] = field(default_factory=lambda: load_unit_io_areas())
+    source_version: tuple | None = None
+
+    def validate_source(self, *, content: bool = True) -> None:
+        if self.source_version is None:
+            raise ValueError("trace inputs have no verified source version; use load_trace_inputs")
+        current = input_version(self.root) if content else input_stamp(self.root)
+        expected = self.source_version if content else self.source_version[1]
+        if current != expected:
+            raise SystemExit("project inputs changed during trace analysis; discard this result and retry")
 
 
 def load_trace_inputs(root: Path) -> TraceInputs:
+    version = input_version(root)
     comments = load_comments_for_root(root)
     labels = load_label_resolver(root)
     rows = load_rows(root, comments)
     resolve_label_occurrences(rows, labels)
-    return TraceInputs(Path(root).resolve(), comments, labels, rows)
+    return TraceInputs(Path(root).resolve(), comments, labels, rows, source_version=version)
 
 
 def build_trace(
@@ -654,6 +665,7 @@ def build_trace(
     inputs = inputs if inputs is not None else load_trace_inputs(root)
     if inputs.root != Path(root).resolve():
         raise ValueError("trace inputs belong to a different project root")
+    inputs.validate_source(content=False)
     comments, labels, rows = inputs.comments, inputs.labels, inputs.rows
     refs_for_logic = condition_refs_provider or condition_refs_from_logic
     drivers = driver_index(rows, include_reset=include_reset)
@@ -868,6 +880,7 @@ def build_trace(
         )
     analysis = analysis_state.as_dict()
     structural_shape = "partial" if partial_driver_rows else "exact"
+    inputs.validate_source()
 
     return {
         "target": {
@@ -875,6 +888,7 @@ def build_trace(
             "comment": device_comment(target, comments),
         },
         "source_root": str(root),
+        "input_sha256": inputs.source_version[0],
         "max_depth": max_depth,
         "max_devices": max_devices,
         "include_reset": include_reset,

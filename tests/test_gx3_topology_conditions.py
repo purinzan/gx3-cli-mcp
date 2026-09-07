@@ -478,6 +478,80 @@ def test_trace_finds_prepared_indexes_outside_the_current_directory() -> None:
             os.chdir(previous)
 
 
+def test_trace_rejects_source_change_during_input_loading() -> None:
+    from unittest.mock import patch
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.trace_gx3_device_dependencies import build_trace
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        write_program(root, [("r", generate_rung({"device": "X0"}, {"type": "coil", "device": "Y0"})[0])])
+        original = base.load_rows
+        def changed_rows(*args, **kwargs):
+            rows = original(*args, **kwargs)
+            # A real program edit after reading the old rows must not leave an
+            # answer about X0 certified against a new X1 source version.
+            from contextlib import closing
+            with closing(sqlite3.connect(next(root.glob("*_LDDB.db")))) as con, con:
+                con.execute("update LadderBlocks set data=?", (generate_rung({"device": "X1"}, {"type": "coil", "device": "Y0"})[0],))
+            return rows
+        with patch.object(base, "load_rows", side_effect=changed_rows):
+            try:
+                build_trace(root, "Y0", 4, 100, True, True)
+            except (ValueError, SystemExit) as exc:
+                assert "changed" in str(exc), exc
+            else:
+                raise AssertionError("trace accepted mixed project versions")
+        recovered = build_trace(root, "Y0", 4, 100, True, True)
+        conditions = [c["device"] for row in recovered["driver_rows"] for c in row["conditions"]]
+        assert "X1" in conditions and "X0" not in conditions, conditions
+
+
+def test_trace_rejects_existing_st_or_memory_content_change_during_traversal() -> None:
+    import os
+    from contextlib import closing
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.gx3_input_identity import fingerprint
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic
+
+    for filename in ("002_STDB.db", "003_DM.db"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            write_program(root, [("r", generate_rung({"device": "X0"}, {"type": "coil", "device": "Y0"})[0])])
+            source = root / filename
+            # Exercise dependency lifetime, not the ST/DM semantic decoder:
+            # valid SQLite contents exist before the input snapshot is taken.
+            with closing(sqlite3.connect(source)) as con, con:
+                con.execute("create table Source(Code text)")
+                con.execute("insert into Source values ('D100 := D101;')")
+            inputs = base.load_trace_inputs(root)
+            original_stamp = source.stat()
+            changed = False
+            def change_during_traversal(node):
+                nonlocal changed
+                if not changed:
+                    with closing(sqlite3.connect(source)) as con, con:
+                        con.execute("update Source set Code='D100 := D102;'")
+                    assert source.stat().st_size == original_stamp.st_size
+                    os.utime(source, ns=(original_stamp.st_atime_ns, original_stamp.st_mtime_ns))
+                    changed = True
+                return condition_refs_from_logic(node)
+            try:
+                base.build_trace(root, "Y0", 4, 100, True, True, inputs=inputs,
+                                 condition_refs_provider=change_during_traversal)
+            except SystemExit as exc:
+                assert "changed" in str(exc), exc
+            else:
+                raise AssertionError(f"trace accepted changed existing {filename}")
+            assert changed
+            result = base.build_trace(root, "Y0", 4, 100, True, True)
+            assert result["input_sha256"] == fingerprint(root)
+            # Close discipline: no connection from the failed read remains.
+            moved = source.with_suffix(".moved")
+            source.rename(moved)
+            moved.rename(source)
+
+
 def test_postfilter_row_key_includes_the_driven_device() -> None:
     from gx3cli.trace_gx3_device_dependencies import _row_device_key
 

@@ -44,8 +44,12 @@ CHUNK = 1024 * 1024
 
 def file_digest(path: Path) -> str:
     digest = hashlib.sha256()
+    # read(CHUNK) can transiently allocate the whole requested buffer even for
+    # a tiny SQLite file. Keep large-file throughput but bound small-file peaks
+    # when verifying source identity with an already-decoded result in memory.
+    chunk_size = min(CHUNK, max(64 * 1024, path.stat().st_size))
     with path.open("rb") as handle:
-        while chunk := handle.read(CHUNK):
+        while chunk := handle.read(chunk_size):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -76,6 +80,27 @@ def fingerprint(root: Path) -> str:
         digest.update(str(path.stat().st_size).encode("ascii") + b"\0")
         digest.update(file_digest(path).encode("ascii") + b"\0")
     return digest.hexdigest()
+
+
+def input_stamp(root: Path) -> tuple:
+    """Transient source version; content identity is provided by input_version."""
+    result = []
+    for path in input_files(root):
+        if path.suffix.lower() == ".db" and (Path(str(path) + "-wal").exists() or Path(str(path) + "-shm").exists()):
+            raise SystemExit(f"project input has active SQLite WAL sidecars: {path.name}; close source users before analysis")
+        stat = path.stat()
+        result.append((path.name, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
+    return tuple(result)
+
+
+def input_version(root: Path) -> tuple:
+    """Fingerprint a stable source set, shared by index builders and readers."""
+    before = input_stamp(root)
+    digest = fingerprint(root)
+    after = input_stamp(root)
+    if before != after:
+        raise SystemExit("project inputs changed while fingerprinting; retry the analysis")
+    return digest, after
 
 
 def short(value: str) -> str:

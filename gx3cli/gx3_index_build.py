@@ -9,7 +9,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
-from gx3cli.gx3_input_identity import ANALYSIS_INPUTS, fingerprint, input_files
+from gx3cli.gx3_input_identity import ANALYSIS_INPUTS, input_version as _version
 
 
 BUILD_CONTRACT = "stable-project-input-build-1"
@@ -23,25 +23,6 @@ def require_build_contract(con: sqlite3.Connection, path: Path) -> None:
             f"index construction cannot be verified against the stable-input build contract: {path}\n"
             "Rebuild this project's xref/index-lite with the current build command."
         )
-
-
-def _stats(root: Path) -> tuple:
-    result = []
-    for path in input_files(root):
-        if path.suffix.lower() == ".db" and (Path(str(path) + "-wal").exists() or Path(str(path) + "-shm").exists()):
-            raise SystemExit(f"project input has active SQLite WAL sidecars: {path.name}; close source users before building")
-        stat = path.stat()
-        result.append((path.name, stat.st_size, stat.st_mtime_ns, stat.st_ino))
-    return tuple(result)
-
-
-def _version(root: Path) -> tuple:
-    before = _stats(root)
-    digest = fingerprint(root)
-    after = _stats(root)
-    if before != after:
-        raise SystemExit("project inputs changed while fingerprinting; retry the index build")
-    return digest, after
 
 
 def _output_stamp(path: Path) -> tuple | None:
