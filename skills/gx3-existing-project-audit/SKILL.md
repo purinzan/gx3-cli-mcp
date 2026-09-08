@@ -20,6 +20,11 @@ gx3-cli xref build --root <project> --db .gx3_index/<label>_xref.sqlite
 gx3-cli project-survey --root <project> --output-dir outputs --prefix <label>_survey --compact-md-only
 ```
 
+Doctor `--warn-only` changes the exit code, not the displayed rows: ERROR checks
+still appear, but the command returns 0. Read the statuses rather than treating
+exit code 0 as a clean diagnosis. Add `--no-script-check` when command-script
+presence checks are unnecessary.
+
 Use `gx3-cli exec-config --root <project>` early when CPU type, unit
 configuration, or program execution order matters.
 
@@ -37,6 +42,22 @@ gx3-cli ladder-print <PROGRAM_OR_LDDB> --root <project> --device <DEVICE>
 
 Answer with the active ON condition, hold/reset condition, external/HMI boundary,
 and uncertainty. Prefer concrete devices and comments over speculation.
+
+## Keep Output Focused
+
+- For a short condition/output overview, use `gx3-cli rung-text --root <project> --program <LDDB>`.
+  Its `--device <DEVICE>` filter selects outputs driving that device; it is not
+  a complete usage search or an upstream trace.
+- Use `trace-device --compact` for dependencies, and `ladder-print` when the
+  diagram itself is needed. Start with `--list-sections`, then select
+  `--section <TITLE>`, `--pos-range <A-B>`, or `--device <DEVICE>`.
+  The latter selects references in any role, unlike the rung-text output filter.
+- For large diagrams, use `ladder-print <PROGRAM_OR_LDDB> --root <project> -o <FILE>`
+  and read the relevant lines from the saved file. Client-side output truncation
+  is not proof that the CLI failed; inspect the full output and error separately.
+- Keep coverage Notes and trace truncation/uncertainty in the interpretation.
+  Shorter output does not mean complete analysis. Avoid repeatedly fetching
+  identical evidence; narrow searches and request only the SQL columns needed.
 
 ## Project Review
 

@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=str(default_project_root(BASE_DIR)), help="extracted project root")
     parser.add_argument("--index-dir", default=".gx3_index", help="index directory")
     parser.add_argument("--link-db", default=".gx3_index/link_map.sqlite", help="cross-project link-map DB")
-    parser.add_argument("--warn-only", action="store_true", help="return 0 even when ERROR checks exist")
+    parser.add_argument("--warn-only", action="store_true", help="return exit code 0 even when ERROR checks exist; does not hide OK rows")
     parser.add_argument("--no-script-check", action="store_true", help="skip command script presence checks")
     parser.add_argument(
         "--project-health",
