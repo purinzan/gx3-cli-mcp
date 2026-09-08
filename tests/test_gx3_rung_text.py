@@ -121,12 +121,14 @@ def test_json_carries_the_same_fields() -> None:
 
 def test_comments_are_opt_in_and_preserve_logic_and_single_line() -> None:
     import sqlite3
+    from contextlib import closing
     with tempfile.TemporaryDirectory() as tmp:
         root = _fixture(tmp)
-        with sqlite3.connect(root / "001_DC.db") as con:
+        with closing(sqlite3.connect(root / "001_DC.db")) as con:
             con.execute("UPDATE COMMENT_DATA SET CmtData=? WHERE DeviceSEQ IN "
                         "(SELECT SEQ FROM DEVICE_DATA WHERE DevCode=1 AND DevNoLow=10)",
                         ('運転許可\n"確認"\t済み',))
+            con.commit()
         plain = collect(root, device="M10")
         annotated = collect(root, device="M10", comments=True)
         assert len(plain) == len(annotated)
