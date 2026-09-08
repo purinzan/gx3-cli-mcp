@@ -118,6 +118,56 @@ def test_json_carries_the_same_fields() -> None:
     assert set(rows[0]) == {"lddb", "pos", "step", "title", "opcode", "device", "condition"}
 
 
+
+def test_comments_are_opt_in_and_preserve_logic_and_single_line() -> None:
+    import sqlite3
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _fixture(tmp)
+        with sqlite3.connect(root / "001_DC.db") as con:
+            con.execute("UPDATE COMMENT_DATA SET CmtData=? WHERE DeviceSEQ IN "
+                        "(SELECT SEQ FROM DEVICE_DATA WHERE DevCode=1 AND DevNoLow=10)",
+                        ('運転許可\n"確認"\t済み',))
+        plain = collect(root, device="M10")
+        annotated = collect(root, device="M10", comments=True)
+        assert len(plain) == len(annotated)
+        for old, new in zip(plain, annotated):
+            assert (old.condition, old.device, old.pos) == (new.condition, new.device, new.pos)
+            assert old.comments is None
+            assert new.comments == {
+                "X10": "Auto/manual selector: auto",
+                "M2": "Machine ready to run",
+                "M10": '運転許可\n"確認"\t済み',
+            }
+            assert len(new.to_line().splitlines()) == 1
+            assert to_json([new])[0]["comments"]["M10"] == '運転許可\n"確認"\t済み'
+        assert "comments" not in to_json(plain)[0]
+
+
+def test_comment_matching_does_not_rewrite_literals_or_partial_names() -> None:
+    from gx3cli.gx3_rung_text import visible_comments
+    candidates = {"M1": "one", "M10": "ten", "D1": "word", "D1.2": "bit"}
+    assert visible_comments('M10 AND /D1.2 AND D1Z2 AND "M1" AND Label_M1', "Y0", candidates) == {
+        "M10": "ten", "D1.2": "bit",
+    }
+
+
+def test_cli_comments_json_and_missing_comments() -> None:
+    import json
+    import subprocess
+    import sys
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _fixture(tmp)
+        command = [sys.executable, "-m", "gx3cli.gx3_cli", "rung-text",
+                   "--root", str(root), "--device", "M10", "--comments", "--format", "json"]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", check=True)
+        rows = json.loads(result.stdout)
+        assert rows and rows[0]["comments"]["X10"] == "Auto/manual selector: auto"
+        (root / "001_DC.db").unlink()
+        missing = collect(root, device="M10", comments=True)
+        assert missing and all(item.comments == {} for item in missing)
+        assert all(" # " not in item.to_line() for item in missing)
+
+
 def main() -> int:
     # Collected rather than listed, so a test added later cannot be left out.
     tests = [

@@ -46,6 +46,7 @@ and uncertainty. Prefer concrete devices and comments over speculation.
 ## Keep Output Focused
 
 - For a short condition/output overview, use `gx3-cli rung-text --root <project> --program <LDDB>`.
+  Add `--comments` for device-comment mappings on each line (also available in JSON).
   Its `--device <DEVICE>` filter selects outputs driving that device; it is not
   a complete usage search or an upstream trace.
 - Use `trace-device --compact` for dependencies, and `ladder-print` when the
