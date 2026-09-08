@@ -286,7 +286,7 @@
 範囲を絞った `ladder-print` を使います。以下のファイル名・デバイスは説明用です。
 
 ```powershell
-gx3-cli rung-text --root demo.gx3 --program 001_LDDB.db
+gx3-cli rung-text --root demo.gx3 --program 001_LDDB.db --comments
 gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact --max-depth 4
 gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --list-sections
 gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --device M100
@@ -305,3 +305,15 @@ gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
   `--no-script-check` を追加できます。終了コードだけで正常と判断しないでください。
 - xref の Note は解析範囲の制約です。繰り返し表示されても解釈から除外せず、
   同じ証拠の再取得や不要な SQL 列の重複取得を減らします。
+
+### rung-text のデバイスコメント
+
+`--comments` を付けると、条件と出力に表示されたデバイスのコメントを
+各行の末尾に `# X0="開始条件", M0="運転許可"` の形で添えます。
+同じデバイスは1行につき1回表示し、コメント内の改行はエスケープして1行を保ちます。
+省略時は従来の短い表示です。`--format json --comments` では
+`condition` と `device` を変更せず、デバイス名からコメントへの `comments` 対応表を追加します。
+
+コメントがないデバイス、デバイス名に似たラベル、動的アドレスには推測で補いません。
+ビット指定にはそのビットのコメントを使い、ワードのコメントを流用しません。
+桁指定のコメントは先頭デバイスのものです。表示に現れない命令引数を一覧する機能ではありません。
