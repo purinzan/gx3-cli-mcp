@@ -278,3 +278,30 @@
 
 - `gx3cli/gx3_native_csv.py`: RCPUの保存命令列・StepInfo・回路図の照合とGX Works3 CSV行への復号。未知形式は拒否。
 - `tests/test_gx3_native_csv.py`: 合成アーカイブからCLI経由の命令CSV出力、ステップ・分岐・修飾子・不一致時の出力中止を検査。
+
+
+## 解析結果を短く読む
+
+概要は `rung-text`、依存条件は `trace-device --compact`、図の確認は
+範囲を絞った `ladder-print` を使います。以下のファイル名・デバイスは説明用です。
+
+```powershell
+gx3-cli rung-text --root demo.gx3 --program 001_LDDB.db
+gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact --max-depth 4
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --list-sections
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --device M100
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
+```
+
+- `rung-text --device` は指定デバイスを駆動する出力で絞ります。
+  `ladder-print --device` は読取りを含む参照回路で絞ります。
+- セクション名で選ぶ場合は `--section "タイトル"` を使います。
+  `--pos-range` は内部位置 pos の範囲です。GX Works3 の表示ステップ番号と
+  同一とは限りません。
+- 呼び出し側で出力が切れる場合は `-o ladder.txt` で保存し、必要な行を読みます。
+  出力の切捨てだけで CLI の失敗と判断せず、終了状態とエラーを確認します。
+- `doctor --warn-only` は「警告だけ表示」ではなく「ERROR があっても終了コードを
+  0 にする」指定です。OK 行も表示されます。スクリプト存在確認が不要な場合は
+  `--no-script-check` を追加できます。終了コードだけで正常と判断しないでください。
+- xref の Note は解析範囲の制約です。繰り返し表示されても解釈から除外せず、
+  同じ証拠の再取得や不要な SQL 列の重複取得を減らします。

@@ -1086,7 +1086,8 @@ def resolve_lddb(root: Path, program: str, pm: ProgramMap) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Render a ladder program in GX Works3 print-text layout."
+        description="Render a ladder program in GX Works3 print-text layout.",
+        epilog="For short condition/output text, use rung-text; for dependencies, use trace-device --compact. Filter large diagrams with --device, --section or --pos-range. If your client truncates stdout, save with -o FILE and read the needed lines.",
     )
     parser.add_argument("program", help="program name (POU / program file) or LDDB file name")
     parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder")
