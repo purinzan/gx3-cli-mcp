@@ -227,3 +227,19 @@ rows/comments/labelsの読込み前に元ファイル集合の指紋とstatを�
 元入力を拒否する。ファイルをロックする方式ではなく開始/終了の変更検出であり、
 保存中の入力は閉じてから再実行する。CSVや任意link-mapの変更検出、他consumerの
 結果全体を通した版検証まで、このtrace修正で完了扱いにしない。
+# traceの通信CSV依存版と指定パス（#153 §2.4 / Phase3）
+
+検証済みlite索引の同じ接続から、外部境界とbuild時に選んだCSVパス/指紋を取得する。
+trace本体と定数判定は呼出し単位の同じ読取り結果を使い、別CWDにある同名CSVで
+上書きしない。元入力版に加え、CSVも読込み前・trace入口・返却前で既存
+`dependency_snapshot`により照合する。途中変更は結果を返さず再実行を求める。
+
+JSONに`communication_inputs`（実際のパスと内容hash、欠損はnull）と
+`communication_input_source`を追加する。`validated_index`は索引が記録した入力と
+一致する意味であり、CSVのproject由来・全外部writerの網羅性の証明ではない。
+索引不在/不一致ならpruningのみ無効とし、旧CSV探索を使う`legacy_fallback`を明示する。
+CSV行の未解読状態の全consumer伝播と、実機外部writerの網羅性は別の残件である。
+
+回帰: 実LD→明示CSV指定lite build→別CWDで実trace CLI JSON、競合CWDのCSVを
+使わないことを確認。探索中にCSVだけを同サイズ更新しmtimeを戻す場合も拒否し、
+次回の読取りでは更新版を使う。静的project captureだけでなく動的条件をテストに保持。

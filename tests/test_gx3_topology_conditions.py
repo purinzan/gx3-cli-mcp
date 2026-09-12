@@ -552,6 +552,82 @@ def test_trace_rejects_existing_st_or_memory_content_change_during_traversal() -
             moved.rename(source)
 
 
+def test_trace_uses_the_csv_paths_recorded_by_the_real_index_builder() -> None:
+    import json
+    import os
+    import subprocess
+    from gx3cli import gx3_index_lite as lite
+    from gx3cli.gx3_workspace import index_paths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "project"
+        write_program(root, [("r", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0])])
+        csv_path = work / "explicit-refresh.csv"
+        csv_path.write_text("device_start,device_end,network_label\nM100,M100,recorded-network\n", encoding="utf-8")
+        index, _ = index_paths(root)
+        assert lite.main(["build", "--root", str(root), "--out", str(index),
+                          "--refresh-csv", str(csv_path), "--unit-csv", str(work / "absent-units.csv")]) == 0
+        unrelated = work / "elsewhere"
+        (unrelated / "outputs").mkdir(parents=True)
+        (unrelated / "outputs" / "proof_refresh_areas.csv").write_text(
+            "device_start,device_end,network_label\nM100,M100,wrong-cwd-network\n", encoding="utf-8")
+        environment = dict(os.environ, PROJECT_COMM_PREFIX="proof", PYTHONIOENCODING="utf-8",
+                           PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+        completed = subprocess.run(
+            [sys.executable, "-m", "gx3cli.trace_gx3_device_dependencies", "Y0", "--root", str(root),
+             "--strict-logic", "--no-link-map", "--format", "json"], cwd=unrelated,
+            capture_output=True, text=True, encoding="utf-8", env=environment)
+        assert completed.returncode == 0, completed.stderr
+        result = json.loads(completed.stdout)
+        assert result["communication_input_source"] == "validated_index", result
+        assert result["communication_inputs"]["refresh_csv"]["path"] == str(csv_path.absolute())
+        conditions = [c for row in result["driver_rows"] for c in row["conditions"] if c["device"] == "M100"]
+        assert conditions and all(c["refresh_network_label"] == "recorded-network" for c in conditions), conditions
+
+
+def test_trace_rejects_communication_csv_changes_and_recovers() -> None:
+    import os
+    from unittest.mock import patch
+    from gx3cli import gx3_trace_state as base
+    from gx3cli.gx3_ladder_logic import condition_refs_from_logic
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        root = work / "project"
+        write_program(root, [("r", generate_rung({"device": "M100"}, {"type": "coil", "device": "Y0"})[0])])
+        csv_path = work / "proof_refresh_areas.csv"
+        header = "device_start,device_end,network_label\n"
+        csv_path.write_text(header + "M100,M100,old-network\n", encoding="utf-8")
+        previous = Path.cwd()
+        try:
+            os.chdir(work)
+            with patch.dict(os.environ, {"PROJECT_COMM_PREFIX": "proof"}):
+                inputs = base.load_trace_inputs(root)
+                stamp = csv_path.stat()
+                changed = False
+                def change(node):
+                    nonlocal changed
+                    if not changed:
+                        csv_path.write_text(header + "M100,M100,new-network\n", encoding="utf-8")
+                        assert csv_path.stat().st_size == stamp.st_size
+                        os.utime(csv_path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+                        changed = True
+                    return condition_refs_from_logic(node)
+                try:
+                    base.build_trace(root, "Y0", 4, 100, True, True, inputs=inputs, condition_refs_provider=change)
+                except SystemExit as exc:
+                    assert "communication CSV inputs changed" in str(exc), exc
+                else:
+                    raise AssertionError("changed CSV accepted")
+                assert changed
+                result = base.build_trace(root, "Y0", 4, 100, True, True)
+                conditions = [c for row in result["driver_rows"] for c in row["conditions"] if c["device"] == "M100"]
+                assert conditions and all(c["refresh_network_label"] == "new-network" for c in conditions), conditions
+        finally:
+            os.chdir(previous)
+
+
 def test_postfilter_row_key_includes_the_driven_device() -> None:
     from gx3cli.trace_gx3_device_dependencies import _row_device_key
 
