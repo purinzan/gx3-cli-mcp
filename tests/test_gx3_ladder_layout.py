@@ -74,8 +74,11 @@ def test_instruction_width_uses_cells_instead_of_remaining_rail() -> None:
             tree = ET.fromstring(svg)
             box = next(e for e in tree.iter() if e.get("class") == "box")
             assert float(box.get("width")) == (1 + len(addresses)) * CELL_W - 10
-            end = RAIL_PAD + (x + 1 + len(addresses)) * CELL_W
-            assert any(e.get("class") == "wire" and e.get("x1") == str(end) and e.get("x2") == str(RAIL_PAD + 12 * CELL_W) for e in tree.iter())
+            start = RAIL_PAD + (12 - 1 - len(addresses)) * CELL_W
+            assert float(box.get("x")) == start + 5
+            assert float(box.get("x")) + float(box.get("width")) == RAIL_PAD + 12 * CELL_W - 5
+            assert any(e.get("class") == "wire" and e.get("x1") == str(RAIL_PAD + x * CELL_W) and e.get("x2") == str(start) for e in tree.iter())
+            assert layout["elements"][0]["x"] == x
 
 
 def main() -> int:
