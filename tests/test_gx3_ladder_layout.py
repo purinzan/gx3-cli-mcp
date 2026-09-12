@@ -60,6 +60,27 @@ def test_layout_does_not_change_logic_analysis() -> None:
     assert logic_to_text(enable_logic_for_output(row, output)) == "[M100]"
 
 
+def test_instruction_width_uses_cells_instead_of_remaining_rail() -> None:
+    import xml.etree.ElementTree as ET
+    from gx3cli.gx3_ladder_layout import CELL_W, RAIL_PAD
+    for opcode, addresses in [("SET", [10]), ("MOV", [0, 10]), ("TO", [0, 10, 20, 30])]:
+        for x in (1, 4):
+            args = ":".join(f"d{{s=#:a={n}:vt=nn}}" for n in addresses)
+            instruction = f"e{{s=ce{{op=in{{op=#:ct=a:as=[as{{vt=Abl}}]}}:args=[{args}]}}:pos={x},0}}"
+            row = manual_row(instruction, dim="12x1", header="V1:8:1:1:1:1:1:1:" + opcode + ":D" * len(addresses))
+            layout = rung_layout(row)
+            assert layout["elements"][0]["opcode"] == opcode
+            svg = layouts_to_svg({"root": "test", "program": "test", "rungs": [layout]})
+            tree = ET.fromstring(svg)
+            box = next(e for e in tree.iter() if e.get("class") == "box")
+            assert float(box.get("width")) == (1 + len(addresses)) * CELL_W - 10
+            start = RAIL_PAD + (12 - 1 - len(addresses)) * CELL_W
+            assert float(box.get("x")) == start + 5
+            assert float(box.get("x")) + float(box.get("width")) == RAIL_PAD + 12 * CELL_W - 5
+            assert any(e.get("class") == "wire" and e.get("x1") == str(RAIL_PAD + x * CELL_W) and e.get("x2") == str(start) for e in tree.iter())
+            assert layout["elements"][0]["x"] == x
+
+
 def main() -> int:
     tests = [
         (name, obj)
