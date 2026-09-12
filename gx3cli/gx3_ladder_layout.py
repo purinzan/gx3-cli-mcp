@@ -19,6 +19,7 @@ from typing import Any
 from gx3cli.gx3_ladder_logic import parse_dim
 from gx3cli.gx3_ladder_print import (
     INLINE_SYMBOL_OPS,
+    box_cells,
     comment_text_for,
     contact_mark,
     op_cells_of,
@@ -237,9 +238,9 @@ def _element_box(element: dict[str, Any], y_offset: int) -> tuple[int, int, int]
 def _element_span(element: dict[str, Any], layout_width: int) -> int:
     if element["kind"] in {"contact", "coil"}:
         return 1
-    if element.get("element_kind") != "ct":
-        return max(1, layout_width - int(element["x"]))
-    return max(1, min(1 + len(element.get("operands", [])), layout_width - int(element["x"])))
+    # Match the cell footprint used by the print renderer and grid folding.
+    # Output instructions must not expand to consume the remaining power rail.
+    return max(1, min(box_cells(element.get("operands", [])), layout_width - int(element["x"])))
 
 
 def _inferred_horizontal_wires(layout: dict[str, Any], y_offset: int) -> list[str]:

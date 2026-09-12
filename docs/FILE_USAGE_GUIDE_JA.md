@@ -317,3 +317,7 @@ gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
 コメントがないデバイス、デバイス名に似たラベル、動的アドレスには推測で補いません。
 ビット指定にはそのビットのコメントを使い、ワードのコメントを流用しません。
 桁指定のコメントは先頭デバイスのものです。表示に現れない命令引数を一覧する機能ではありません。
+
+### ラダーSVGの命令幅
+
+命令枠は命令名1セル＋各引数1セル（MOVは3セル、SETは2セル、TOは5セル）で描画し、右母線までの余白で引き伸ばしません。残りは配線で接続します。列幅の変更やFBの個別レイアウトの完全再現は対象外です。比較資料：三菱電機 [GX Works3 Operating Manual](https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081215eng/sh081215engaq.pdf)、印刷ページ351の画面例、353のセル表示の説明。
