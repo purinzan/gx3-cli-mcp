@@ -22,6 +22,10 @@ answer from indexed facts instead of guessing at a binary file.
 サーバーです。「このコイルがなぜ ON にならないか」をラダーから追います。
 読み取り専用で、元のプロジェクトは書き換えません。
 
+中文: 不用打开 GX Works3，也能分析三菱电机 MELSEC 的 `.gx3` 工程，
+从梯形图追查「这个线圈为什么不导通」。只读，不改写原工程。
+完整中文说明见 [README.zh-CN.md](https://github.com/purinzan/gx3-cli-mcp/blob/main/README.zh-CN.md)。
+
 ---
 
 ## Install
@@ -135,7 +139,7 @@ decrypted; export the folder from GX Works3 instead.
 
 ## Documentation
 
-- [User manual (JA)](docs/USER_MANUAL_JA.md) / [(EN)](docs/USER_MANUAL_EN.md)
+- [User manual (JA)](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/USER_MANUAL_JA.md) / [(EN)](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/USER_MANUAL_EN.md) / [(ZH)](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/USER_MANUAL_ZH.md)
 - [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md)
 - [Ladder practical tips (JA)](docs/LADDER_PRACTICAL_TIPS_JA.md) — field-oriented modification and review tips
 - [Security note (JA)](docs/SECURITY_JA.md) — local data handling, read-only MCP policy
