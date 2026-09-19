@@ -78,6 +78,10 @@ HEX_DEVICE_TYPES = frozenset(name for name, base in DEVICE_TYPE_BASE.items() if 
 
 # Longest first, so a type that is a prefix of another never wins by accident.
 _TYPES_LONGEST_FIRST = tuple(sorted(DEVICE_TYPE_BASE, key=len, reverse=True))
+_TYPES_BY_FIRST = {
+    first: tuple(kind for kind in _TYPES_LONGEST_FIRST if kind[0] == first)
+    for first in {kind[0] for kind in _TYPES_LONGEST_FIRST}
+}
 
 _DEVICE_RE = re.compile(r"^([A-Za-z]+)([0-9A-Fa-f]+)$")
 
@@ -126,7 +130,9 @@ def split_device(text: str) -> tuple[str, int] | None:
     value = text.strip().upper()
     if not value:
         return None
-    for dev_type in _TYPES_LONGEST_FIRST:
+    # A prefix match necessarily shares the first character. Keep the original
+    # longest-first order within that group, without scanning unrelated types.
+    for dev_type in _TYPES_BY_FIRST.get(value[0], ()):
         if not value.startswith(dev_type):
             continue
         digits = value[len(dev_type):]

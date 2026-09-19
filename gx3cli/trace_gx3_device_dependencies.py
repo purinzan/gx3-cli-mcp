@@ -100,7 +100,8 @@ def _condition_refs_provider(facts: dict, stats: dict[str, int]):
 
 def _load_constant_context(root: Path, inputs=None):
     inputs = inputs if inputs is not None else base.load_trace_inputs(root)
-    return load_trace_constant_context(root, inputs.rows, inputs.refresh_areas)
+    return load_trace_constant_context(root, inputs.rows, inputs.refresh_areas,
+                                       boundaries=inputs.external_boundaries, xref_path=inputs.xref_path)
 
 
 def __getattr__(name: str) -> Any:

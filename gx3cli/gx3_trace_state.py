@@ -6,10 +6,11 @@ import re
 import sqlite3
 import sys
 from collections import Counter, defaultdict, deque
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from gx3cli.gx3_input_identity import input_stamp, input_version
+from gx3cli.gx3_input_identity import dependency_snapshot, input_stamp, input_version
 
 from gx3cli.gx3_device_name import format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_hmi_build_info import CommentInfo
@@ -632,14 +633,57 @@ class TraceInputs:
     refresh_areas: list[RefreshArea] = field(default_factory=lambda: load_refresh_areas())
     unit_io_areas: list[UnitIoArea] = field(default_factory=lambda: load_unit_io_areas())
     source_version: tuple | None = None
+    communication_paths: dict[str, Path] = field(default_factory=dict)
+    communication_version: tuple | None = None
+    external_boundaries: tuple[dict[str, str] | None, str] | None = None
+    xref_path: Path | None = None
 
-    def validate_source(self, *, content: bool = True) -> None:
+    def validate_source(self, *, content: bool = True, communication: bool = True) -> None:
         if self.source_version is None:
             raise ValueError("trace inputs have no verified source version; use load_trace_inputs")
         current = input_version(self.root) if content else input_stamp(self.root)
         expected = self.source_version if content else self.source_version[1]
         if current != expected:
             raise SystemExit("project inputs changed during trace analysis; discard this result and retry")
+        if communication and self.communication_version is not None and dependency_snapshot(self.communication_paths) != self.communication_version:
+            raise SystemExit("communication CSV inputs changed during trace analysis; discard this result and retry")
+
+
+def _communication_inputs(root: Path) -> dict[str, Any]:
+    from gx3cli.gx3_external_inputs import find_comm_csv
+    from gx3cli.gx3_index_lite import open_existing, external_sources_from
+    from gx3cli.gx3_workspace import index_paths
+
+    lite_path, xref_path = index_paths(root)
+    paths = None
+    expected_files = None
+    externals = None
+    reason = ""
+    try:
+        with closing(open_existing(lite_path, root=root, required_tables=("external_sources",))) as con:
+            meta = dict(con.execute("select key, value from meta"))
+            selected = {name: Path(meta[name]) for name in ("refresh_csv", "unit_csv")}
+            expected_files = json.loads(meta["external_dependencies"])["files"]
+            externals = external_sources_from(con)
+            paths = selected
+    except (Exception, SystemExit) as exc:
+        reason = f"index-lite unavailable for constant pruning: {exc}"
+    if paths is None:
+        # A missing/invalid index disables only optional pruning. Legacy trace
+        # still reads the explicit environment/CWD communication inputs.
+        paths = {"refresh_csv": find_comm_csv("refresh_areas.csv").absolute(),
+                 "unit_csv": find_comm_csv("units.csv").absolute()}
+        expected_files = None
+        externals = None
+    version = dependency_snapshot(paths)
+    if expected_files is not None and version[0] != expected_files:
+        raise SystemExit("communication CSV inputs changed after index validation; retry trace")
+    return {
+        "refresh_areas": load_refresh_areas(paths["refresh_csv"]),
+        "unit_io_areas": load_unit_io_areas(paths["unit_csv"]),
+        "communication_paths": paths, "communication_version": version,
+        "external_boundaries": (externals, reason), "xref_path": xref_path,
+    }
 
 
 def load_trace_inputs(root: Path) -> TraceInputs:
@@ -648,7 +692,8 @@ def load_trace_inputs(root: Path) -> TraceInputs:
     labels = load_label_resolver(root)
     rows = load_rows(root, comments)
     resolve_label_occurrences(rows, labels)
-    return TraceInputs(Path(root).resolve(), comments, labels, rows, source_version=version)
+    return TraceInputs(Path(root).resolve(), comments, labels, rows, source_version=version,
+                       **_communication_inputs(root))
 
 
 def build_trace(
@@ -662,10 +707,11 @@ def build_trace(
     inputs: TraceInputs | None = None,
     condition_refs_provider: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    loaded_inputs_here = inputs is None
     inputs = inputs if inputs is not None else load_trace_inputs(root)
     if inputs.root != Path(root).resolve():
         raise ValueError("trace inputs belong to a different project root")
-    inputs.validate_source(content=False)
+    inputs.validate_source(content=False, communication=not loaded_inputs_here)
     comments, labels, rows = inputs.comments, inputs.labels, inputs.rows
     refs_for_logic = condition_refs_provider or condition_refs_from_logic
     drivers = driver_index(rows, include_reset=include_reset)
@@ -896,6 +942,11 @@ def build_trace(
         },
         "source_root": str(root),
         "input_sha256": inputs.source_version[0],
+        "communication_inputs": inputs.communication_version[0] if inputs.communication_version is not None else {},
+        "communication_input_source": (
+            "validated_index" if inputs.external_boundaries is not None and inputs.external_boundaries[0] is not None
+            else "legacy_fallback"
+        ),
         "max_depth": max_depth,
         "max_devices": max_devices,
         "include_reset": include_reset,
