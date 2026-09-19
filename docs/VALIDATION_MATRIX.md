@@ -14,6 +14,10 @@ GX Works3 を正解とした照合は**まだ行えていません**。合成デ
 解析器が同じ思い違いを共有した場合に気づけません。実際、印字と解析の両方が同じ
 バグを抱えていた例が過去にありました。
 
+Issue #49 の独立照合は [GX Works3 独立照合台帳](INDEPENDENT_VALIDATION_LEDGER_JA.md)
+で追跡します。`gx3-cli validation-ledger` が `Closeable: yes` を返すまでは、対応範囲
+全体をGX Works3照合済みとは扱いません。
+
 そこで、同じバイト列を**独立に組み立てた2経路**で読み、食い違いを探しています。
 `python scripts/cross_check_corpus.py <.gx3 のあるフォルダ>` で再実行できます。
 
