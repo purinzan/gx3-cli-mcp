@@ -14,32 +14,32 @@ def capture(args: list[str]) -> tuple[int, str]:
     return int(code or 0), buf.getvalue()
 
 
-def test_validation_ledger_reports_issue_49_not_closeable_yet() -> None:
+def test_validation_ledger_reports_issue_49_closeable() -> None:
     summary = summarize()
     assert summary["issue"] == 49
     assert summary["required_groups"] == len(REQUIRED_GROUPS)
-    assert summary["checked_groups"] == 1
-    assert summary["closeable"] is False
-    assert "outputs_and_multiple_writers" not in summary["missing_groups"]
-    assert "indexed_and_bit_devices" in summary["missing_groups"]
+    assert summary["checked_groups"] == len(REQUIRED_GROUPS)
+    assert summary["closeable"] is True
+    assert summary["missing_groups"] == []
+    assert all(group["evidence"] for group in summary["groups"].values())
 
 
 def test_validation_ledger_cli_json_and_text() -> None:
     code, text = capture([])
-    assert code == 1
-    assert "Issue #49 independent validation: 1/8 groups checked" in text
-    assert "Closeable: no" in text
-    assert "indexed_and_bit_devices" in text
+    assert code == 0
+    assert "Issue #49 independent validation: 8/8 groups checked" in text
+    assert "Closeable: yes" in text
+    assert "Missing groups:" not in text
 
     code, raw = capture(["--format", "json"])
-    assert code == 1
+    assert code == 0
     payload = json.loads(raw)
-    assert payload["closeable"] is False
+    assert payload["closeable"] is True
     assert payload["groups"]["outputs_and_multiple_writers"]["status"] == "checked"
 
 
 def main_tests() -> None:
-    test_validation_ledger_reports_issue_49_not_closeable_yet()
+    test_validation_ledger_reports_issue_49_closeable()
     test_validation_ledger_cli_json_and_text()
     print("validation-ledger checks passed")
 
