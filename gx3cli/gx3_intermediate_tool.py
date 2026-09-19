@@ -6,11 +6,14 @@ import sqlite3
 import time
 import uuid
 import zipfile
+from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 
 from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, format_device as _format_device, parse_device_name as _parse_device_name
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
+    HeaderOp,
+    header_tokens,
     classify_op,
     element_meta,
     extract_dim,
@@ -118,9 +121,33 @@ def read_ladder_rows(root: Path) -> dict[str, list[dict[str, object]]]:
     return result
 
 
-def operation_model(data: str) -> list[dict[str, object]]:
-    header_ops = parse_header_ops(data)
-    ce_elements = [e for e in extract_elements(data) if "s=ce{" in e]
+@dataclass
+class RowSyntax:
+    tokens: list[str]
+    header_ops: list[HeaderOp]
+    elements: list[str]
+    ce_elements: list[str]
+
+
+def parse_row_syntax(data: str) -> RowSyntax:
+    tokens = header_tokens(data)
+    elements = extract_elements(data)
+    return RowSyntax(tokens, parse_header_ops(data, tokens=tokens), elements,
+                     [e for e in elements if "s=ce{" in e])
+
+
+def row_syntax(row) -> RowSyntax:
+    """Keep syntax on its owning row; replacing data invalidates the snapshot."""
+    cached = getattr(row, "_gx3_syntax_cache", None)
+    if cached is None or cached[0] != row.data:
+        cached = (row.data, parse_row_syntax(row.data))
+        row._gx3_syntax_cache = cached
+    return cached[1]
+
+
+def operation_model(data: str, *, syntax: RowSyntax | None = None) -> list[dict[str, object]]:
+    syntax = syntax if syntax is not None else parse_row_syntax(data)
+    header_ops, ce_elements = syntax.header_ops, syntax.ce_elements
     operations = []
     ce_index = 0
     for header_index, op in enumerate(header_ops):

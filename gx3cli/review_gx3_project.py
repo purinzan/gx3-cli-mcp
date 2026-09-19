@@ -21,8 +21,8 @@ from gx3cli.extract_gx3_extended_instruction_knowledge import (
     header_tokens,
     is_op_like,
 )
-from gx3cli.gx3_arg_decode import parse_row_occurrences as decode_row_occurrences, parse_row_operations
-from gx3cli.gx3_intermediate_tool import decode_data, extract_dim, operation_model, parse_header_ops, read_ladder_rows
+from gx3cli.gx3_arg_decode import row_operations
+from gx3cli.gx3_intermediate_tool import parse_row_syntax, decode_data, extract_dim, operation_model, parse_header_ops, read_ladder_rows
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root, find_comment_db
 
 
@@ -138,48 +138,17 @@ def load_comments_for_root(root: Path) -> dict[tuple[str, int], CommentInfo]:
     comment_db = find_comment_db(root)
     if comment_db is None or not comment_db.exists():
         return {}
-    con = sqlite3.connect(comment_db)
-    cur = con.cursor()
-    comments: dict[tuple[str, int], CommentInfo] = {}
-    # A comment database that is not shaped the way this expects raises
-    # partway through, and without this the connection stayed open --
-    # which on Windows means the file cannot be removed afterwards.
-    try:
-        for dev_type, dev_code in DEVICE_CODE_BY_TYPE.items():
-            rows = cur.execute("select SEQ, DevNoLow from DEVICE_DATA where DevCode=?", (dev_code,)).fetchall()
-            for seq, dev_no in rows:
-                key = (dev_type, int(dev_no))
-                info = comments.setdefault(key, CommentInfo(exists=True))
-                c_rows = cur.execute(
-                    """
-                    select CmtNo, CmtData
-                    from COMMENT_DATA
-                    where DeviceSEQ=?
-                      and coalesce(DelFlag, 0)=0
-                      and trim(coalesce(CmtData, ''))<>''
-                    order by CmtNo
-                    """,
-                    (seq,),
-                ).fetchall()
-                texts: list[str] = []
-                for cmt_no, text in c_rows:
-                    value = str(text).strip()
-                    if not value:
-                        continue
-                    texts.append(value)
-                    if cmt_no == 5 and not info.japanese:
-                        info.japanese = value
-                    elif cmt_no == 6 and not info.english:
-                        info.english = value
-                info.all_text = " / ".join(dict.fromkeys(texts))
-    finally:
-        con.close()
-    return comments
+    from gx3cli.extract_hmi_build_info import load_comment_infos
+    return load_comment_infos(comment_db)
 
 
 def extract_title(data: str) -> str:
-    match = TITLE_RE.search(data)
-    return match.group(1).strip() if match else ""
+    from gx3cli.extract_gx3_extended_instruction_knowledge import header_tokens
+    tokens = header_tokens(data)
+    if len(tokens) == 4 and tokens[:2] == ['V1', '1']:
+        return tokens[-1]
+    m = TITLE_RE.search(data)
+    return m.group(1).strip() if m else ""
 
 
 def format_device(device_type: str, number: int) -> str:
@@ -220,9 +189,10 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
     """Decode every device argument of every operation (transfer destinations,
     buffer memory, digit-specified and indexed devices included)."""
     occs: list[DeviceOcc] = []
-    decoded, _status = decode_row_occurrences(row.data)
-    for role, _opcode, args, _consts in decoded:
-        for arg in args:
+    decoded, _status = row_operations(row)
+    for operation in decoded:
+        role = operation.role
+        for arg in operation.args:
             if arg.device_type in {"?", ""}:
                 continue
             occs.append(
@@ -259,8 +229,9 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
     return occs
 
 
-def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[LadderRow]:
-    rows_by_db = read_ladder_rows(root)
+def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo], *, rows_by_db=None) -> list[LadderRow]:
+    if rows_by_db is None:
+        rows_by_db = read_ladder_rows(root)
     out: list[LadderRow] = []
     for lddb, rows in rows_by_db.items():
         current_title = ""
@@ -273,7 +244,8 @@ def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[
                     current_title = title
             if blocktype != 0:
                 continue
-            operations = operation_model(data)
+            syntax = parse_row_syntax(data)
+            operations = operation_model(data, syntax=syntax)
             ce_count = data.count("s=ce{")
             parse_status = "exact" if ce_count == len(operations) else "partial"
             row = LadderRow(
@@ -288,6 +260,7 @@ def load_rows(root: Path, comments: dict[tuple[str, int], CommentInfo]) -> list[
                 operations=operations,
                 parse_status=parse_status,
             )
+            row._gx3_syntax_cache = (data, syntax)
             row.occurrences = parse_device_occurrences(row, comments)
             out.append(row)
     return out
@@ -644,7 +617,7 @@ def review_interlock_candidates(rows: list[LadderRow], comments: dict[tuple[str,
 def review_timer_settings(rows: list[LadderRow], comments: dict[tuple[str, int], CommentInfo]) -> list[dict[str, object]]:
     out = []
     for row in rows:
-        operations, _status = parse_row_operations(row.data)
+        operations, _status = row_operations(row)
         for operation in operations:
             opcode = operation.role
             if opcode not in {"OUT__16", "OUTH__16"}:

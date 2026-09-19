@@ -37,6 +37,7 @@ from gx3cli.gx3_ladder_logic import (
     positioned_elements,
 )
 from gx3cli.gx3_arg_decode import write_indices
+from gx3cli.gx3_ladder_print import load_print_comments, comment_text_for, operand_comment_device
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
 from gx3cli.gx3_output import add_format_argument, emit
@@ -59,6 +60,7 @@ class RungText:
     # ":2048" reads exactly like a step to someone looking for the rung in GX
     # Works3.
     step: int | None = None
+    comments: dict[str, str] | None = None
 
     @property
     def location(self) -> str:
@@ -68,7 +70,13 @@ class RungText:
 
     def to_line(self, width: int = 0) -> str:
         arrow = f"{self.opcode} {self.device}" if self.opcode not in ("", "OUT") else self.device
-        return f"{self.location:<{width}}  {self.condition} -> {arrow}"
+        line = f"{self.location:<{width}}  {self.condition} -> {arrow}"
+        if self.comments:
+            line += "  # " + ", ".join(
+                f"{device}={json.dumps(text, ensure_ascii=False)}"
+                for device, text in self.comments.items()
+            )
+        return line
 
 
 # logic_to_text() brackets each leaf so a term is unambiguous inside a larger
@@ -128,21 +136,34 @@ def written_devices(element: FlowElement) -> list[str]:
     return [devices[i] for i in sorted(indices) if i < len(devices)]
 
 
-def driver_elements(row: LadderRow, labels: LabelResolver | None = None) -> list[FlowElement]:
-    """Every element the rung writes through, in reading order.
-
-    output_elements_for() answers for one named device; a whole-program view
-    needs all of them, and a rung can drive several.
-    """
-    elements = [e for e in positioned_elements(row, labels) if written_devices(e)]
-    return sorted(elements, key=lambda element: (element.y, element.x))
-
-
 def rung_texts(
-    row: LadderRow, labels: LabelResolver | None = None, step: int | None = None
+    row: LadderRow, labels: LabelResolver | None = None, step: int | None = None,
+    comments: dict | None = None,
 ) -> list[RungText]:
     out: list[RungText] = []
-    for element in driver_elements(row, labels):
+    elements = positioned_elements(row, labels)
+    candidates = {}
+    label_names = set()
+    if comments is not None:
+        for element in elements:
+            for index, operand in enumerate(element.operands):
+                # Use decoded operand identity, never device-looking label names
+                # or quoted constants. Dynamic addresses must not borrow a base comment.
+                refs = [ref for ref in element.devices if ref.arg_index == index]
+                if any(ref.device_type == "LABEL" for ref in refs):
+                    label_names.add(operand)
+                    continue
+                if not refs:
+                    continue
+                text = comment_text_for(operand_comment_device(operand), comments)
+                if text:
+                    candidates[operand] = text
+    for name in label_names:
+        candidates.pop(name, None)
+    for element in sorted(
+        (element for element in elements if written_devices(element)),
+        key=lambda element: (element.y, element.x),
+    ):
         try:
             condition = simplify(logic_to_text(enable_logic_for_output(row, element, labels)))
         except Exception:
@@ -160,14 +181,26 @@ def rung_texts(
                     device=device,
                     condition=condition,
                     step=step,
+                    comments=visible_comments(condition, device, candidates) if comments is not None else None,
                 )
             )
     return out
 
 
-def collect(root: Path, lddb: str = "", device: str = "") -> list[RungText]:
+# Quoted constants are consumed as whole tokens and never annotated. Taking
+# whole identifiers prevents M1 from matching M10, D1.2, D1Z2 or a label suffix.
+_COMMENT_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[^\s()\[\],/<>!=&|]+')
+
+
+def visible_comments(condition: str, device: str, candidates: dict[str, str]) -> dict[str, str]:
+    names = _COMMENT_TOKEN.findall(condition) + [device]
+    return {name: candidates[name] for name in names if name in candidates}
+
+
+def collect(root: Path, lddb: str = "", device: str = "", *, comments: bool = False) -> list[RungText]:
     labels = load_label_resolver(root)
     program_map = load_program_map(root)
+    comment_map = load_print_comments(root) if comments else None
     out: list[RungText] = []
     for row in load_rows(root, {}):
         if int(row.blocktype) != 0:
@@ -175,7 +208,7 @@ def collect(root: Path, lddb: str = "", device: str = "") -> list[RungText]:
         if lddb and row.lddb != lddb:
             continue
         step = program_map.step_of(row.lddb, int(row.pos))
-        for text in rung_texts(row, labels, step):
+        for text in rung_texts(row, labels, step, comment_map):
             if device and text.device != device:
                 continue
             out.append(text)
@@ -207,6 +240,7 @@ def to_json(items: list[RungText]) -> list[dict[str, Any]]:
             "opcode": item.opcode,
             "device": item.device,
             "condition": item.condition,
+            **({"comments": item.comments} if item.comments is not None else {}),
         }
         for item in items
     ]
@@ -220,10 +254,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--program", default="", help="limit to one LDDB, e.g. 001_LDDB.db")
     parser.add_argument("--device", default="", help="limit to rungs driving this device")
     parser.add_argument("--no-titles", action="store_true", help="omit section titles")
+    parser.add_argument("--comments", action="store_true", help="append device comments on each line; include a comments map in JSON")
     add_format_argument(parser, json_shorthand=False)
     args = parser.parse_args(argv)
 
-    items = collect(Path(args.root), args.program, args.device)
+    items = collect(Path(args.root), args.program, args.device, comments=args.comments)
     if not items:
         print("no rungs found")
         return 0

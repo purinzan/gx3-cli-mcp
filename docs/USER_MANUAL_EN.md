@@ -5,6 +5,8 @@
 ladder evidence, communication boundaries, and current PLC values that you
 explicitly request.
 
+Other languages: [Japanese](USER_MANUAL_JA.md) / [Chinese](USER_MANUAL_ZH.md)
+
 ## What It Does
 
 - Finds where a device is used.

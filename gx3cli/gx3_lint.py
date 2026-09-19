@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
-from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations
+from gx3cli.gx3_arg_decode import base_opcode, parse_row_operations, row_operations
 from gx3cli.gx3_analysis_state import AnalysisState, checked, not_evaluated, summarise
 from gx3cli.gx3_xref import default_db_path as xref_db_path, open_xref_db
 from gx3cli.gx3_index_lite import default_db_path as lite_db_path, open_existing
@@ -158,7 +158,7 @@ class LintContext:
     lite: sqlite3.Connection | None = None
     link: sqlite3.Connection | None = None
     project_label: str = ""
-    row_ops_cache: dict[str, list[RowOp]] = field(default_factory=dict)
+    row_ops_cache: dict[tuple[str, int, str], list[RowOp]] = field(default_factory=dict)
     # Why a check could not run, by check name. A check that records one here
     # is reported as not evaluated rather than as zero findings.
     states: dict[str, AnalysisState] = field(default_factory=dict)
@@ -194,21 +194,21 @@ class LintContext:
         return device_comment_text(self.comments.get((device_type, number), CommentInfo()))
 
     def ops_for(self, row: LadderRow) -> list[RowOp]:
-        key = f"{row.lddb}:{row.pos}"
+        key = (row.lddb, row.pos, row.data)
         cached = self.row_ops_cache.get(key)
         if cached is None:
-            cached = decode_row_ops(row.data)
+            cached = decode_row_ops(row.data, decoded=row_operations(row))
             self.row_ops_cache[key] = cached
         return cached
 
 
-def decode_row_ops(data: str) -> list[RowOp]:
+def decode_row_ops(data: str, *, decoded=None) -> list[RowOp]:
     """Positional per-operation argument view including constants.
 
     Uses gx3_arg_decode's canonical row walk, then adapts it into the lint
     view that keeps constants at their argument index for math checks.
     """
-    operations, _status = parse_row_operations(data)
+    operations, _status = parse_row_operations(data) if decoded is None else decoded
     out: list[RowOp] = []
     for operation in operations:
         by_index = {}

@@ -24,12 +24,10 @@ from gx3cli.gx3_device_name import HEX_DEVICE_TYPES, device_radix, format_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     LABEL_TOKEN_PREFIX,
     extract_args_text,
-    extract_elements,
     element_meta,
-    header_tokens,
     top_level_items,
 )
-from gx3cli.gx3_intermediate_tool import parse_header_ops
+from gx3cli.gx3_intermediate_tool import row_syntax
 from gx3cli.extract_gx3_extended_instruction_knowledge import DEVICE_TYPES
 from gx3cli.gx3_ladder_logic import VERTICAL_RE, parse_pos
 from gx3cli.gx3_program_map import ProgramMap, load_program_map
@@ -256,10 +254,8 @@ def parse_rung(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> tuple[list[Op], list[tuple[int, int]], list[tuple[int, int, int]]]:
     """Return (ops, verticals[(x,y)], wires[(x,y,end_x)])."""
-    tokens = header_tokens(row.data)
-    header_ops = parse_header_ops(row.data)
-    raw_elements = extract_elements(row.data)
-    ce_elements = [e for e in raw_elements if "s=ce{" in e]
+    syntax = row_syntax(row)
+    tokens, header_ops, raw_elements = syntax.tokens, syntax.header_ops, syntax.elements
 
     ops: list[Op] = []
     wires: list[tuple[int, int, int]] = []
@@ -293,7 +289,7 @@ def parse_rung(
             else len(tokens)
         )
         arg_tokens = tokens[hop.token_index + 1 : next_op_token]
-        operands = display_operands(raw_args, arg_tokens, labels)
+        operands = display_operands(raw_args, arg_tokens, labels, re.findall(r"as\{vt=([^}]+)", raw))
         note = ""
         if ":note=" in raw and arg_tokens:
             note = arg_tokens[-1]
@@ -355,51 +351,30 @@ def box_cells(operands: list[str]) -> int:
 def load_print_comments(root: Path) -> dict[tuple[str, int], str]:
     """Display comments exactly as stored (no strip: GX wraps raw text,
     so leading/trailing fullwidth spaces are layout-significant)."""
-    import sqlite3
-
+    from gx3cli.gx3_comment_store import read_comment_records, preferred_text
     comment_db = find_comment_db(root)
     if comment_db is None or not comment_db.exists():
         return {}
-    con = sqlite3.connect(f"file:{comment_db}?mode=ro", uri=True)
-    cur = con.cursor()
-    type_by_code = {code: dev_type for dev_type, code in DEVICE_CODE_BY_TYPE.items()}
-    # In the comment DB ZR comments are stored under DevCode 40 (verified
-    # against a real GX Works3 print); plain code 35 rows do not appear.
-    type_by_code[40] = "ZR"
-    type_by_code[101] = "P"  # pointer comments
-    comments: dict[tuple[str, int], str] = {}
-    for seq, dev_code, ext_code, ext_no, dev_no in cur.execute(
-        "select SEQ, DevCode, ExtCode, ExtNo, DevNoLow from DEVICE_DATA"
-    ).fetchall():
-        if int(ext_code or 0) == 208:  # buffer memory U<unit>\G<no>
-            dev_type = f"U{int(ext_no):X}G"
-        else:
-            dev_type = type_by_code.get(int(dev_code), "")
-        if not dev_type:
-            continue
-        by_no: dict[int, str] = {}
-        for cmt_no, text in cur.execute(
-            """
-            select CmtNo, CmtData from COMMENT_DATA
-            where DeviceSEQ=? and coalesce(DelFlag, 0)=0
-              and coalesce(CmtData, '')<>''
-            order by CmtNo
-            """,
-            (seq,),
-        ).fetchall():
-            by_no.setdefault(int(cmt_no), str(text))
-        value = by_no.get(5) or by_no.get(6) or (next(iter(by_no.values())) if by_no else "")
+    comments = {}
+    for name, key, texts in read_comment_records(comment_db):
+        value = preferred_text(texts)
         if value:
-            comments[(dev_type, int(dev_no))] = value
-    con.close()
+            comments[name] = value
+            if key is not None:
+                comments[key] = value
     return comments
 
 
 def comment_text_for(device: str, comments: dict[tuple[str, int], str]) -> str:
-    parsed = parse_display_device(device)
-    if parsed is None:
-        return ""
-    return comments.get(parsed, "")
+    from gx3cli.gx3_comment_store import canonical_comment_name
+    name = canonical_comment_name(device.lstrip('#'))
+    if name is None:
+        return ''
+    if name in comments:
+        return comments[name]
+    if '.' in name:
+        return ''
+    return comments.get(parse_display_device(name), '')
 
 
 def live_value_label(value: object) -> str:
@@ -1111,7 +1086,8 @@ def resolve_lddb(root: Path, program: str, pm: ProgramMap) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Render a ladder program in GX Works3 print-text layout."
+        description="Render a ladder program in GX Works3 print-text layout.",
+        epilog="For short condition/output text, use rung-text; for dependencies, use trace-device --compact. Filter large diagrams with --device, --section or --pos-range. If your client truncates stdout, save with -o FILE and read the needed lines.",
     )
     parser.add_argument("program", help="program name (POU / program file) or LDDB file name")
     parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder")

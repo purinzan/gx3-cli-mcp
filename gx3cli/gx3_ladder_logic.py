@@ -13,9 +13,9 @@ from gx3cli.gx3_device_name import format_device as _format_device, parse_device
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
     element_meta,
     extract_dim,
-    extract_elements,
 )
-from gx3cli.gx3_arg_decode import parse_row_operations
+from gx3cli.gx3_arg_decode import row_operations
+from gx3cli.gx3_intermediate_tool import row_syntax
 from gx3cli.gx3_operand_display import display_operands, instruction_opcode
 from gx3cli.gx3_operand_parse import parse_operands
 from gx3cli.review_gx3_project import LadderRow
@@ -239,8 +239,8 @@ def device_refs_from_args(args: list[Any]) -> list[DeviceRef]:
 def positioned_elements(
     row: LadderRow, labels: LabelResolver | None = None
 ) -> list[FlowElement]:
-    operations, _status = parse_row_operations(row.data, labels)
-    raw_elements = extract_elements(row.data)
+    operations, _status = row_operations(row, labels)
+    raw_elements = row_syntax(row).elements
     elements: list[FlowElement] = []
     op_index = 0
 
@@ -270,7 +270,7 @@ def positioned_elements(
             category = str(row.operations[op_index].get("category", "")) if op_index < len(row.operations) else ""
 
         devices = device_refs_from_args(operation.args)
-        operands = display_operands(operation.raw_args, operation.arg_tokens, labels)
+        operands = display_operands(operation.raw_args, operation.arg_tokens, labels, re.findall(r"as\{vt=([^}]+)", raw))
         operand_kinds = parse_operands(operation.raw_args, operation.arg_tokens)
         elements.append(
             FlowElement(

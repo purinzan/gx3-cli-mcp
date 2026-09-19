@@ -51,6 +51,7 @@ COMMAND_CATEGORIES = [
 
 
 COMMANDS: dict[str, CommandSpec] = {
+    "csv-export": CommandSpec("gx3_csv_export.py", "export saved GX Works3 instruction CSV or analysis tables", "Reports"),
     "review": CommandSpec("review_gx3_project.py", "generate static review CSV reports", "Reports"),
     "trace-device": CommandSpec("trace_gx3_device_dependencies.py", "trace upstream dependencies for one device", "Analysis"),
     "data-flow": CommandSpec("gx3_data_flow.py", "build argument-level source-to-destination value-flow edges", "Analysis"),
@@ -99,9 +100,11 @@ COMMANDS: dict[str, CommandSpec] = {
     "timing-chart": CommandSpec("gx3_timing_chart.py", "generate generic handoff timing drafts from link-map and xref DBs", "Analysis"),
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates", "Analysis"),
     "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness", "Getting Started"),
+    "doctor-acceptance": CommandSpec("gx3_doctor_acceptance.py", "show Doctor project-health acceptance status for Issue #135", "Diagnostics"),
     "guide": CommandSpec("gx3_guide.py", "read the project and name the commands that follow from what is in it", "Getting Started"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data", "Reports"),
     "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures", "Diagnostics"),
+    "validation-ledger": CommandSpec("gx3_validation_ledger.py", "show GX Works3 independent-validation evidence and missing groups", "Diagnostics"),
     "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos", "Getting Started"),
     "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report", "Reports"),
     "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic", "Reports"),
@@ -386,16 +389,33 @@ def print_help() -> None:
                 "  gx3-cli context [--root ROOT]",
                 "  gx3-cli quick-device DEVICE [extra trace args...]",
                 "  gx3-cli <command> [command args...]",
-                "  gx3-cli --no-color <command> [command args...]",
-                "  gx3-cli all-reports [--root ROOT] [--prefix PREFIX]",
-                "  gx3-cli doctor --root ROOT",
-                "  gx3-cli ai-context DEVICE --root ROOT --question \"...\"",
+                "  gx3-cli help <command>",
+                "  gx3-cli guide --root <project>",
                 "",
                 "Global options:",
                 "  --no-color     disable ANSI color output; NO_COLOR is also honored",
                 "",
-                "Not sure where to start? `gx3-cli guide --root ROOT` reads the project",
-                "and names the commands that follow from what is actually in it.",
+                "Run these first, in order:",
+                "  1. doctor --root <project>",
+                "       confirm the project reads",
+                "  2. xref build --root <project>",
+                "       required by almost everything below",
+                "  3. rung-text --root <project> --comments",
+                "       one line per rung, with / for B contacts and every device comment;",
+                "       use this to read logic",
+                "  4. trace-device <coil> --root <project> --compact --ja",
+                "       walks upstream to physical inputs and states what it could not model",
+                "",
+                "Then, if needed:",
+                "  ladder-layout --root <project> --format svg",
+                "       ladder image for human-facing documents only",
+                "  semantic-diff <old-project> <new-project>",
+                "       compare two revisions",
+                "  change-impact",
+                "       use semantic-diff, xref downstream, or impact-add-nc depending on the change",
+                "",
+                "For project-specific advice:",
+                "  gx3-cli guide --root <project>",
                 "",
                 *command_group_lines(),
                 "",
@@ -631,7 +651,7 @@ def hoist_global_options(argv: list[str]) -> list[str]:
 def run_root_command(command: str, spec: CommandSpec, argv: list[str]) -> int:
     if command in GLOBAL_ROOT_BEFORE_SUBCOMMAND:
         argv = hoist_global_options(argv)
-    if command == "doctor":
+    if command in {"doctor", "csv-export"}:
         argv = normalize_project_options(argv)
     else:
         argv = normalize_project_options(normalize_root_options(argv))

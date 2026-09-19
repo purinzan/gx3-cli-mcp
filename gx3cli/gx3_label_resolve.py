@@ -28,7 +28,7 @@ of a structure label can cover several devices.
 """
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 # ColumnDataTbl.ColumnID, from ColumnDefineMst's ordering.
@@ -80,7 +80,20 @@ class LabelResolver:
         status: str = LABELS_READ,
         reason: str = "",
     ) -> None:
-        self._entries = entries
+        # The label table is part of identity. A display name alone can refer
+        # to different locals (or a global and a local) in the same project.
+        scopes: dict[str, set[str]] = {}
+        for (label_id, _row), ref in entries.items():
+            scopes.setdefault(ref.name, set()).add(str(label_id))
+        self.ambiguous_names = {
+            name: sorted(f"{name}@{scope}" for scope in ids)
+            for name, ids in scopes.items() if len(ids) > 1
+        }
+        self._entries = {
+            key: replace(ref, name=f"{ref.name}@{key[0]}")
+            if ref.name in self.ambiguous_names else ref
+            for key, ref in entries.items()
+        }
         self.status = status
         self.reason = reason
         # Tokens asked for and not found. A caller that shows a rung can say

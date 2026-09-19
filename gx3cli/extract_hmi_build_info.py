@@ -25,23 +25,7 @@ OUT_SINGLE_ACTION = default_output_path("single_action_candidates", "csv")
 OUT_LADDER_OCC = default_output_path("ladder_device_occurrences", "csv")
 OUT_SUMMARY = default_output_path("hmi_build_info_summary", "txt")
 
-DEVICE_CODE_BY_TYPE = {
-    "M": 1,
-    "SM": 2,
-    "L": 3,
-    "X": 16,
-    "Y": 17,
-    "B": 20,
-    "D": 32,
-    "SD": 33,
-    "ZR": 35,
-    "W": 40,
-    "R": 48,
-    "SW": 49,
-    "T": 66,
-    "C": 70,
-    "ST": 74,
-}
+from gx3cli.gx3_comment_store import DEVICE_CODE_BY_TYPE, read_comment_records
 
 TITLE_RE = re.compile(r"^V1:\d+:\d+:(.*?):st\{")
 
@@ -109,42 +93,25 @@ def hex_candidate(device_type: str, number: int) -> str:
 
 
 def load_comments() -> dict[tuple[str, int], CommentInfo]:
-    con = sqlite3.connect(COMMENT_DB)
-    cur = con.cursor()
-    comments: dict[tuple[str, int], CommentInfo] = {}
+    return load_comment_infos(COMMENT_DB)
 
-    for dev_type, dev_code in DEVICE_CODE_BY_TYPE.items():
-        rows = cur.execute("select SEQ, DevNoLow from DEVICE_DATA where DevCode=?", (dev_code,)).fetchall()
-        for seq, dev_no in rows:
-            key = (dev_type, int(dev_no))
-            info = comments.setdefault(key, CommentInfo(exists=True))
-            c_rows = cur.execute(
-                """
-                select CmtNo, CmtData
-                from COMMENT_DATA
-                where DeviceSEQ=?
-                  and coalesce(DelFlag, 0)=0
-                  and trim(coalesce(CmtData, ''))<>''
-                order by CmtNo
-                """,
-                (seq,),
-            ).fetchall()
-            texts: list[str] = []
-            for cmt_no, text in c_rows:
-                value = str(text).strip()
-                if not value:
-                    continue
-                texts.append(value)
-                if cmt_no == 5 and not info.japanese:
-                    info.japanese = value
-                elif cmt_no == 6 and not info.english:
-                    info.english = value
-            info.all_text = " / ".join(dict.fromkeys(texts))
-    con.close()
+
+def load_comment_infos(path):
+    comments = {}
+    for name, key, texts in read_comment_records(path):
+        if key is None:
+            continue
+        values = list(dict.fromkeys(v.strip() for v in texts.values() if v.strip()))
+        comments[key] = CommentInfo(exists=True, japanese=texts.get(5, '').strip(),
+                                    english=texts.get(6, '').strip(), all_text=' / '.join(values))
     return comments
 
 
 def extract_title(data: str) -> str:
+    from gx3cli.extract_gx3_extended_instruction_knowledge import header_tokens
+    tokens = header_tokens(data)
+    if len(tokens) == 4 and tokens[:2] == ['V1', '1']:
+        return tokens[-1]
     m = TITLE_RE.search(data)
     return m.group(1).strip() if m else ""
 

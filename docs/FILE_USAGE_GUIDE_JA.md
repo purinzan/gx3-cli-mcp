@@ -9,7 +9,8 @@
 | 目的 | 入口 |
 |---|---|
 | インストール、MCP 登録 | `README.md`, `mcp_client_config.json`, `mcp_client_config_console_script.json` |
-| エージェント運用 | `AGENT_USAGE_JA.md` |
+| エージェント運用 | `USER_MANUAL_ZH.md` | 中国語圏利用者向けのインストール、最初の3コマンド、主要ワークフロー、`live-read` のオフライン2モード。 |
+| `AGENT_USAGE_JA.md` |
 | CLI 全体一覧 | `gx3-cli list` |
 | コマンド詳細 | `gx3-cli help <command> [subcommand]` |
 | MCP tool 一覧 | MCP `tools/list` |
@@ -20,6 +21,7 @@
 | ファイル | 役割 |
 |---|---|
 | `README.md` | GitHub のトップ説明。インストール、MCP 設定、基本ワークフロー、全 Markdown へのリンクを持つ。 |
+| `README.zh-CN.md` | 中国語圏利用者向けのトップ説明。`README.md` と同じ導入、コマンド表、能力境界、ライセンス要約を中国語で持つ。 |
 | `CONTRIBUTING.md` | クローンした利用者/開発者向けの Windows-first PR 手順。ソース問題を再現、検体化、修正、検証して PR する流れ。 |
 | `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
@@ -74,6 +76,8 @@
 | `test_gx3_change_impact.py` | 接点変更が駆動先まで到達すること、コメントのみ・キャンバス寸法のみの変更に影響一覧を付けないこと、要素の移動は保守的に論理変更として扱うこと、解釈できないラングを含む場合に到達先が不完全である旨を出すことを検査する。 |
 | `test_gx3_flow_consumers.py` | `graph --type device-flow` が値の出所を辿れること（ワードデバイスは以前まったく辿れなかった）、`lint` の multi-writer が分かる範囲で値の出所を併記すること、辺が無い場合は従来どおりの表示に戻ることを検査する。さらに `external-value-source` チェックが、ラダーが書かないワードからの転送を「外部との境界」として挙げること、リフレッシュエリアのデバイスを除外すること、リフレッシュ情報が無い場合は件数を水増しせず未評価とすることを検査する。 |
 | `test_gx3_flow_in_xref.py` | xref に値の流れ（source→destination）が格納され、MOV が1本の有向辺、BMOV が範囲と語数、二項演算が read-modify-write として記録されること、未知命令に辺を作らないこと、`downstream` が転送（via OPCODE）と同一ラング上の共起（same-rung）を区別することを検査する。 |
+| `test_gx3_shared_row_analysis.py` | CSV・lint・描画・条件解析の共有読取りと、行変更・ラベル変更・部分解析の保持を検査する。 |
+| `test_gx3_shared_xref_decode.py` | xrefとdata-flowの共有読取りを検査。回路ごとの復号が1回であること、辺の全列の一致、partialの保持と再読取りの不在を確認する。 |
 | `test_gx3_query_statistics.py` | 索引・xref が問い合わせ統計を持って作られること、統計の無い既存DBは作り直さずその場で修復されること、遅かった問い合わせでプランナが `access` ではなく `device` の索引を選ぶことを検査する。dead-logic が75秒かかった退行を防ぐ。 |
 | `test_gx3_logic_budget.py` | 論理式の展開に上限があり、越えたときに黙って短い条件を返さず `[TOO LARGE]` として数えられること、分岐の同一判定が子の識別子から作られることを検査する。実プロジェクトの1ラングが3355万ノード・146秒に膨らんだ退行を防ぐ。 |
 | `test_gx3_ladder_report.py` | 各デバイスにプロジェクト全体の件数が併記されること、描画本数が不足するとき打切りと表示されること、外部リソースを読まない単一ファイルであること、現在値を知っているかのような表示をしないことを検査する。 |
@@ -104,6 +108,8 @@
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
+| `INDEPENDENT_VALIDATION_LEDGER_JA.md` | #49 のGX Works3独立照合台帳。必須8群、登録済み外部根拠、`validation-ledger` コマンドで見るクローズ可否を説明する。 |
+| `DOCTOR_ACCEPTANCE_JA.md` | #135 のDoctor初期受入台帳。12項目の実装・根拠テスト・`doctor-acceptance` コマンドで見るクローズ可否を説明する。 |
 | `GX_WORKS3_FEATURE_MATRIX_JA.md` | GX Works3 標準機能との対応状況、機能差、採用/保留/対象外、実装優先順位を整理した比較表。 |
 | `GITHUB_PROJECT_REVIEW_JA.md` | 関連する GX Works3/GX3/MELSEC GitHub プロジェクトの調査結果と設計上の取り込み候補。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
@@ -133,6 +139,7 @@
 | `gx3_mcp_fs_guard.py` | internal | MCP subprocess only | MCP が起動した Python のファイル作成・変更を `GX3_MCP_OUTPUT_DIR` 内へ閉じ込め、外部 SQLite を読み取り専用にする。 |
 | `gx3_cli.py` | `gx3-cli` | `gx3_run_command` | CLI dispatcher、help/list、query 系ラッパー。 |
 | `gx3_doctor.py` | `doctor` | `gx3_run_command` | 解析対象、index、xref DB、link-map の状態確認。 |
+| `gx3_doctor_acceptance.py` | `doctor-acceptance` | `gx3_run_command` | #135 のDoctor project-health初期受入12項目について、実装・根拠テスト・残件を出す。`Closeable: yes` なら初期受入を閉じられる。 |
 | `gx3_ladder_report.py` | `ladder-report` | `gx3_run_command` | オフラインで開ける単一HTML。中央にラダーSVG、左にデバイス・コメント検索、右に選択デバイスの読出・書込一覧と根拠。各デバイスに「この画面での件数」と「プロジェクト全体の件数」を併記し、描画本数が足りない場合は打切りとして表示する。実測値は扱わず、接点をONとして着色しない。`--all` は全プログラム分のページを相互リンク付きで出力し、他プログラムの読み書きへ移動できるようにする。リンク先ラングがページに無い場合はその旨を表示する。 |
 | `gx3_explore.py` | `explore` | `gx3_run_command` | 目的別の4つの入口（overview / why / concerns / changed）。新しい解析はせず、索引を自動準備して既存コマンドを問いに沿った順で実行し、共通のヘッダ（対象・入力指紋）の下にまとめる。時間切れの項目は「取得できなかった」ではなく「終わらなかった」と区別して報告する。 |
 | `gx3_xref_read.py` | — | xref を読む全コマンド | xref をデバイスで引くための唯一の境界。`xref.device`（命令が名乗るデバイス）と `member_device`（その occurrence が覆うデバイス）を分けて扱い、member 表が無い古いDBでは完全一致へ縮退する。読み手が範囲規約を知らなくても正しい答えしか取れないようにする。 |
@@ -182,6 +189,7 @@
 | `gx3_audit.py` | `audit` | `gx3_run_command` | doctor/index/xref/lint/dead-logic をまとめる。 |
 | `gx3_support_bundle.py` | `support-bundle` | `gx3_run_command` | ラダー本文を含めない診断 ZIP。 |
 | `gx3_failure_corpus.py` | `failure-corpus` | CLI only | 解析失敗した GX3 を回帰検体として保存し、形式検出/schema/doctor/xref/ladder-print/失敗コマンド再実行を回す。 |
+| `gx3_validation_ledger.py` | `validation-ledger` | `gx3_run_command` | #49 のGX Works3独立照合について、必須8群のうち外部根拠つきで確認済みのものと残件を出す。`Closeable: yes` になるまではIssueを閉じない。 |
 | `gx3_reliability_report.py` | `reliability-report` | `gx3_run_command` | parse gap/decoder coverage の 1 ページ報告。 |
 | `gx3_coverage.py` | `coverage`, `instruction-coverage`, `device-coverage` | `gx3_run_command` | 命令/デバイス知識の coverage。 |
 | `extract_gx3_extended_instruction_knowledge.py` | `extended-instructions` | `gx3_run_command` | 拡張命令/デバイス使用知識の抽出。 |
@@ -199,6 +207,7 @@
 | `gx3_ladder_layout.py` | 座標を視覚の正、既存 operand/comment 解読を意味の正として合流し、ビューアや画像生成向けの JSON/SVG を作る。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_project_config.py` | ラダー以外のプロジェクト情報を1コマンドで読む。CPU・ユニット構成・アドレス・接続方法・モジュール設定・モーションと、読めないものとその理由を出す。md ではなく実行して得る形にしてある。 |
+| `gx3_maintainability_fixture.py` | #135 用の非機密good/bad保守性fixture生成。Y0/Y1のfield-output挙動は揃えたまま、bad側にコメント欠落、重複出力、ワード複数writer、SET/RST分離、曖昧コメント、未使用残骸を入れる。 |
 | `gx3_input_identity.py` | 解析対象の入力（ラダー・コメント・ラベル・ユニット設定・CPUパラメータ）をまとめて指紋化する。成果物がどの入力から作られたかを記録・照合し、別プロジェクトの索引で答えることを防ぐ。 |
 | `gx3_analysis_state.py` | 結果の状態を表す共通語彙（確認済み / 一部未解釈 / 未対応 / 打切り / 評価不能 / 実測値なし）と理由・次の手順。「検出0件」と「評価できなかった」を区別するための土台。集約時は代表状態に加えて個々の制約を constraints に保持し、JSON往復や再集約でも段階・理由・位置を失わない。 |
 | `gx3_index_contract.py` | 派生xref/liteの用途別の必須表・列を、照会やworkspace再利用の前に検証する。行内容の完全性・元言語の対応範囲の証明とは別の構造契約。 |
@@ -217,8 +226,10 @@
 | `test_gx3_rung_text.py` | 回路が「条件 -> 出力」として読め、印刷レイアウトより桁違いに小さいことを検査する。 |
 | `gx3_roundtrip.py` | 各回路を読んで AST 化し再生成して、元と一致するか検査する。デコーダの自己申告 (`parse_status`) に頼らない唯一の外部検証。 |
 | `test_gx3_roundtrip.py` | 合成プロジェクトの全回路が再生成で一致することを検査する。読み取りが変質したら落ちる。 |
+| `test_gx3_validation_ledger.py` | #49 の独立照合台帳が必須8群を持ち、現時点では1/8のみ確認済みとして `Closeable: no` を返すことを検査する。 |
 | `test_gx3_semantic_diff.py` | 配線・接点属性・未解釈オペランドの変更が意味差分から隠れないことを検査する。 |
 | `gx3_label_resolve.py` | `LabelData.db` を読み、ラダーの `_lid/<LabelID>/<行>` をラベル名・クラス・割付デバイスへ解決する。 |
+| `test_gx3_label_scope.py` | 別ラベル表の同名ラベルがtrace/xrefで混在しないことを実CLIで検査する。 |
 | `test_gx3_label_resolve.py` | ラベル方式のプログラムがラベル名として解読されることを検査する。xref が空になり下流全部が沈黙する退行を防ぐ。 |
 | `gx3_instruction_table.py` | 命令の書込み先オペランド位置。マニュアルのオペランド表 (SH-081226 ほか) から生成した数値データで、手編集しない。 |
 | `test_gx3_instruction_table.py` | 書込み先オペランド位置がマニュアルどおりであることを検査する。手書き表が個数オペランドを書込み先と誤判定していた退行を防ぐ。 |
@@ -249,7 +260,9 @@
 | `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
+| `test_gx3_doctor_acceptance.py` | #135 のDoctor受入台帳が12/12 checked、`Closeable: yes` を返すことを検査する。 |
 | `test_gx3_doctor_next_steps.py` | doctor の WARN/ERROR が次の一手を出すこと。 |
+| `test_gx3_doctor_maintainability_profiles.py` | #135 のDoctor初期受入。good/bad保守性fixtureを実際のworkspace/index/xref/project-health経路に通し、bad側が低スコアになり、主要Doctor findingが検出されることを検査する。 |
 | `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |
 | `test_gx3_live_read.py` | MC Protocol/SLMP 3E binary read frame と応答 decode。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
@@ -266,3 +279,55 @@
 | プロジェクト全体を棚卸ししたい | `audit` -> `project-survey` -> `reliability-report` |
 | 解析失敗を再発防止したい | `failure-corpus capture` -> `failure-corpus run` |
 | サポートへ渡す | `support-bundle` |
+
+- `gx3cli/gx3_comment_store.py`: コメントDBのデバイス種別・ビット・ユニットを区別する共通読取り。
+- `tests/test_gx3_comment_identity.py`: 合成SQLiteを使ったコメント識別の回帰テスト。
+
+- `gx3cli/gx3_csv_export.py`: 保存済みGX Works3命令CSVと、選択可能な解析CSV・コメント・ラベル補助表の出力。
+- `tests/test_gx3_csv_export.py`: 合成GX3からCSVを出すCLIと原本保護の検査。
+
+- `gx3cli/gx3_native_csv.py`: RCPUの保存命令列・StepInfo・回路図の照合とGX Works3 CSV行への復号。未知形式は拒否。
+- `tests/test_gx3_native_csv.py`: 合成アーカイブからCLI経由の命令CSV出力、ステップ・分岐・修飾子・不一致時の出力中止を検査。
+
+
+## 解析結果を短く読む
+
+概要は `rung-text`、依存条件は `trace-device --compact`、図の確認は
+範囲を絞った `ladder-print` を使います。以下のファイル名・デバイスは説明用です。
+
+```powershell
+gx3-cli rung-text --root demo.gx3 --program 001_LDDB.db --comments
+gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact --max-depth 4
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --list-sections
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --device M100
+gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
+```
+
+- `rung-text --device` は指定デバイスを駆動する出力で絞ります。
+  `ladder-print --device` は読取りを含む参照回路で絞ります。
+- セクション名で選ぶ場合は `--section "タイトル"` を使います。
+  `--pos-range` は内部位置 pos の範囲です。GX Works3 の表示ステップ番号と
+  同一とは限りません。
+- 呼び出し側で出力が切れる場合は `-o ladder.txt` で保存し、必要な行を読みます。
+  出力の切捨てだけで CLI の失敗と判断せず、終了状態とエラーを確認します。
+- `doctor --warn-only` は「警告だけ表示」ではなく「ERROR があっても終了コードを
+  0 にする」指定です。OK 行も表示されます。スクリプト存在確認が不要な場合は
+  `--no-script-check` を追加できます。終了コードだけで正常と判断しないでください。
+- xref の Note は解析範囲の制約です。繰り返し表示されても解釈から除外せず、
+  同じ証拠の再取得や不要な SQL 列の重複取得を減らします。
+
+### rung-text のデバイスコメント
+
+`--comments` を付けると、条件と出力に表示されたデバイスのコメントを
+各行の末尾に `# X0="開始条件", M0="運転許可"` の形で添えます。
+同じデバイスは1行につき1回表示し、コメント内の改行はエスケープして1行を保ちます。
+省略時は従来の短い表示です。`--format json --comments` では
+`condition` と `device` を変更せず、デバイス名からコメントへの `comments` 対応表を追加します。
+
+コメントがないデバイス、デバイス名に似たラベル、動的アドレスには推測で補いません。
+ビット指定にはそのビットのコメントを使い、ワードのコメントを流用しません。
+桁指定のコメントは先頭デバイスのものです。表示に現れない命令引数を一覧する機能ではありません。
+
+### ラダーSVGの命令幅
+
+命令枠は命令名1セル＋各引数1セル（MOVは3セル、SETは2セル、TOは5セル）で描画し、右母線までの余白で引き伸ばしません。MOVなどの出力命令は固定幅のまま右母線に揃え、元の入力位置から配線で接続します。接点側の命令は元の位置を維持します。列幅の変更やFBの個別レイアウトの完全再現は対象外です。比較資料：三菱電機 [GX Works3 Operating Manual](https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081215eng/sh081215engaq.pdf)、印刷ページ351の画面例、353のセル表示の説明。

@@ -150,12 +150,13 @@ def summarize_change(old_data: str, new_data: str) -> str:
 
 
 def comment_map(root: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for (dev_type, number), info in load_comments_for_root(root).items():
-        text = info.japanese or info.english or info.all_text
-        if text:
-            out[_format_device(dev_type, number)] = text
-    return out
+    from gx3cli.gx3_comment_store import read_comment_records, preferred_text
+    from gx3cli.gx3_project_paths import find_comment_db
+    path = find_comment_db(root)
+    if path is None:
+        return {}
+    return {name: preferred_text(texts) for name, _, texts in read_comment_records(path)
+            if preferred_text(texts)}
 
 
 def _config_payload(state: str, data: object | None = None, detail: str = "") -> dict[str, object]:

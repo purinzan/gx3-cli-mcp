@@ -66,3 +66,60 @@ if __name__=='__main__':
     test_strings_are_header_literals_including_empty_and_token_like_values()
     test_index_width_and_indirection_survive_with_following_operands()
     print('display fidelity checks passed')
+
+
+def test_nested_modifier_order_and_typed_constants():
+    bit = 'M{b='+dev(12)+':m=c{s=#:v=0}}'
+    indexed = 'M{b='+dev(12)+':m='+dev(1)+'}'
+    for raw,tokens,expected in [
+        ('M{b='+bit+':m='+dev(1)+'}',['ZR','Dots','Zs'],'ZR12.0Z1'),
+        ('M{b='+indexed+':m=c{s=#:v=0}}',['ZR','Zs','Dots'],'ZR12Z1.0'),
+    ]:
+        ops,_,_=parse_rung(row('MOV',tokens+['D'],['A16','A16'],[raw,dev(30)]))
+        assert ops[0].operands==[expected,'D30'],ops[0].operands
+        from gx3cli.gx3_arg_decode import decode_args
+        occurrences=decode_args([raw,dev(30)],tokens+['D'],'MOV')
+        assert occurrences[0].device=='ZR12'
+        assert 'bit=K0' in occurrences[0].detail and 'Z1 indexed' in occurrences[0].detail
+        assert occurrences[1].device=='Z1' and occurrences[-1].device=='D30'
+    for kind,expected in [('A16s','HFFFF'),('A32s','HFFFFFFFF')]:
+        ops,_,_=parse_rung(row('MOV',['H_1','D'],[kind,kind],['c{s=#:v=-1}',dev(30)]))
+        assert ops[0].operands[0]==expected
+    ops,_,_=parse_rung(row('FROM',['U','D'],['A16','A16'],[dev(42),dev(30)]))
+    assert ops[0].operands==['U2A','D30']
+
+
+def test_delimiter_literals_and_multiline_titles():
+    from gx3cli.review_gx3_project import extract_title
+    for literal in [':', 'a:b', ':cb{']:
+        ops,_,_=parse_rung(row('$MOV',['String',literal,'"'+literal+'"','D'],['Ass','Ass'],['c{s=#:v=#:t=#}',dev(30)]))
+        assert ops[0].operands==['"'+literal+'"','D30'],ops[0].operands
+    from gx3cli.extract_gx3_extended_instruction_knowledge import header_tokens
+    literal='A😀:B'
+    units=len(literal.encode('utf-16-le'))//2
+    assert header_tokens(f'V1:1:{units}:{literal}:st{{}}')[-1]==literal
+    text=' Heading:\nsecond line '
+    assert extract_title(f'V1:1:{len(text)}:{text}:st{{}}')==text
+
+
+if __name__=='__main__':
+    test_nested_modifier_order_and_typed_constants()
+    test_delimiter_literals_and_multiline_titles()
+
+
+def test_buffer_modifier_order_matches_occurrence_name():
+    from gx3cli.gx3_arg_decode import decode_args
+    base='B{b='+dev(42)+':e='+dev(10)+':vt=i}'
+    indexed='M{b='+base+':m='+dev(0)+'}'
+    raw='M{b='+indexed+':m=c{s=#:v=13}}'
+    tokens=['Us','G','Zs','Dots','D']
+    ops,_,_=parse_rung(row('MOV',tokens,['A16','A16'],[raw,dev(30)]))
+    occurrences=decode_args([raw,dev(30)],tokens,'MOV')
+    assert ops[0].operands==['U2A\\G10Z0.D','D30']
+    assert occurrences[0].device==ops[0].operands[0]
+    assert 'indexed' in occurrences[0].detail and 'bit=13' in occurrences[0].detail
+    assert occurrences[1].device=='Z0'
+
+
+if __name__=='__main__':
+    test_buffer_modifier_order_matches_occurrence_name()
