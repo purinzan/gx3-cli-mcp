@@ -108,6 +108,7 @@
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
+| `INDEPENDENT_VALIDATION_LEDGER_JA.md` | #49 のGX Works3独立照合台帳。必須8群、登録済み外部根拠、`validation-ledger` コマンドで見るクローズ可否を説明する。 |
 | `GX_WORKS3_FEATURE_MATRIX_JA.md` | GX Works3 標準機能との対応状況、機能差、採用/保留/対象外、実装優先順位を整理した比較表。 |
 | `GITHUB_PROJECT_REVIEW_JA.md` | 関連する GX Works3/GX3/MELSEC GitHub プロジェクトの調査結果と設計上の取り込み候補。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
@@ -186,6 +187,7 @@
 | `gx3_audit.py` | `audit` | `gx3_run_command` | doctor/index/xref/lint/dead-logic をまとめる。 |
 | `gx3_support_bundle.py` | `support-bundle` | `gx3_run_command` | ラダー本文を含めない診断 ZIP。 |
 | `gx3_failure_corpus.py` | `failure-corpus` | CLI only | 解析失敗した GX3 を回帰検体として保存し、形式検出/schema/doctor/xref/ladder-print/失敗コマンド再実行を回す。 |
+| `gx3_validation_ledger.py` | `validation-ledger` | `gx3_run_command` | #49 のGX Works3独立照合について、必須8群のうち外部根拠つきで確認済みのものと残件を出す。`Closeable: yes` になるまではIssueを閉じない。 |
 | `gx3_reliability_report.py` | `reliability-report` | `gx3_run_command` | parse gap/decoder coverage の 1 ページ報告。 |
 | `gx3_coverage.py` | `coverage`, `instruction-coverage`, `device-coverage` | `gx3_run_command` | 命令/デバイス知識の coverage。 |
 | `extract_gx3_extended_instruction_knowledge.py` | `extended-instructions` | `gx3_run_command` | 拡張命令/デバイス使用知識の抽出。 |
@@ -221,6 +223,7 @@
 | `test_gx3_rung_text.py` | 回路が「条件 -> 出力」として読め、印刷レイアウトより桁違いに小さいことを検査する。 |
 | `gx3_roundtrip.py` | 各回路を読んで AST 化し再生成して、元と一致するか検査する。デコーダの自己申告 (`parse_status`) に頼らない唯一の外部検証。 |
 | `test_gx3_roundtrip.py` | 合成プロジェクトの全回路が再生成で一致することを検査する。読み取りが変質したら落ちる。 |
+| `test_gx3_validation_ledger.py` | #49 の独立照合台帳が必須8群を持ち、現時点では1/8のみ確認済みとして `Closeable: no` を返すことを検査する。 |
 | `test_gx3_semantic_diff.py` | 配線・接点属性・未解釈オペランドの変更が意味差分から隠れないことを検査する。 |
 | `gx3_label_resolve.py` | `LabelData.db` を読み、ラダーの `_lid/<LabelID>/<行>` をラベル名・クラス・割付デバイスへ解決する。 |
 | `test_gx3_label_scope.py` | 別ラベル表の同名ラベルがtrace/xrefで混在しないことを実CLIで検査する。 |
@@ -319,3 +322,7 @@ gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
 コメントがないデバイス、デバイス名に似たラベル、動的アドレスには推測で補いません。
 ビット指定にはそのビットのコメントを使い、ワードのコメントを流用しません。
 桁指定のコメントは先頭デバイスのものです。表示に現れない命令引数を一覧する機能ではありません。
+
+### ラダーSVGの命令幅
+
+命令枠は命令名1セル＋各引数1セル（MOVは3セル、SETは2セル、TOは5セル）で描画し、右母線までの余白で引き伸ばしません。MOVなどの出力命令は固定幅のまま右母線に揃え、元の入力位置から配線で接続します。接点側の命令は元の位置を維持します。列幅の変更やFBの個別レイアウトの完全再現は対象外です。比較資料：三菱電機 [GX Works3 Operating Manual](https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081215eng/sh081215engaq.pdf)、印刷ページ351の画面例、353のセル表示の説明。

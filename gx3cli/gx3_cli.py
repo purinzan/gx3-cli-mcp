@@ -103,6 +103,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "guide": CommandSpec("gx3_guide.py", "read the project and name the commands that follow from what is in it", "Getting Started"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data", "Reports"),
     "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures", "Diagnostics"),
+    "validation-ledger": CommandSpec("gx3_validation_ledger.py", "show GX Works3 independent-validation evidence and missing groups", "Diagnostics"),
     "synthetic-project": CommandSpec("gx3_synthetic_project.py", "generate a non-confidential synthetic GX3 fixture for tests and demos", "Getting Started"),
     "reliability-report": CommandSpec("gx3_reliability_report.py", "one-page parse-gap and decoder coverage report", "Reports"),
     "audit": CommandSpec("gx3_audit.py", "generate a read-only audit bundle: doctor, index, xref, lint, dead-logic", "Reports"),
