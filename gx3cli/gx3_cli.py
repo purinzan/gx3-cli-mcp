@@ -100,6 +100,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "timing-chart": CommandSpec("gx3_timing_chart.py", "generate generic handoff timing drafts from link-map and xref DBs", "Analysis"),
     "scan-order": CommandSpec("gx3_scan_order.py", "find writer/reader scan-order stale-read candidates", "Analysis"),
     "doctor": CommandSpec("gx3_doctor.py", "check CLI scripts, project root, indexes, xref DB, and link-map readiness", "Getting Started"),
+    "doctor-acceptance": CommandSpec("gx3_doctor_acceptance.py", "show Doctor project-health acceptance status for Issue #135", "Diagnostics"),
     "guide": CommandSpec("gx3_guide.py", "read the project and name the commands that follow from what is in it", "Getting Started"),
     "support-bundle": CommandSpec("gx3_support_bundle.py", "create a redacted support ZIP without ladder body data", "Reports"),
     "failure-corpus": CommandSpec("gx3_failure_corpus.py", "capture failed GX3 parses and rerun them as regression fixtures", "Diagnostics"),

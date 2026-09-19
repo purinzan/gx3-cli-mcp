@@ -109,6 +109,7 @@
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
 | `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
 | `INDEPENDENT_VALIDATION_LEDGER_JA.md` | #49 のGX Works3独立照合台帳。必須8群、登録済み外部根拠、`validation-ledger` コマンドで見るクローズ可否を説明する。 |
+| `DOCTOR_ACCEPTANCE_JA.md` | #135 のDoctor初期受入台帳。12項目の実装・根拠テスト・`doctor-acceptance` コマンドで見るクローズ可否を説明する。 |
 | `GX_WORKS3_FEATURE_MATRIX_JA.md` | GX Works3 標準機能との対応状況、機能差、採用/保留/対象外、実装優先順位を整理した比較表。 |
 | `GITHUB_PROJECT_REVIEW_JA.md` | 関連する GX Works3/GX3/MELSEC GitHub プロジェクトの調査結果と設計上の取り込み候補。 |
 | `mcp_client_config.json` | `python -m gx3cli.gx3_mcp_server` で起動する MCP 設定例。 |
@@ -138,6 +139,7 @@
 | `gx3_mcp_fs_guard.py` | internal | MCP subprocess only | MCP が起動した Python のファイル作成・変更を `GX3_MCP_OUTPUT_DIR` 内へ閉じ込め、外部 SQLite を読み取り専用にする。 |
 | `gx3_cli.py` | `gx3-cli` | `gx3_run_command` | CLI dispatcher、help/list、query 系ラッパー。 |
 | `gx3_doctor.py` | `doctor` | `gx3_run_command` | 解析対象、index、xref DB、link-map の状態確認。 |
+| `gx3_doctor_acceptance.py` | `doctor-acceptance` | `gx3_run_command` | #135 のDoctor project-health初期受入12項目について、実装・根拠テスト・残件を出す。`Closeable: yes` なら初期受入を閉じられる。 |
 | `gx3_ladder_report.py` | `ladder-report` | `gx3_run_command` | オフラインで開ける単一HTML。中央にラダーSVG、左にデバイス・コメント検索、右に選択デバイスの読出・書込一覧と根拠。各デバイスに「この画面での件数」と「プロジェクト全体の件数」を併記し、描画本数が足りない場合は打切りとして表示する。実測値は扱わず、接点をONとして着色しない。`--all` は全プログラム分のページを相互リンク付きで出力し、他プログラムの読み書きへ移動できるようにする。リンク先ラングがページに無い場合はその旨を表示する。 |
 | `gx3_explore.py` | `explore` | `gx3_run_command` | 目的別の4つの入口（overview / why / concerns / changed）。新しい解析はせず、索引を自動準備して既存コマンドを問いに沿った順で実行し、共通のヘッダ（対象・入力指紋）の下にまとめる。時間切れの項目は「取得できなかった」ではなく「終わらなかった」と区別して報告する。 |
 | `gx3_xref_read.py` | — | xref を読む全コマンド | xref をデバイスで引くための唯一の境界。`xref.device`（命令が名乗るデバイス）と `member_device`（その occurrence が覆うデバイス）を分けて扱い、member 表が無い古いDBでは完全一致へ縮退する。読み手が範囲規約を知らなくても正しい答えしか取れないようにする。 |
@@ -205,6 +207,7 @@
 | `gx3_ladder_layout.py` | 座標を視覚の正、既存 operand/comment 解読を意味の正として合流し、ビューアや画像生成向けの JSON/SVG を作る。 |
 | `gx3_mc_zones.py` | MC/MCR master-control zone の再構成。 |
 | `gx3_project_config.py` | ラダー以外のプロジェクト情報を1コマンドで読む。CPU・ユニット構成・アドレス・接続方法・モジュール設定・モーションと、読めないものとその理由を出す。md ではなく実行して得る形にしてある。 |
+| `gx3_maintainability_fixture.py` | #135 用の非機密good/bad保守性fixture生成。Y0/Y1のfield-output挙動は揃えたまま、bad側にコメント欠落、重複出力、ワード複数writer、SET/RST分離、曖昧コメント、未使用残骸を入れる。 |
 | `gx3_input_identity.py` | 解析対象の入力（ラダー・コメント・ラベル・ユニット設定・CPUパラメータ）をまとめて指紋化する。成果物がどの入力から作られたかを記録・照合し、別プロジェクトの索引で答えることを防ぐ。 |
 | `gx3_analysis_state.py` | 結果の状態を表す共通語彙（確認済み / 一部未解釈 / 未対応 / 打切り / 評価不能 / 実測値なし）と理由・次の手順。「検出0件」と「評価できなかった」を区別するための土台。集約時は代表状態に加えて個々の制約を constraints に保持し、JSON往復や再集約でも段階・理由・位置を失わない。 |
 | `gx3_index_contract.py` | 派生xref/liteの用途別の必須表・列を、照会やworkspace再利用の前に検証する。行内容の完全性・元言語の対応範囲の証明とは別の構造契約。 |
@@ -257,7 +260,9 @@
 | `test_gx3_project_paths_convertdata.py` | ConvertData の通常レイアウト、backslash 保持レイアウト、FBDDB root 検出。 |
 | `test_gtx_probe.py` | GTX probe。 |
 | `test_gx3_failure_corpus.py` | 失敗検体の capture/run ループ。 |
+| `test_gx3_doctor_acceptance.py` | #135 のDoctor受入台帳が12/12 checked、`Closeable: yes` を返すことを検査する。 |
 | `test_gx3_doctor_next_steps.py` | doctor の WARN/ERROR が次の一手を出すこと。 |
+| `test_gx3_doctor_maintainability_profiles.py` | #135 のDoctor初期受入。good/bad保守性fixtureを実際のworkspace/index/xref/project-health経路に通し、bad側が低スコアになり、主要Doctor findingが検出されることを検査する。 |
 | `test_gx3_format_graph.py` | 形式インベントリ、graph、lint check listing。 |
 | `test_gx3_live_read.py` | MC Protocol/SLMP 3E binary read frame と応答 decode。 |
 | `test_docs_navigation.py` | README から全 Markdown へ辿れること、このガイドが全ファイルを索引すること。 |
