@@ -638,14 +638,14 @@ class TraceInputs:
     external_boundaries: tuple[dict[str, str] | None, str] | None = None
     xref_path: Path | None = None
 
-    def validate_source(self, *, content: bool = True) -> None:
+    def validate_source(self, *, content: bool = True, communication: bool = True) -> None:
         if self.source_version is None:
             raise ValueError("trace inputs have no verified source version; use load_trace_inputs")
         current = input_version(self.root) if content else input_stamp(self.root)
         expected = self.source_version if content else self.source_version[1]
         if current != expected:
             raise SystemExit("project inputs changed during trace analysis; discard this result and retry")
-        if self.communication_version is not None and dependency_snapshot(self.communication_paths) != self.communication_version:
+        if communication and self.communication_version is not None and dependency_snapshot(self.communication_paths) != self.communication_version:
             raise SystemExit("communication CSV inputs changed during trace analysis; discard this result and retry")
 
 
@@ -707,10 +707,11 @@ def build_trace(
     inputs: TraceInputs | None = None,
     condition_refs_provider: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    loaded_inputs_here = inputs is None
     inputs = inputs if inputs is not None else load_trace_inputs(root)
     if inputs.root != Path(root).resolve():
         raise ValueError("trace inputs belong to a different project root")
-    inputs.validate_source(content=False)
+    inputs.validate_source(content=False, communication=not loaded_inputs_here)
     comments, labels, rows = inputs.comments, inputs.labels, inputs.rows
     refs_for_logic = condition_refs_provider or condition_refs_from_logic
     drivers = driver_index(rows, include_reset=include_reset)

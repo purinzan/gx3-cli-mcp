@@ -477,5 +477,14 @@ SQLはtrace+1、CSV内容hashは+6（CSV2本を初回/入口/返却前に追加�
 候補は共通split_deviceの候補を先頭文字で絞り、旧longest-firstとfallbackを維持。
 従来版との10,608固定ケース比較と既存意味テストで解釈の維持を確認した。
 この最適化前のe262a29ではCSV付きtraceの全6検体が時間予算を超えていた。
-残る性能差を解決するまで、この変更を受入完了としてマージしない。
-OS cache未flush、RSSは累積process peak。実設備/Windows速度の保証ではない。
+追補（2026-09-19、最新main取り込み後）: `build_trace()` が同じ呼び出し内で
+読み込んだ通信CSVを開始直後に再ハッシュしていた重複確認を除去した。外部から
+渡された `TraceInputs` は従来どおり開始時に通信CSVを再照合し、全経路で返却前の
+再照合は残すため、解析中のCSV変更拒否は維持する。ローカル全89テスト、source/
+wheel release gate、wheel buildは成功。
+
+同じ64refresh範囲+1units行のCSV付きtrace/JSONを3 fresh processで再測定したところ、
+中央値msは small 2.77、wide 8.36、deep 8.93、large-span 3.30、multi-pou 9.59、
+ld-st 9.03。以前の未達値 wide 92.71ms と上限91.13msを下回ったため、この
+性能未達は解消済みとして扱う。測定scriptは一時ファイルで実行し、OS cache未flush、
+RSSは累積process peak。実設備/Windows速度の保証ではない。
