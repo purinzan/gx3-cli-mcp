@@ -184,3 +184,6 @@ the low scores there are the ones whose descriptions need work.
 [![gx3-mcp-server on Glama](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badges/card.svg)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · [AGENTS.md](AGENTS.md)
+
+For ladder CSV input, use `gx3-cli rung-text --csv ladder.csv`. See the
+[CSV parser guide](docs/LADDER_CSV_JA.md) for verified scope and limitations.
