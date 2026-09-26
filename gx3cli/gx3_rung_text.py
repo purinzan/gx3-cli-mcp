@@ -36,13 +36,15 @@ from gx3cli.gx3_ladder_logic import (
     logic_to_text,
     positioned_elements,
 )
+from gx3cli.gx3_ladder_csv import parse_csv_rows, read_csv_records
+from gx3cli.gx3_intermediate_tool import extract_dim
 from gx3cli.gx3_arg_decode import write_indices
 from gx3cli.gx3_ladder_print import load_print_comments, comment_text_for, operand_comment_device
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
 from gx3cli.gx3_output import add_format_argument, emit
 from gx3cli.gx3_project_paths import default_project_root
-from gx3cli.review_gx3_project import LadderRow, load_rows
+from gx3cli.review_gx3_project import LadderRow, load_rows, extract_title, operation_model
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class RungText:
     # Works3.
     step: int | None = None
     comments: dict[str, str] | None = None
+    operands: tuple[str, ...] = ()
+    diagnostic: str = ""
 
     @property
     def location(self) -> str:
@@ -70,6 +74,8 @@ class RungText:
 
     def to_line(self, width: int = 0) -> str:
         arrow = f"{self.opcode} {self.device}" if self.opcode not in ("", "OUT") else self.device
+        if self.operands and (self.opcode != "OUT" or len(self.operands) > 1):
+            arrow = f"{self.opcode} {' '.join(self.operands)}"
         line = f"{self.location:<{width}}  {self.condition} -> {arrow}"
         if self.comments:
             line += "  # " + ", ".join(
@@ -197,6 +203,98 @@ def visible_comments(condition: str, device: str, candidates: dict[str, str]) ->
     return {name: candidates[name] for name in names if name in candidates}
 
 
+_DATA_COLUMNS = (
+    "data",
+    "ladder_data",
+    "block_data",
+    "rung_data",
+    "serialized",
+    "serialized_data",
+    "body",
+)
+_POS_COLUMNS = ("pos", "position", "step", "step_no", "stepno", "ステップ", "行")
+_LDDB_COLUMNS = ("lddb", "program", "pou", "file", "プログラム", "POU")
+_TITLE_COLUMNS = ("title", "section", "comment", "コメント", "タイトル")
+_BLOCKTYPE_COLUMNS = ("blocktype", "block_type", "type")
+_ROWSIZE_COLUMNS = ("rowsize", "row_size")
+
+
+def _norm_header(value: str) -> str:
+    return value.strip().lstrip("\ufeff").lower().replace(" ", "_").replace("-", "_")
+
+
+def _first(row: dict[str, str], names: tuple[str, ...]) -> str:
+    normalized = {_norm_header(k): v for k, v in row.items()}
+    for name in names:
+        key = _norm_header(name)
+        if key in normalized and str(normalized[key]).strip():
+            return str(normalized[key]).strip()
+    return ""
+
+
+def _to_int(value: str, default: int = 0) -> int:
+    try:
+        return int(float(str(value).strip()))
+    except Exception:
+        return default
+
+
+def load_rows_from_csv(path: Path) -> list[LadderRow]:
+    rows = read_csv_records(path)
+    out: list[LadderRow] = []
+    current_title = ""
+    for index, raw in enumerate(rows, start=1):
+        data = _first(raw, _DATA_COLUMNS)
+        if not data:
+            continue
+        blocktype = _to_int(_first(raw, _BLOCKTYPE_COLUMNS), 0)
+        if blocktype in {1, 2}:
+            current_title = extract_title(data) or _first(raw, _TITLE_COLUMNS) or current_title
+            continue
+        if blocktype != 0:
+            continue
+        operations = operation_model(data)
+        ce_count = data.count("s=ce{")
+        parse_status = "exact" if ce_count == len(operations) else "partial"
+        out.append(
+            LadderRow(
+                lddb=_first(raw, _LDDB_COLUMNS) or path.name,
+                pos=_to_int(_first(raw, _POS_COLUMNS), index),
+                block_id=str(raw.get("id") or raw.get("block_id") or index),
+                title=_first(raw, _TITLE_COLUMNS) or current_title,
+                blocktype=blocktype,
+                rowsize=_to_int(_first(raw, _ROWSIZE_COLUMNS), 0),
+                data=data,
+                dim=extract_dim(data),
+                operations=operations,
+                parse_status=parse_status,
+            )
+        )
+    return out
+
+
+def collect_csv(path: Path, device: str = "") -> list[RungText]:
+    rows = read_csv_records(path)
+    if not rows:
+        return []
+    if any(_first(row, _DATA_COLUMNS) for row in rows):
+        out: list[RungText] = []
+        for row in load_rows_from_csv(path):
+            for text in rung_texts(row):
+                if device and text.device.upper() != device.upper():
+                    continue
+                out.append(text)
+        return out
+    return [
+        RungText(item.instruction.program, item.instruction.step,
+                 item.instruction.title, item.instruction.opcode, item.device,
+                 item.condition, step=item.instruction.step,
+                 operands=item.instruction.operands, diagnostic=item.diagnostic)
+        for item in parse_csv_rows(path, rows)
+        if not device or item.device.upper() == device.upper()
+    ]
+
+
 def collect(root: Path, lddb: str = "", device: str = "", *, comments: bool = False) -> list[RungText]:
     labels = load_label_resolver(root)
     program_map = load_program_map(root)
@@ -240,6 +338,8 @@ def to_json(items: list[RungText]) -> list[dict[str, Any]]:
             "opcode": item.opcode,
             "device": item.device,
             "condition": item.condition,
+            **({"operands": list(item.operands)} if item.operands else {}),
+            **({"diagnostic": item.diagnostic} if item.diagnostic else {}),
             **({"comments": item.comments} if item.comments is not None else {}),
         }
         for item in items
@@ -251,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Print a program as one line per rung: condition -> driven device."
     )
     parser.add_argument("--root", default=str(default_project_root()))
+    parser.add_argument("--csv", default="", help="read GX Works3 listed-instruction CSV or internal ladder rows")
     parser.add_argument("--program", default="", help="limit to one LDDB, e.g. 001_LDDB.db")
     parser.add_argument("--device", default="", help="limit to rungs driving this device")
     parser.add_argument("--no-titles", action="store_true", help="omit section titles")
@@ -258,7 +359,12 @@ def main(argv: list[str] | None = None) -> int:
     add_format_argument(parser, json_shorthand=False)
     args = parser.parse_args(argv)
 
-    items = collect(Path(args.root), args.program, args.device, comments=args.comments)
+    try:
+        items = collect_csv(Path(args.csv), args.device) if args.csv else collect(Path(args.root), args.program, args.device, comments=args.comments)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    if args.csv and args.program:
+        items = [item for item in items if item.lddb == args.program]
     if not items:
         print("no rungs found")
         return 0

@@ -170,6 +170,49 @@ def test_cli_comments_json_and_missing_comments() -> None:
         assert all(" # " not in item.to_line() for item in missing)
 
 
+def test_internal_ladder_csv_reads_like_project_rows() -> None:
+    import csv
+    from gx3cli.gx3_rung_text import collect_csv
+    from gx3cli.gx3_synthetic_project import generate_rung
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "ladder_rows.csv"
+        data, rowsize, _ = generate_rung({"device": "X10"}, {"type": "coil", "device": "Y20"})
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["lddb", "pos", "blocktype", "rowsize", "data", "title"])
+            writer.writeheader()
+            writer.writerow({"lddb": "MAIN_LDDB.db", "pos": 7, "blocktype": 0, "rowsize": rowsize, "data": data, "title": "CSV section"})
+
+        items = collect_csv(path)
+        assert [(item.condition, item.device) for item in items] == [("X10", "Y20")]
+        assert items[0].lddb == "MAIN_LDDB.db"
+        assert items[0].title == "CSV section"
+
+
+def test_gx_works_listed_instruction_csv_reads_as_rung_text() -> None:
+    import csv
+    from gx3cli.gx3_rung_text import collect_csv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "listed.csv"
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["Step", "Instruction", "Operand", "Title"])
+            writer.writeheader()
+            writer.writerow({"Step": "1", "Instruction": "", "Operand": "", "Title": "Auto"})
+            writer.writerow({"Step": "2", "Instruction": "LD", "Operand": "X0", "Title": ""})
+            writer.writerow({"Step": "3", "Instruction": "ANI", "Operand": "X1", "Title": ""})
+            writer.writerow({"Step": "4", "Instruction": "OUT", "Operand": "Y0", "Title": ""})
+            writer.writerow({"Step": "5", "Instruction": "MOV", "Operand": "D0", "Title": ""})
+            writer.writerow({"Step": "", "Instruction": "", "Operand": "D10", "Title": ""})
+
+        items = collect_csv(path)
+        assert [(item.opcode, item.condition, item.device) for item in items] == [
+            ("OUT", "X0 AND /X1", "Y0"),
+            ("MOV", "X0 AND /X1", "D10"),
+        ]
+        assert all(item.title == "Auto" for item in items)
+
+
 def main() -> int:
     # Collected rather than listed, so a test added later cannot be left out.
     tests = [
