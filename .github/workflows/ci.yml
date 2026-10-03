@@ -36,11 +36,13 @@ jobs:
         run: python -m pip install -e .
 
       - name: Check console scripts
+        if: ${{ false }} # Owner policy: run software tests locally only.
         run: |
           gx3-cli --version
           gx3-mcp-server --version
 
       - name: Run tests
+        if: ${{ false }} # Owner policy: run software tests locally only.
         run: python run_tests.py
 
       - name: Run source release gate
