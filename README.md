@@ -1,5 +1,7 @@
 # gx3-cli-mcp
 
+[日本語](README.ja.md) · [English](README.md) · [简体中文](README.zh-CN.md) · [한국어](README.ko.md)
+
 <!-- mcp-name: io.github.purinzan/gx3-cli-mcp -->
 
 [![PyPI](https://img.shields.io/pypi/v/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
@@ -24,7 +26,7 @@ answer from indexed facts instead of guessing at a binary file.
 
 中文: 不用打开 GX Works3，也能分析三菱电机 MELSEC 的 `.gx3` 工程，
 从梯形图追查「这个线圈为什么不导通」。只读，不改写原工程。
-完整中文说明见 [README.zh-CN.md](https://github.com/purinzan/gx3-cli-mcp/blob/main/README.zh-CN.md)。
+完整中文说明见 [README.zh-CN.md](README.zh-CN.md)。
 
 ---
 

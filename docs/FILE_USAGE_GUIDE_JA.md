@@ -21,7 +21,9 @@
 | ファイル | 役割 |
 |---|---|
 | `README.md` | GitHub のトップ説明。インストール、MCP 設定、基本ワークフロー、全 Markdown へのリンクを持つ。 |
+| `README.ja.md` | 日本語のトップ説明。上段の相互リンクで4言語を切り替えられる。 |
 | `README.zh-CN.md` | 中国語圏利用者向けのトップ説明。`README.md` と同じ導入、コマンド表、能力境界、ライセンス要約を中国語で持つ。 |
+| `README.ko.md` | 韓国語のトップ説明。上段の相互リンクで4言語を切り替えられる。 |
 | `CONTRIBUTING.md` | クローンした利用者/開発者向けの Windows-first PR 手順。ソース問題を再現、検体化、修正、検証して PR する流れ。 |
 | `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
