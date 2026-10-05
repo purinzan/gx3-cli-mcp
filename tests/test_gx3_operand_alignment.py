@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Two ways a rung's operands came out wearing each other's types.
 
-Both were found by reading 51 real projects two ways and asking where the two
-readings disagree. Both are alignment failures: something in the row was not
+Both were found by comparing independent readings of validation data.
+Both are alignment failures: something in the row was not
 counted the same way on both sides, and every operand after it took the
 previous one's type.
 
@@ -15,8 +15,8 @@ was gone.
 A connector element. GX writes e{s=src{n=#}} and e{s=dst{n=#}} where a rung
 continues on another grid row. They carry a position and no arguments, and the
 printed rung counted one as an operation -- taking the header op that belonged
-to the element after it. One rung in 211300 has one, and on that rung the
-printed ladder named the wrong device nine times over.
+to the element after it. Validation data with a connector exposed repeated
+incorrect device references in the printed ladder.
 """
 
 from gx3cli.gx3_arg_decode import parse_row_occurrences

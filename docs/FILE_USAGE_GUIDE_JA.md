@@ -27,7 +27,7 @@
 | `CONTRIBUTING.md` | クローンした利用者/開発者向けの Windows-first PR 手順。ソース問題を再現、検体化、修正、検証して PR する流れ。 |
 | `AGENTS.md` | エージェント向けの最小常時指示。詳細な反復手順は `skills/` の各 `SKILL.md` に逃がす。 |
 | `pyproject.toml` | Python パッケージ定義。`gx3-cli` と `gx3-mcp-server` の console script を定義する。 |
-| `Dockerfile` | Glama の自動検査などで MCP サーバーをコンテナ起動し、`initialize` / `tools/list` に応答させる。実プロジェクトは同梱しない。 |
+| `Dockerfile` | Glama の自動検査などで MCP サーバーをコンテナ起動し、`initialize` / `tools/list` に応答させる。プロジェクトデータは同梱しない。 |
 | `MANIFEST.in` | wheel/sdist 同梱ルール。顧客データや生成物を配布物に入れないための保険。 |
 | `LICENSE.txt` | source-available proprietary の配布条件と免責。 |
 | `CONTRIBUTING.md` | コントリビュータ向け入口。データ持ち込み禁止ルール、開発環境、CI と同じ検査、バグ報告の作法。PR 送付をもって現ライセンス下での利用許諾とみなす旨を記載（CLA なし）。 |
@@ -53,8 +53,8 @@
 | `test_gx3_project_config.py` | project-config が「読めない」と「そもそも無い」を区別して報告することを検査する。デバイスメモリ不在・MESジョブがプロジェクト外・暗号化本体・DataDefault が空である旨を、それぞれ理由付きで出す。 |
 | `test_gx3_module_params.py` | 記述子テーブル（Prm3=257 の署名）と設定値テーブルの判別、既定値のままの行を設定として報告しないこと、チャンネル/軸ごとの行が取れることを検査する。 |
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
-| `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、実データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
-| `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。実データ51本の経路間照合で見つかった2件の退行を防ぐ。 |
+| `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、検証データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
+| `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。検証データの経路間照合で見つかった退行を防ぐ。 |
 | `test_gx3_display_fidelity.py` | 合成LD行を通して文字列定数、命令幅、ZZ添字、間接指定の表示を検査する。実行意味やxrefの間接アドレス解決は対象外。 |
 | `test_gx3_input_bus.py` | 合成LDで共通入力配線、INV/MEP/MEFの入力式と分岐内の適用範囲、trace・dependency・snapshotへの伝達を検査する。 |
 | `docs/REVIEW_QUESTIONS_JA.md` | 変更を出す前にコードへ問う8つの質問。実際にバグを出した問いだけを載せ、それぞれに再現例を添える。テストではなくコード自身の契約と突き合わせるための手順で、AGENTS.md と CONTRIBUTING.md から必読として参照される。 |
@@ -80,8 +80,8 @@
 | `test_gx3_flow_in_xref.py` | xref に値の流れ（source→destination）が格納され、MOV が1本の有向辺、BMOV が範囲と語数、二項演算が read-modify-write として記録されること、未知命令に辺を作らないこと、`downstream` が転送（via OPCODE）と同一ラング上の共起（same-rung）を区別することを検査する。 |
 | `test_gx3_shared_row_analysis.py` | CSV・lint・描画・条件解析の共有読取りと、行変更・ラベル変更・部分解析の保持を検査する。 |
 | `test_gx3_shared_xref_decode.py` | xrefとdata-flowの共有読取りを検査。回路ごとの復号が1回であること、辺の全列の一致、partialの保持と再読取りの不在を確認する。 |
-| `test_gx3_query_statistics.py` | 索引・xref が問い合わせ統計を持って作られること、統計の無い既存DBは作り直さずその場で修復されること、遅かった問い合わせでプランナが `access` ではなく `device` の索引を選ぶことを検査する。dead-logic が75秒かかった退行を防ぐ。 |
-| `test_gx3_logic_budget.py` | 論理式の展開に上限があり、越えたときに黙って短い条件を返さず `[TOO LARGE]` として数えられること、分岐の同一判定が子の識別子から作られることを検査する。実プロジェクトの1ラングが3355万ノード・146秒に膨らんだ退行を防ぐ。 |
+| `test_gx3_query_statistics.py` | 索引・xref が問い合わせ統計を持って作られること、統計の無い既存DBは作り直さずその場で修復されること、遅かった問い合わせでプランナが `access` ではなく `device` の索引を選ぶことを検査する。dead-logic の照会が遅くなる退行を防ぐ。 |
+| `test_gx3_logic_budget.py` | 論理式の展開に上限があり、越えたときに黙って短い条件を返さず `[TOO LARGE]` として数えられること、分岐の同一判定が子の識別子から作られることを検査する。検証データで条件式の展開が過大になった退行を防ぐ。 |
 | `test_gx3_ladder_report.py` | 各デバイスにプロジェクト全体の件数が併記されること、描画本数が不足するとき打切りと表示されること、外部リソースを読まない単一ファイルであること、現在値を知っているかのような表示をしないことを検査する。 |
 | `test_gx3_explore.py` | 4つの入口が揃っていること、実行できなかった項目・時間切れの項目が黙って抜けず終了コードにも出ること、相対パスの `--root` が届くことを検査する。 |
 | `test_gx3_workspace.py` | 索引が「どこにあるか」ではなく「どの入力から作られたか」で判定されること、別ディレクトリで作った索引を見つけて重複作成しないこと、編集後・旧版の索引を再利用しないことを検査する。 |
@@ -95,7 +95,7 @@
 | `test_gx3_audit_bundle.py` | audit が別の作業ディレクトリからでも全ステップを完走し、lint の CSV が bundle 内に出力されることを検査する。相対パスの解決先がずれて lint が失敗する退行を防ぐ。 |
 | `test_gx3_synthetic_demo_line.py` | demo-line フィクスチャの規模、セクション名の可読性、デバイス名の 16 進整合を検査する。 |
 | `ci.yml` | GitHub Actions。Windows / Linux / macOS 上で install、console script 確認、test、release gate を実行し、wheel build は Windows で行う。 |
-| `parser-gap.yml` | 解析に失敗したときの issue フォーム。実データを貼らせないための注意と確認チェックを先頭に置いている。失敗時のエラーメッセージからこのフォームへ直接リンクする。 |
+| `parser-gap.yml` | 解析に失敗したときの issue フォーム。機密データを貼らせないための注意と確認チェックを先頭に置いている。失敗時のエラーメッセージからこのフォームへ直接リンクする。 |
 | `config.yml` | issue 作成画面の導線。バグ以外は Discussions、初見の人は紹介記事へ送る。 |
 | `release.yml` | GitHub Actions。`v*` タグで wheel と sdist を build し、release gate と tag/version 一致確認を通してから Trusted Publishing で PyPI へ公開する。 |
 
@@ -109,7 +109,6 @@
 | `LADDER_PRACTICAL_TIPS_JA.md` | ラダー変更・レビュー時の実務的な作法と、AI解析で誤解しやすいポイントを簡潔にまとめる。 |
 | `FILE_USAGE_GUIDE_JA.md` | この索引。 |
 | `SECURITY_JA.md` | ローカルデータ処理、read-only MCP 方針、利用時の注意。 |
-| `VALIDATION_MATRIX.md` | 検証済み範囲と誇大表示を避けるための表。 |
 | `INDEPENDENT_VALIDATION_LEDGER_JA.md` | #49 のGX Works3独立照合台帳。必須8群、登録済み外部根拠、`validation-ledger` コマンドで見るクローズ可否を説明する。 |
 | `DOCTOR_ACCEPTANCE_JA.md` | #135 のDoctor初期受入台帳。12項目の実装・根拠テスト・`doctor-acceptance` コマンドで見るクローズ可否を説明する。 |
 | `GX_WORKS3_FEATURE_MATRIX_JA.md` | GX Works3 標準機能との対応状況、機能差、採用/保留/対象外、実装優先順位を整理した比較表。 |
@@ -121,7 +120,7 @@
 
 | ファイル | 役割 |
 |---|---|
-| `cross_check_corpus.py` | 実プロジェクト群を独立した2経路で読み、食い違う箇所を報告する。印字 vs xref、駆動デバイス vs 書き込み集合、SVG の要素網羅、parse status を突き合わせる。GX Works3 が無い環境で取れる最良の検証。 |
+| `cross_check_corpus.py` | 検証データを独立した2経路で読み、食い違う箇所を報告する。印字 vs xref、駆動デバイス vs 書き込み集合、SVG の要素網羅、parse status を突き合わせる。解析経路の整合性を確認する手順であり、GX Works3との直接照合とは区別する。 |
 | `release_gate.py` | 開発者/メンテナ向けの混入チェック。GX3/GTX/DB/CAB/CSV/PDF/鍵ファイル、ユーザーパス、IP、外部指定の禁止語を検出する。 |
 
 ## skills

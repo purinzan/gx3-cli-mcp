@@ -14,7 +14,7 @@ show that a result is honest: this project's worst failures returned exit code
 
 This project is **source-available proprietary software**, not open source. See
 [LICENSE.txt](LICENSE.txt) and the license summary in the
-[README](README.md#license-in-plain-words).
+[README](README.md#license).
 
 By opening a pull request you confirm that:
 
@@ -155,7 +155,7 @@ A useful report includes:
 - your OS and GX Works3 version
 - whether it reproduces on a synthetic project (`gx3-cli synthetic-project`)
 
-**Never paste real project data, device comments, customer names, or addresses
+**Never paste confidential project data, device comments, customer names, or addresses
 into an issue.** Reduce the problem to a synthetic project, or describe the
 shape of the data instead of pasting it.
 

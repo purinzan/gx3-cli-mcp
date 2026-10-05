@@ -446,9 +446,9 @@ def _populate_index(args: argparse.Namespace, con: sqlite3.Connection) -> int:
     )
 
     # Without statistics, SQLite picks an index by shape rather than by how
-    # many rows it will actually touch. On a real project it chose the index on
-    # `access` for "device=? and access=?" -- 53,000 rows for access='read',
-    # scanned and sorted, where the index on `device` would have found three.
+    # many rows it will actually touch. Validation data exposed a preference
+    # for a broad `access` index when a selective `device` index would avoid
+    # scanning and sorting unnecessary rows.
     # One query took 27ms instead of 0.1ms, and dead-logic runs one per device:
     # 6,665 of them, 72 of its 75 seconds. ANALYZE takes a tenth of a second
     # and is the difference.

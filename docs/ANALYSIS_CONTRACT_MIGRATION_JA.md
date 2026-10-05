@@ -135,7 +135,7 @@ CSV/Markdownへ出力する。読取り位置を出力に対応付けられな�
 cold build / warm query / traceの6種の固定fixtureで、同一環境の比較を実施した。
 詳細と制約・後続変更の予算は[性能基準](ANALYSIS_BENCHMARK_JA.md)に記録する。
 SQL/loader回数、wall時間、Python peakとprocess peak RSSを区別する。WindowsのRSSは
-未測定。少数の合成検体を全実案件の速度改善率やメモリ上限の保証として使わない。
+未測定。少数の合成検体を他の入力の速度改善率やメモリ上限の保証として使わない。
 
 後続移行の前後でも同じ手順を繰り返し、最終統合版で再測定する。
 正しさは別に手で定めた期待値と照合する。

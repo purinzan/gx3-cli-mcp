@@ -387,12 +387,9 @@ def logic_id(node: dict[str, Any]) -> str:
     return digest
 
 
-# How many nodes one rung's condition may grow to before this stops building
-# it. A rung in a real project produced 33,554,427 nodes -- 2^25, the shape of
-# a combinatorial expansion, not of a condition anyone wrote -- and took 146
-# seconds, while the other 6,000 rungs of that project took 23 seconds
-# together. Past this point the expression is not something a person is going
-# to read anyway; what they need is to be told that, and where to look.
+# How many nodes one condition may grow to before expansion stops. Validation
+# data exposed combinatorial growth that dominated analysis. Past this limit,
+# the expression is not useful to read; report the limit and where to look.
 MAX_LOGIC_NODES = 20_000
 
 _SIZE_CACHE: dict[int, tuple[dict[str, Any], int]] = {}

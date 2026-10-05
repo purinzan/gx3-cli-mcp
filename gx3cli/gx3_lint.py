@@ -93,7 +93,7 @@ DIV_BASES = {"/", "D/", "B/", "DB/", "E/", "ED/"}
 
 # 32-bit instruction bases the manuals do not carry, so they cannot be typed
 # from MANUAL_OPERAND_TYPES. These are the GX Works2-era names (iQ-R spells the
-# conversions INT2FLT/FLT2INT), kept because real projects still contain them.
+# conversions INT2FLT/FLT2INT), kept because project files can contain them.
 LEGACY_WIDTH32_BASES = {"DFLT", "DINT"}
 
 
@@ -371,9 +371,9 @@ def collapse_runs(
     """One finding per fact, not one per device.
 
     Two block instructions overwriting the same run is a single thing to look
-    at. Reported per device it came to 7,679 identical findings for one pair of
-    BMOVs, and 38,408 findings on a real project that were 1,020 facts. A list
-    that long is not read, which costs more than the findings were worth.
+    at. Reporting each device separately produced excessive duplicate findings
+    in validation data. Group each overlapping run so the findings remain
+    useful to review.
     """
     keyed: dict[tuple, list[dict[str, object]]] = defaultdict(list)
     for finding in findings:

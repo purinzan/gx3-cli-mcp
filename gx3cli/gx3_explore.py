@@ -222,7 +222,7 @@ TIMED_OUT = -9
 def run_step(step: Step, context: Context) -> tuple[int, str]:
     """Run one step, and stop waiting rather than hang the whole answer.
 
-    `metrics` takes over two minutes on a real project of this size. An entry
+    `metrics` can take a long time on some inputs. An entry
     point that sits there is one a person kills, and then has none of the other
     sections either. A step that ran out of time is reported as a section that
     did not finish -- which is not the same as a section that found nothing.

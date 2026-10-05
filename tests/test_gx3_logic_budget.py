@@ -2,11 +2,8 @@ from __future__ import annotations
 
 """A condition that expands without bound is stopped, and said to be stopped.
 
-One rung in a real project expanded to 33,554,427 nodes -- 2^25, the shape of a
-combinatorial expansion rather than of a condition anyone wrote -- and took 146
-seconds. The other 6,000 rungs of that project took 23 seconds together, so
-reading the whole project was one rung's arithmetic and nothing else. `metrics`
-never finished.
+Validation data exposed combinatorial condition growth that dominated
+analysis and prevented `metrics` from completing.
 
 The fix is not a faster expansion. Past twenty thousand terms the expression is
 not something a person will read, so this stops building it and puts a marker
@@ -15,8 +12,8 @@ a rung lists fewer conditions than the rung has, and without the marker it
 would present them as the whole condition.
 
 Also pinned here: the identity used to spot duplicate branches is built from
-the children's identities. Serialising the whole subtree at every level made
-that one rung write 185MB of JSON, and was 73% of the time to read a program.
+the children's identities. Serialising the whole subtree at every level
+created excessive JSON and dominated the time spent reading a program.
 """
 
 from gx3cli.gx3_ladder_logic import (

@@ -18,7 +18,7 @@ branch in the rebuild: "(A OR B) AND /C" becomes two rows each carrying /C,
 where the original shares it across a vertical link. That is a different
 drawing of the same rung, so the comparison is on which devices are touched and
 how -- as a set, with order and repetition dropped. Getting this wrong in the
-strict direction reported two correct rungs of a real project as failures.
+strict direction reported correct validation cases as failures.
 """
 
 import tempfile
@@ -88,7 +88,7 @@ def test_a_rung_that_reads_back_the_same_is_identical() -> None:
 def test_a_shared_branch_comes_back_as_equivalent_not_a_failure() -> None:
     # "(A OR B) AND /C" drawn with /C shared: DNF repeats /C in both rows, so
     # the rebuild is a different shape carrying the same devices. Comparing
-    # occurrences in order reported this as a failure on a real project.
+    # occurrences in order reported this as a failure in validation data.
     from gx3cli.gx3_intermediate_tool import generate_rung
 
     logic = {"and": [{"or": [{"device": "X10"}, {"device": "M1"}]}, {"not": {"device": "M2"}}]}

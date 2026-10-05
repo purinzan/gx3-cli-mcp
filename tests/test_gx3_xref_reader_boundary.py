@@ -7,7 +7,7 @@ one row with `range_len = 4` is a BMOV covering four of them. Every reader that
 wrote `where device = ?` therefore missed the middles of runs, and five of them
 did -- ladder-report reported zero writers for a device a BMOV fills, scan-order
 could not find a stale read inside any run, alarm-map lost resets, timing-chart
-lost signal conditions, lint lost 1,269 conflicts on one real project.
+lost signal conditions, lint missed conflicting writers in validation data.
 
 Each was fixed as it was found, which is the part that does not scale: the next
 reader can write the same lookup, and nothing would say so. So this fails when

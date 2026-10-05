@@ -48,7 +48,7 @@ ladder.csv:4  X0 -> BMOV D1 D20 K4
 - FB、制御フロー、全命令の対応、およびGX Works3での再インポート。
 - エッジ・タイマーなどを含むスキャン間の動作。上記真理値表は組合せ論理の検証です。
 
-合成データの一致を実機・実プロジェクトの完全一致として扱いません。
+合成データの一致をGX Works3上の表示や設備動作の検証完了として扱いません。
 
 形式と命令の参考:
 - [GX Works3 Operating Manual（CSV export/import）](https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081215eng/sh081215engar.pdf)

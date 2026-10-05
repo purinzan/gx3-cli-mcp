@@ -2,13 +2,13 @@ from __future__ import annotations
 
 """The remaining ways an answer came back empty or misdirected.
 
-Each of these was measured on a real project before it was fixed:
+Each of these was observed in validation data before it was fixed:
 
 - A digit specification covers four bits per digit. K2M3410 is M3410 through
   M3417, and only M3410 was recorded, so a search for M3413 answered "no
   occurrences" -- the same wrong answer a block instruction used to give.
 - lint's unused-device check reads the lite index, which did not carry the
-  runs, so 269 of its findings were devices a block instruction or a digit
+  runs, so it reported devices a block instruction or a digit
   specification writes without naming.
 - A path or setup failure was reported as an unsupported GX Works3 format,
   pointing the user at the parser-gap issue form for a directory that did not

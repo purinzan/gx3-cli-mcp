@@ -6,7 +6,7 @@ every other output spells it.
 
 It used to pair the header's type tokens with the d{} numbers by position. A
 modifier spends a token without spending a number, so the pairing shifted, and
-on one real project the report named 127 devices that are not in the ladder --
+in validation data the report named devices that are not in the ladder --
 including a whole run of ZR addresses reported as D. It also spelled the names
 itself, which is decimal, so W132 appeared as "W306".
 """

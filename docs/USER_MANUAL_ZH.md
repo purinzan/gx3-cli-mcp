@@ -40,7 +40,7 @@ python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
 
 ## 最先运行的三条命令
 
-在真实工程上，先运行这三条：
+检查工程时，先运行这三条：
 
 ```powershell
 gx3-cli doctor --root C:\path\to\project.gx3

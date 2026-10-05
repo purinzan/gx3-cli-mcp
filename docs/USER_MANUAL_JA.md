@@ -34,7 +34,7 @@ gx3-mcp-server --version
 
 ## 最初に実行すること
 
-実プロジェクトでは、まず次の順番で確認します。
+プロジェクトの確認は、まず次の順番で行います。
 
 ```powershell
 gx3-cli doctor --root C:\path\to\project.gx3

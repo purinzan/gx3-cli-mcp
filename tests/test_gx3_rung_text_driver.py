@@ -18,8 +18,8 @@ D37426, a source. Two things put it there:
   numbers differ: for a three-operand D+ it asked about the two-operand form
   and got the second operand, which D+ reads and writes only in that form.
 
-Measured over one real project: 17 of 15736 driven-device decisions named a
-device the decoder says is not written there, all of them arithmetic.
+Validation data exposed arithmetic instructions whose reported driven device
+was not in the decoder's write set.
 """
 
 from gx3cli.gx3_arg_decode import parse_row_occurrences

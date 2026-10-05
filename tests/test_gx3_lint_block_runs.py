@@ -9,10 +9,9 @@ never looked at `range_len` at all. So `BMOV .. D400 K4` and `MOV .. D401` both
 write D401, and multi-writer -- the check whose whole subject is a word written
 from two places -- reported nothing.
 
-The first fix was worse than the bug: expanding every run into its devices took
-the real project from 590 findings to 38,998, which were 1,020 facts. One pair
-of block instructions overwriting one range produced 7,679 identical findings.
-A list that long is not read, and an unread check finds nothing at all.
+The first fix expanded every run into its devices, producing excessive
+duplicate findings in validation data. Repeated findings for the same overlap
+made the result difficult to review.
 
 So a run is reported as a run: contiguous devices written by the same rungs
 collapse into one finding that names the range.

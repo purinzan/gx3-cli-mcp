@@ -230,7 +230,7 @@ Windows基本、Macも可能、という方針なら外部依存は明示パス�
 - GX Works3のバイナリ解析、COM DLL同梱、三菱ソフトウェアの再配布。
 - live write/remote run/stopを既存MCPに混ぜること。安全境界が濁る。
 
-## 実プロジェクト分析への効き方
+## プロジェクト解析への効き方
 
 - 既存設備の「なぜ動かない」を見るには、`rung citation + xref + live read` が一番効く。
 - 改造レビューには、`lint rule id + evidence + graph` が効く。
