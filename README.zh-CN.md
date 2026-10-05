@@ -1,17 +1,18 @@
 # gx3-cli-mcp
 
+[日本語](README.ja.md) · [English](README.md) · [简体中文](README.zh-CN.md) · [한국어](README.ko.md)
+
 <!-- mcp-name: io.github.purinzan/gx3-cli-mcp -->
 
 [![PyPI](https://img.shields.io/pypi/v/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/gx3-cli-mcp)](https://pypi.org/project/gx3-cli-mcp/)
 [![CI](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/purinzan/gx3-cli-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
-
-English: [README.md](README.md)
+[![gx3-cli-mcp MCP server](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badges/score.svg)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
 **不用打开 GX Works3，也能查清楚线圈为什么不导通。**
 
-读取本机上的 GX Works3 `.gx3` 工程并回答关于它的问题 —— 软元件在哪里被写入、
+读取本机上三菱电机 MELSEC 的 GX Works3 `.gx3` 工程并回答关于它的问题 —— 软元件在哪里被写入、
 线圈导通需要满足什么条件、哪些条件来自 PLC 外部、哪些分支永远不可能成立。
 只读：绝不回写原工程。
 
@@ -26,7 +27,7 @@ English: [README.md](README.md)
 pip install gx3-cli-mcp
 ```
 
-需要 Python 3.10 以上。安装后提供两个命令行入口：`gx3-cli` 和 `gx3-mcp-server`。
+需要 Python 3.10 及以上。安装后提供两个命令行入口：`gx3-cli` 和 `gx3-mcp-server`。
 
 ## 30 秒上手
 
@@ -43,25 +44,25 @@ gx3-cli guide --root demo.gx3
 ## 在真实工程上
 
 ```bash
-gx3-cli doctor --root project.gx3        # 能正常读取吗？
+gx3-cli doctor --root project.gx3        # does it read?
 gx3-cli index-lite build --root project.gx3
 gx3-cli xref build --root project.gx3
-gx3-cli guide --root project.gx3         # 接下来该运行什么
+gx3-cli guide --root project.gx3         # what to run next
 ```
 
 然后就可以提问了：
 
 ```bash
-# 这个软元件在哪里被写入，又有谁在读它？
+# where is this device written, and what reads it?
 gx3-cli xref where-used M100 --root project.gx3
 
-# 这个线圈为什么不导通？
+# why is this coil not turning on?
 gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact
 
-# 整个程序，每个梯级一行
+# the whole program, one line per rung
 gx3-cli rung-text --root project.gx3
 
-# 按你记得住的注释去搜，而不是你记不住的软元件编号
+# search the comment you remember, not the device number you don't
 gx3-cli query-comment "clamp pressure" --root project.gx3
 ```
 
@@ -98,6 +99,8 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 `"command": "python", "args": ["-m", "gx3cli.gx3_mcp_server"]`。
 该服务器暴露只读分析工具和一个受限的命令执行器。
 
+关于 Agent 应如何操作该工具，请参阅 [Agent 使用指南（日文）](docs/AGENT_USAGE_JA.md)。
+
 ## 能力边界（如实说明）
 
 对本机上的 `.gx3` 做只读分析。**梯形图是它读得好的部分。**
@@ -127,14 +130,27 @@ FBD、ST、SFC 和 MIL 会被识别并如实标注，而不是靠猜测处理 �
 
 ## 文档
 
-- [用户手册（中文）](docs/USER_MANUAL_ZH.md)
-- 用户手册 [日文](docs/USER_MANUAL_JA.md) / [英文](docs/USER_MANUAL_EN.md)
+- 用户手册 [日文](docs/USER_MANUAL_JA.md) / [英文](docs/USER_MANUAL_EN.md) / [中文](docs/USER_MANUAL_ZH.md)
 - [Agent 使用指南（日文）](docs/AGENT_USAGE_JA.md)
-- [梯形图实务要点（日文）](docs/LADDER_PRACTICAL_TIPS_JA.md)
+- [梯形图实务要点（日文）](docs/LADDER_PRACTICAL_TIPS_JA.md) —— 面向现场的修改与审查建议
 - [安全须知（日文）](docs/SECURITY_JA.md) —— 本地数据处理、只读 MCP 策略
 - [验证矩阵（日文）](docs/VALIDATION_MATRIX.md) —— 已验证的范围与限制
-- [GX Works3 功能对照表（日文）](docs/GX_WORKS3_FEATURE_MATRIX_JA.md)
+- [独立验证台账（日文）](docs/INDEPENDENT_VALIDATION_LEDGER_JA.md) —— 为 Issue #49 记录的 GX Works3 验证依据
+- [Doctor 验收台账（日文）](docs/DOCTOR_ACCEPTANCE_JA.md) —— 为 Issue #135 记录的工程健康状况验收
+- [GX Works3 功能对照表（日文）](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) —— 标准功能的覆盖范围、缺口和实现优先级
+- [文件使用指南（日文）](docs/FILE_USAGE_GUIDE_JA.md) —— 仓库结构
+- [分析基准测试（日文）](docs/ANALYSIS_BENCHMARK_JA.md) —— 合成数据性能基线与测量限制
+- [审查问题（日文）](docs/REVIEW_QUESTIONS_JA.md) —— 提交 PR 前应向修改提出的问题，以及各问题发现的缺陷
+- [相关项目（日文）](docs/GITHUB_PROJECT_REVIEW_JA.md) —— 其他 GX Works3/MELSEC 工具及从中借鉴的内容
 - [llms.txt](llms.txt) —— 机器可读的能力与边界摘要
+
+Agent 技能：[现有工程审计](skills/gx3-existing-project-audit/SKILL.md)
+· [失败样本库](skills/gx3-failure-corpus/SKILL.md)
+
+## 分析契约迁移
+
+#153 的逐项查询当前状态与剩余验收工作，请参阅
+[分析契约迁移台账（日文）](docs/ANALYSIS_CONTRACT_MIGRATION_JA.md)。
 
 ## 许可
 
@@ -146,3 +162,15 @@ FBD、ST、SFC 和 MIL 会被识别并如实标注，而不是靠猜测处理 �
 或将其打包进付费产品。不存在许可证密钥、激活流程或付费套餐。
 
 商用相关的咨询，欢迎通过 Issue 提出。
+
+## 收录于 Glama
+
+已作为 MCP 服务器收录，并对每个工具的说明是否清楚描述其功能给出评分。
+这些评分可以作为工具接口的外部反馈；评分较低的工具，其说明需要改进。
+
+[![gx3-mcp-server on Glama](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badges/card.svg)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
+
+贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md) · [AGENTS.md](AGENTS.md)
+
+如果输入是梯形图 CSV，请使用 `gx3-cli rung-text --csv ladder.csv`。
+已验证的范围与限制见 [CSV 解析器指南（日文）](docs/LADDER_CSV_JA.md)。
