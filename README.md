@@ -50,7 +50,7 @@ gx3-cli guide --root demo.gx3
 `guide` reads the project and tells you which commands are worth running on it,
 and why. That is the answer to "there are sixty commands, where do I start".
 
-## On a real project
+## On a project
 
 ```bash
 gx3-cli doctor --root project.gx3        # does it read?
@@ -113,17 +113,14 @@ drive it.
 
 ## Scope, honestly
 
-Read-only analysis of `.gx3` on your machine. **Ladder is what it reads well.**
-FBD, ST, SFC and MIL are detected and reported as such rather than guessed at,
-so a program it cannot read comes back saying so instead of coming back empty.
+Read-only analysis of ladder data in local `.gx3` projects.
 
 It does not edit projects, connect to a PLC to change anything, or replace GX
 Works3. `live-read` can read live device values over MC Protocol/SLMP, CLI-only
 and only with explicit connection parameters.
 
 Output is advisory. Verify in GX Works3 and through your own safety process
-before touching real equipment. See
-[Validation matrix (JA)](docs/VALIDATION_MATRIX.md) for what has been checked.
+before touching real equipment.
 
 If a project fails to parse, `gx3-cli failure-corpus capture` turns it into a
 local regression sample without sending anything anywhere.
@@ -145,7 +142,7 @@ decrypted; export the folder from GX Works3 instead.
 - [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md)
 - [Ladder practical tips (JA)](docs/LADDER_PRACTICAL_TIPS_JA.md) — field-oriented modification and review tips
 - [Security note (JA)](docs/SECURITY_JA.md) — local data handling, read-only MCP policy
-- [Validation matrix (JA)](docs/VALIDATION_MATRIX.md) — verified scope and limits
+- [Verification tracking](https://github.com/purinzan/gx3-cli-mcp/issues/202) — verification tasks and acceptance criteria
 - [Independent validation ledger (JA)](docs/INDEPENDENT_VALIDATION_LEDGER_JA.md) — GX Works3 evidence tracked for Issue #49
 - [Doctor acceptance ledger (JA)](docs/DOCTOR_ACCEPTANCE_JA.md) — project-health acceptance tracked for Issue #135
 - [GX Works3 feature matrix (JA)](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) — standard-feature coverage, gaps, and implementation priorities

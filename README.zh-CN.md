@@ -41,7 +41,7 @@ gx3-cli guide --root demo.gx3
 `guide` 会读取工程，并告诉你针对这个工程值得运行哪些命令、以及为什么。
 这就是对「命令有六十个，我该从哪里开始」的回答。
 
-## 在真实工程上
+## 在工程上
 
 ```bash
 gx3-cli doctor --root project.gx3        # does it read?
@@ -103,16 +103,13 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 
 ## 能力边界（如实说明）
 
-对本机上的 `.gx3` 做只读分析。**梯形图是它读得好的部分。**
-FBD、ST、SFC 和 MIL 会被识别并如实标注，而不是靠猜测处理 —— 因此读不了的程序
-会明确返回「读不了」，而不是返回一个空结果。
+对本机 `.gx3` 工程中的梯形图数据做只读分析。
 
 它不编辑工程，不连接 PLC 做任何更改，也不替代 GX Works3。
 `live-read` 可以通过 MC Protocol/SLMP 读取 PLC 当前值，但仅限 CLI，
 且必须显式提供连接参数。
 
 输出仅供参考。在接触真实设备之前，请在 GX Works3 中复核，并走完你自己的安全流程。
-已验证范围见[验证矩阵（日文）](docs/VALIDATION_MATRIX.md)。
 
 如果某个工程解析失败，`gx3-cli failure-corpus capture` 会把它变成一份本地回归样本，
 不会向任何地方发送数据。
@@ -134,7 +131,7 @@ FBD、ST、SFC 和 MIL 会被识别并如实标注，而不是靠猜测处理 �
 - [Agent 使用指南（日文）](docs/AGENT_USAGE_JA.md)
 - [梯形图实务要点（日文）](docs/LADDER_PRACTICAL_TIPS_JA.md) —— 面向现场的修改与审查建议
 - [安全须知（日文）](docs/SECURITY_JA.md) —— 本地数据处理、只读 MCP 策略
-- [验证矩阵（日文）](docs/VALIDATION_MATRIX.md) —— 已验证的范围与限制
+- [验证工作跟踪](https://github.com/purinzan/gx3-cli-mcp/issues/202) —— 验证任务与验收条件
 - [独立验证台账（日文）](docs/INDEPENDENT_VALIDATION_LEDGER_JA.md) —— 为 Issue #49 记录的 GX Works3 验证依据
 - [Doctor 验收台账（日文）](docs/DOCTOR_ACCEPTANCE_JA.md) —— 为 Issue #135 记录的工程健康状况验收
 - [GX Works3 功能对照表（日文）](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) —— 标准功能的覆盖范围、缺口和实现优先级

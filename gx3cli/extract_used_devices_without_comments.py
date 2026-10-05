@@ -6,7 +6,7 @@ non-empty device comment in the project device-comment DB.
 Device occurrences come from the shared decoder (gx3_arg_decode), the same one
 the cross-reference and the lite index use. This module used to pair the header
 type tokens with the d{} numbers by position instead, which quietly went wrong
-whenever an operand carried a modifier: on one real project it reported an M80
+whenever an operand carried a modifier: in validation data it reported an M80
 the rung does not contain and dropped the K4M49000 it does, on a row it called
 "exact". The shared decoder is now the single source for both the report and
 the partial-row diagnostic.

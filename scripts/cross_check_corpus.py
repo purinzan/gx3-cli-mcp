@@ -1,4 +1,4 @@
-"""Check a corpus of real projects by making two readings of it disagree.
+"""Compare independent readings of validation data.
 
 There is no GX Works3 here to be the oracle, so the next best evidence is that
 two paths built separately from the same bytes agree. Each project is read
@@ -17,7 +17,7 @@ four ways:
 
 Nothing here proves the two readings are right -- they were once wrong the same
 way, which is why the walk they share is now written once. It proves they are
-consistent, over projects nobody chose for being easy.
+consistent for the supplied validation data.
 
     python scripts/cross_check_corpus.py <folder of .gx3> -o results.json
 """

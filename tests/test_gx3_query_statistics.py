@@ -2,16 +2,13 @@ from __future__ import annotations
 
 """A database ships knowing which of its indexes is worth using.
 
-Without statistics SQLite picks an index by shape rather than by how many rows
-it will touch. On a real project, for "device=? and access=?", it chose the
-index on `access` -- 53,000 rows for a read, scanned and then sorted -- over
-the one on `device`, which would have found three. 27ms instead of 0.1ms, and
-dead-logic runs one such query per device: 6,665 of them, 72 of its 75 seconds.
+Without statistics SQLite can prefer a broad `access` index over a selective
+`device` index, scanning and sorting unnecessary rows. Validation data exposed
+this cost in repeated device queries.
 
-ANALYZE takes a tenth of a second. So the builders run it, and a database built
-before they did is repaired in place rather than declared stale -- it is not
-wrong, it is only uninformed, and rebuilding it would cost a hundred times more
-than fixing it.
+The builders run ANALYZE. Earlier databases are repaired in place rather than
+declared stale: their contents remain valid, and statistics can be added
+without rebuilding them.
 """
 
 import sqlite3

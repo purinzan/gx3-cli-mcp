@@ -44,7 +44,7 @@ gx3-cli guide --root demo.gx3
 `guide` はプロジェクトを読み取り、そのプロジェクトで実行する価値のあるコマンドと
 理由を示します。「コマンドが60個もあるけれど、どこから始めればいいのか」に答えます。
 
-## 実際のプロジェクトで使う
+## プロジェクトで使う
 
 ```bash
 gx3-cli doctor --root project.gx3        # does it read?
@@ -107,16 +107,13 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 
 ## 対応範囲と制限
 
-手元のマシンにある `.gx3` を読み取り専用で解析します。**得意なのはラダーの読み取りです。**
-FBD、ST、SFC、MILは形式を検出してそのように報告し、内容を推測して扱いません。
-読めないプログラムは空の結果を返すのではなく、読めないことを明示します。
+手元のマシンにある `.gx3` のラダーデータを読み取り専用で解析します。
 
 プロジェクトを編集したり、変更のためにPLCへ接続したり、GX Works3の代わりになったりはしません。
 `live-read` はMC Protocol/SLMPで実機のデバイス値を読み取れますが、
 CLI限定で、接続パラメータを明示した場合にのみ利用できます。
 
 出力は参考情報です。実機に手を加える前に、GX Works3と自身の安全確認手順で検証してください。
-検証済みの範囲は[検証マトリクス（日本語）](docs/VALIDATION_MATRIX.md)を参照してください。
 
 プロジェクトの解析に失敗した場合、`gx3-cli failure-corpus capture` で
 ローカルの回帰検証用サンプルにできます。データを外部へ送信することはありません。
@@ -138,7 +135,7 @@ CLI限定で、接続パラメータを明示した場合にのみ利用でき�
 - [エージェント利用ガイド（日本語）](docs/AGENT_USAGE_JA.md)
 - [ラダー実務のヒント（日本語）](docs/LADDER_PRACTICAL_TIPS_JA.md) — 現場での変更・レビューに向けたヒント
 - [セキュリティ上の注意（日本語）](docs/SECURITY_JA.md) — ローカルデータの扱い、読み取り専用MCPの方針
-- [検証マトリクス（日本語）](docs/VALIDATION_MATRIX.md) — 検証済みの範囲と制限
+- [検証の作業管理](https://github.com/purinzan/gx3-cli-mcp/issues/202) — 検証タスクと受け入れ条件
 - [独立検証台帳（日本語）](docs/INDEPENDENT_VALIDATION_LEDGER_JA.md) — Issue #49に対するGX Works3の検証根拠
 - [Doctor受け入れ台帳（日本語）](docs/DOCTOR_ACCEPTANCE_JA.md) — Issue #135に対するプロジェクト健全性の受け入れ検証
 - [GX Works3機能マトリクス（日本語）](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) — 標準機能の対応範囲、不足、実装の優先順位

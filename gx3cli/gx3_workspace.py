@@ -282,14 +282,12 @@ def prepare(root: Path, *, rebuild: bool = False, quiet: bool = True) -> Workspa
 def _add_statistics(path: Path) -> bool:
     """Give a database its query statistics, if it was built without them.
 
-    Without them SQLite picks an index by shape rather than by how many rows it
-    will touch: on a real project it chose the index on `access` -- 53,000 rows
-    for a read -- over the one on `device`, which would have found three. One
-    query took 27ms instead of 0.1ms, and dead-logic runs one per device.
+    Without them SQLite can prefer a broad `access` index over a selective
+    `device` index. Validation data exposed unnecessary scanning and sorting
+    in repeated device lookups.
 
-    Databases built before this are otherwise perfectly good, so this repairs
-    them in place rather than declaring them stale: a tenth of a second against
-    rebuilding the whole thing.
+    Earlier databases remain valid, so add statistics in place rather than
+    rebuilding the whole database.
     """
     if not path.exists():
         return False

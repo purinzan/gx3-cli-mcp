@@ -429,10 +429,9 @@ def print_csv(report: dict[str, object], stream) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # A device comment can hold characters the Windows console encoding has no
-    # room for -- this project has a comment with a diamond in it -- and
-    # without this the command printed 1,156 edges of a real project and then
-    # died on the 1,157th.
+    # A device comment can hold characters the Windows console encoding cannot
+    # represent. Use replacement handling so printing validation results does
+    # not fail partway through the output.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)

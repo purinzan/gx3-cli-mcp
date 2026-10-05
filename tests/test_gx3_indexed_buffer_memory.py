@@ -9,8 +9,7 @@ decoded, and printed, as an index register Z48200. The D occurrence was then
 missing from the cross-reference and a device that cannot exist -- an index
 register numbered 48200 -- was in it instead.
 
-The row below is the shape taken from a real project, with no project data in
-it beyond the operand structure.
+The row below represents the operand structure of a validation case.
 """
 
 from gx3cli.gx3_arg_decode import parse_row_occurrences

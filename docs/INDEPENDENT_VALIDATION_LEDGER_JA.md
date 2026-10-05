@@ -11,7 +11,7 @@ gx3-cli validation-ledger
 gx3-cli validation-ledger --format json
 ```
 
-`Closeable: yes` は、必須8群について「外部根拠」と「公開CIで回る非機密テスト」の
+`Closeable: yes` は、必須8群について「外部根拠」と「ローカルで実行する非機密テスト」の
 対応が台帳に揃っていることを示します。これは静的解析の対応範囲を閉じるための判定であり、
 実設備の安全性やライブ値の一致を保証するものではありません。
 
@@ -30,7 +30,7 @@ gx3-cli validation-ledger --format json
 
 ## 登録済み証拠
 
-| group | 根拠 | CLI/CI側の確認 | 状態 |
+| group | 根拠 | CLI/テスト側の確認 | 状態 |
 |---|---|---|---|
 | `series_parallel_contacts` | GX Works3 Operating Manual SH-081215ENG-AQ のラダー編集/モニタ表示。直列・並列の接続、a/b接点の区別を外部根拠にする。 | `tests/test_gx3_topology_conditions.py` と `tests/test_gx3_change_impact.py` が AND/OR、b接点、接点変更、配置のみ変更の扱いを検査。 | checked |
 | `outputs_and_multiple_writers` | 三菱電機 GX Works3 Operating Manual SH-081215ENG-AQ 印刷ページ351/353。SET、DTOP、TO の命令ブロックが命令+オペランドのセル幅で表示されることを確認。 | `tests/test_gx3_ladder_layout.py` の `test_instruction_width_uses_cells_instead_of_remaining_rail` が SET=2セル、MOV=3セル、TO=5セル、出力命令の右詰めと入力側配線を検査。 | checked |

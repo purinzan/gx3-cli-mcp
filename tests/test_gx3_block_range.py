@@ -5,8 +5,8 @@ from __future__ import annotations
 BMOV .. D64061 K4 writes D64061 through D64064, and the ladder spells only
 D64061. The cross-reference recorded that one device, so "where is D64063
 written" answered "no occurrences" -- which reads as "nothing writes this
-device", not as "this tool cannot see it". On one real project 64302 devices
-were in that state.
+device", not as "this tool cannot see it". Validation data exposed devices
+that were in that state.
 
 The count operand is named "(n)" in the operand tables, so the length comes
 from the manuals rather than from a hand-kept list of block instructions.

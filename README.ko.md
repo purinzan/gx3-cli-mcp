@@ -42,7 +42,7 @@ gx3-cli guide --root demo.gx3
 `guide`는 프로젝트를 읽고, 해당 프로젝트에서 실행할 만한 명령과 그 이유를 알려줍니다.
 "명령이 60개나 있는데 어디서 시작해야 할까?"라는 질문에 답해 줍니다.
 
-## 실제 프로젝트에서 사용하기
+## 프로젝트에서 사용하기
 
 ```bash
 gx3-cli doctor --root project.gx3        # does it read?
@@ -104,16 +104,13 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 
 ## 지원 범위와 한계
 
-로컬 컴퓨터의 `.gx3`를 읽기 전용으로 분석합니다. **래더를 읽는 데 강점이 있습니다.**
-FBD, ST, SFC, MIL은 해당 형식을 감지하고 그대로 보고하며 내용을 추측하지 않습니다.
-읽을 수 없는 프로그램은 빈 결과를 반환하는 대신 읽을 수 없다고 명시합니다.
+로컬 `.gx3` 프로젝트의 래더 데이터를 읽기 전용으로 분석합니다.
 
 프로젝트를 편집하거나, 변경을 위해 PLC에 연결하거나, GX Works3를 대체하지 않습니다.
 `live-read`는 MC Protocol/SLMP로 실제 디바이스 값을 읽을 수 있지만,
 CLI에서만 사용할 수 있고 연결 매개변수를 명시해야 합니다.
 
 출력은 참고 정보입니다. 실제 장비에 손대기 전에 GX Works3와 자체 안전 절차를 통해 검증하세요.
-검증된 범위는 [검증 매트릭스(일본어)](docs/VALIDATION_MATRIX.md)를 참고하세요.
 
 프로젝트 파싱에 실패하면 `gx3-cli failure-corpus capture`로 로컬 회귀 검증용 샘플을 만들 수 있습니다.
 데이터를 외부로 전송하지 않습니다.
@@ -135,7 +132,7 @@ CLI에서만 사용할 수 있고 연결 매개변수를 명시해야 합니다.
 - [에이전트 사용 가이드(일본어)](docs/AGENT_USAGE_JA.md)
 - [래더 실무 팁(일본어)](docs/LADDER_PRACTICAL_TIPS_JA.md) — 현장 작업을 위한 수정 및 검토 팁
 - [보안 안내(일본어)](docs/SECURITY_JA.md) — 로컬 데이터 처리와 읽기 전용 MCP 정책
-- [검증 매트릭스(일본어)](docs/VALIDATION_MATRIX.md) — 검증된 범위와 한계
+- [검증 작업 관리](https://github.com/purinzan/gx3-cli-mcp/issues/202) — 검증 작업과 인수 조건
 - [독립 검증 기록(일본어)](docs/INDEPENDENT_VALIDATION_LEDGER_JA.md) — Issue #49의 GX Works3 검증 근거
 - [Doctor 인수 검증 기록(일본어)](docs/DOCTOR_ACCEPTANCE_JA.md) — Issue #135의 프로젝트 상태 인수 검증
 - [GX Works3 기능 매트릭스(일본어)](docs/GX_WORKS3_FEATURE_MATRIX_JA.md) — 표준 기능의 지원 범위, 미지원 사항, 구현 우선순위

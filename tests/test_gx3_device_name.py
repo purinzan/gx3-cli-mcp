@@ -42,8 +42,8 @@ def test_leading_letter_is_not_padded() -> None:
 
 
 def test_hex_devices_with_letters_are_accepted() -> None:
-    # These were rejected outright as "invalid device" before; real projects
-    # are full of them.
+    # These were rejected outright as "invalid device" before; project files
+    # can contain them.
     assert parse_device_name("Y3D2") == ("Y", 978)
     assert parse_device_name("X1A") == ("X", 26)
 

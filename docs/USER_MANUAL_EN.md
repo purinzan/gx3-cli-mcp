@@ -44,7 +44,7 @@ python -m pip install git+https://github.com/purinzan/gx3-cli-mcp.git
 
 ## First Three Commands
 
-Run these first on a real project:
+Run these first on a project:
 
 ```powershell
 gx3-cli doctor --root C:\path\to\project.gx3

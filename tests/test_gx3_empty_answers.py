@@ -12,7 +12,7 @@ other two commands did not.
 
 Question 5 -- does a correction reach every walk? `trace-device` builds its
 drivers from coil roles, so a word device written by an instruction had no
-drivers at all: on a real project one with sixteen writing rows reported
+drivers at all: validation data with multiple writing rows reported
 driver_rows=0 as a complete answer.
 """
 

@@ -161,9 +161,9 @@ def test_two_operand_arithmetic_keeps_read_modify_write_edge() -> None:
 def test_a_pulse_instruction_flows_like_its_level_form() -> None:
     """MOVP moves on the edge; where the value goes is the same question.
 
-    The acceptance criteria for #36 name pulse variants, and they worked --
-    41 edges over one real project, MOVP and BMOVP among them -- on the base
-    opcode falling out of base_opcode(). Nothing pinned it.
+    The acceptance criteria for #36 name pulse variants. Validation data
+    covered MOVP and BMOVP through the base opcode from base_opcode(), but
+    no regression test pinned that behavior.
     """
     records = records_for_operation(
         "MOVP",

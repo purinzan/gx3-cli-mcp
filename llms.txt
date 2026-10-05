@@ -26,7 +26,7 @@
 - Install: `pip install gx3-cli-mcp` (Python 3.10+, Windows-first; CI also runs on Linux and macOS).
 - Console scripts: `gx3-cli` (command line) and `gx3-mcp-server` (stdio MCP server).
 - Everything runs locally. The tool has no license token, no paid plan, and no reason to make network requests.
-- A synthetic project generator (`gx3-cli synthetic-project line.gx3 --profile demo-line`) builds a fictional 14-station line of about 500 rungs, so the tool can be evaluated and bugs reproduced without sharing a real customer project.
+- A synthetic project generator (`gx3-cli synthetic-project line.gx3 --profile demo-line`) builds a fictional production line, so the tool can be evaluated and bugs reproduced without sharing confidential project data.
 - Source-available proprietary licence: internal evaluation and company use are permitted; redistribution, hosting as a service and inclusion in paid products are not.
 
 ## Docs
@@ -34,13 +34,13 @@
 - [README](https://github.com/purinzan/gx3-cli-mcp/blob/main/README.md): install, the questions it answers, MCP setup, scope.
 - [User manual, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/USER_MANUAL_JA.md): 日本語の導入と操作ガイド.
 - [Agent usage guide, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/AGENT_USAGE_JA.md): how an AI agent should drive the tool, and the answer rules it must follow.
-- [Validation matrix](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/VALIDATION_MATRIX.md): verified scope and limitations.
+- [Verification tracking](https://github.com/purinzan/gx3-cli-mcp/issues/202): verification tasks and acceptance criteria.
 - [Security note, Japanese](https://github.com/purinzan/gx3-cli-mcp/blob/main/docs/SECURITY_JA.md): local data handling and the read-only MCP policy.
 - [Contributing](https://github.com/purinzan/gx3-cli-mcp/blob/main/CONTRIBUTING.md): development setup, the no-project-data rule, no CLA.
 
 ## Background
 
-- [Introductory article, Japanese](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp): why it exists and what its output looks like on a real-sized project.
+- [Introductory article, Japanese](https://zenn.dev/purinzan/articles/gx-works3-ladder-cli-mcp): why it exists and examples of its analysis output.
 
 ## Vocabulary
 
