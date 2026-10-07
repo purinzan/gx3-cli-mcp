@@ -86,6 +86,7 @@ class FlowElement:
     # this rather than len(devices).
     argc: int = 0
     operands: list[str] = field(default_factory=list)
+    op_index: int = -1
 
     @property
     def is_wire(self) -> bool:
@@ -286,6 +287,7 @@ def positioned_elements(
                 constants=[value for value, operand in zip(operands, operand_kinds) if operand.kind == "const"],
                 operands=operands,
                 argc=operation.argc,
+                op_index=operation.op_index,
             )
         )
         op_index += 1

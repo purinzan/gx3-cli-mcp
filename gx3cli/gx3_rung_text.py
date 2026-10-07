@@ -38,7 +38,7 @@ from gx3cli.gx3_ladder_logic import (
 )
 from gx3cli.gx3_ladder_csv import parse_csv_rows, read_csv_records
 from gx3cli.gx3_intermediate_tool import extract_dim
-from gx3cli.gx3_arg_decode import write_indices
+from gx3cli.gx3_arg_decode import row_operations, write_indices
 from gx3cli.gx3_ladder_print import load_print_comments, comment_text_for, operand_comment_device
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
@@ -49,7 +49,7 @@ from gx3cli.review_gx3_project import LadderRow, load_rows, extract_title, opera
 
 @dataclass(frozen=True)
 class RungText:
-    """One driven device and the condition that drives it."""
+    """One output instruction, its known write target, and incoming condition."""
 
     lddb: str
     pos: int
@@ -65,6 +65,9 @@ class RungText:
     comments: dict[str, str] | None = None
     operands: tuple[str, ...] = ()
     diagnostic: str = ""
+    raw_args: tuple[str, ...] | None = None
+    arg_tokens: tuple[str, ...] | None = None
+    raw_data: str = ""
 
     @property
     def location(self) -> str:
@@ -76,7 +79,9 @@ class RungText:
         arrow = f"{self.opcode} {self.device}" if self.opcode not in ("", "OUT") else self.device
         if self.operands and (self.opcode != "OUT" or len(self.operands) > 1):
             arrow = f"{self.opcode} {' '.join(self.operands)}"
-        line = f"{self.location:<{width}}  {self.condition} -> {arrow}"
+        line = f"{self.location:<{width}}  {self.condition} -> {arrow.rstrip()}"
+        if self.diagnostic:
+            line += "  # diagnostic=" + json.dumps(self.diagnostic, ensure_ascii=False)
         if self.comments:
             line += "  # " + ", ".join(
                 f"{device}={json.dumps(text, ensure_ascii=False)}"
@@ -147,7 +152,24 @@ def rung_texts(
     comments: dict | None = None,
 ) -> list[RungText]:
     out: list[RungText] = []
-    elements = positioned_elements(row, labels)
+    operations, status = row_operations(row, labels)
+    elements = positioned_elements(row, labels) if status == "exact" else []
+    if status != "exact" or sum(not element.is_wire for element in elements) != len(operations):
+        # A missing header operation shifts every subsequent ce association.
+        # Preserve the row rather than assigning guessed operands or writes.
+        return [RungText(
+            row.lddb, int(row.pos), row.title or "", "UNPARSED", "", "?", step=step,
+            comments={} if comments is not None else None,
+            diagnostic="partial decode: instruction alignment or element positions are incomplete",
+            raw_data=row.data,
+        )]
+    by_index = {operation.op_index: operation for operation in operations}
+    unsupported = {
+        element.op_index: instruction_diagnostic(element)
+        for element in elements if element.kind == "instruction"
+    }
+    unsupported = {index: message for index, message in unsupported.items() if message}
+    row_diagnostic = "; ".join(unsupported.values())
     candidates = {}
     label_names = set()
     if comments is not None:
@@ -167,9 +189,11 @@ def rung_texts(
     for name in label_names:
         candidates.pop(name, None)
     for element in sorted(
-        (element for element in elements if written_devices(element)),
+        (element for element in elements if written_devices(element)
+         or (element.kind == "instruction" and (not element.is_condition or element.op_index in unsupported))),
         key=lambda element: (element.y, element.x),
     ):
+        diagnostic = row_diagnostic
         try:
             condition = simplify(logic_to_text(enable_logic_for_output(row, element, labels)))
         except Exception:
@@ -177,7 +201,18 @@ def rung_texts(
             # is reported as such rather than skipped, so a program does not
             # quietly come back shorter than it is.
             condition = "?"
-        for device in written_devices(element):
+            diagnostic = "; ".join(filter(None, (diagnostic, "topology: incoming condition could not be resolved")))
+        if row_diagnostic:
+            condition = f"? (local condition: {condition})"
+        unresolved = any("?" in operand and not operand.startswith('"') for operand in element.operands)
+        if unresolved:
+            diagnostic = "; ".join(filter(None, (diagnostic, "decode: unresolved operand or label")))
+        operation = by_index[element.op_index]
+        preserve_raw = unresolved or element.op_index in unsupported
+        operands = tuple(element.operands) if element.kind == "instruction" else ()
+        for device in written_devices(element) or [""]:
+            if device == "?":
+                device = ""
             out.append(
                 RungText(
                     lddb=row.lddb,
@@ -187,10 +222,22 @@ def rung_texts(
                     device=device,
                     condition=condition,
                     step=step,
-                    comments=visible_comments(condition, device, candidates) if comments is not None else None,
+                    operands=operands,
+                    diagnostic=diagnostic,
+                    raw_args=tuple(operation.raw_args) if preserve_raw else None,
+                    arg_tokens=tuple(operation.arg_tokens) if preserve_raw else None,
+                    comments=visible_comments(condition, device, candidates, operands) if comments is not None else None,
                 )
             )
     return out
+
+
+def instruction_diagnostic(element: FlowElement) -> str:
+    if element.role in {"MC", "MCR", "CALL", "CALLP", "CJ", "SCJ", "JMP", "RET", "IRET", "FOR", "NEXT"}:
+        return f"unsupported control flow {element.opcode} at {element.x},{element.y}"
+    if element.role != "EG" and write_indices(element.role, element.argc)[0] is None:
+        return f"unsupported instruction {element.opcode} at {element.x},{element.y}: writes and effects unknown"
+    return ""
 
 
 # Quoted constants are consumed as whole tokens and never annotated. Taking
@@ -198,9 +245,16 @@ def rung_texts(
 _COMMENT_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[^\s()\[\],/<>!=&|]+')
 
 
-def visible_comments(condition: str, device: str, candidates: dict[str, str]) -> dict[str, str]:
-    names = _COMMENT_TOKEN.findall(condition) + [device]
+def visible_comments(
+    condition: str, device: str, candidates: dict[str, str], operands: tuple[str, ...] = (),
+) -> dict[str, str]:
+    names = _COMMENT_TOKEN.findall(condition) + [device, *operands]
     return {name: candidates[name] for name in names if name in candidates}
+
+
+def matches_device(item: RungText, device: str) -> bool:
+    # With unknown writes, a filter cannot establish that this row is unrelated.
+    return not device or item.device.upper() == device.upper() or (not item.device and bool(item.diagnostic))
 
 
 _DATA_COLUMNS = (
@@ -281,18 +335,18 @@ def collect_csv(path: Path, device: str = "") -> list[RungText]:
         out: list[RungText] = []
         for row in load_rows_from_csv(path):
             for text in rung_texts(row):
-                if device and text.device.upper() != device.upper():
+                if not matches_device(text, device):
                     continue
                 out.append(text)
         return out
-    return [
+    items = [
         RungText(item.instruction.program, item.instruction.step,
                  item.instruction.title, item.instruction.opcode, item.device,
                  item.condition, step=item.instruction.step,
                  operands=item.instruction.operands, diagnostic=item.diagnostic)
         for item in parse_csv_rows(path, rows)
-        if not device or item.device.upper() == device.upper()
     ]
+    return [item for item in items if matches_device(item, device)]
 
 
 def collect(root: Path, lddb: str = "", device: str = "", *, comments: bool = False) -> list[RungText]:
@@ -307,7 +361,7 @@ def collect(root: Path, lddb: str = "", device: str = "", *, comments: bool = Fa
             continue
         step = program_map.step_of(row.lddb, int(row.pos))
         for text in rung_texts(row, labels, step, comment_map):
-            if device and text.device != device:
+            if not matches_device(text, device):
                 continue
             out.append(text)
     return out
@@ -340,6 +394,9 @@ def to_json(items: list[RungText]) -> list[dict[str, Any]]:
             "condition": item.condition,
             **({"operands": list(item.operands)} if item.operands else {}),
             **({"diagnostic": item.diagnostic} if item.diagnostic else {}),
+            **({"raw_args": list(item.raw_args)} if item.raw_args is not None else {}),
+            **({"arg_tokens": list(item.arg_tokens)} if item.arg_tokens is not None else {}),
+            **({"raw_data": item.raw_data} if item.raw_data else {}),
             **({"comments": item.comments} if item.comments is not None else {}),
         }
         for item in items

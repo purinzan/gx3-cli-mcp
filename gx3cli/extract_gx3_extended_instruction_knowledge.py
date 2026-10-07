@@ -385,7 +385,8 @@ def token_device_type(token: str) -> str:
 def has_device_operand_after(tokens: list[str], index: int) -> bool:
     if index + 1 >= len(tokens):
         return False
-    return token_device_type(tokens[index + 1]) in DEVICE_TYPES
+    token = tokens[index + 1]
+    return token_device_type(token) in DEVICE_TYPES or token.startswith(LABEL_TOKEN_PREFIX)
 
 
 def parse_header_ops(data: str, *, tokens: list[str] | None = None) -> list[HeaderOp]:
