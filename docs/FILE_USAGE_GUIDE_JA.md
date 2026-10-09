@@ -87,6 +87,7 @@
 | `test_gx3_explore.py` | 4つの入口が揃っていること、実行できなかった項目・時間切れの項目が黙って抜けず終了コードにも出ること、相対パスの `--root` が届くことを検査する。 |
 | `test_gx3_workspace.py` | 索引が「どこにあるか」ではなく「どの入力から作られたか」で判定されること、別ディレクトリで作った索引を見つけて重複作成しないこと、編集後・旧版の索引を再利用しないことを検査する。 |
 | `test_gx3_same_input_across_artefacts.py` | xref・調査パッケージ・通信CSV の3成果物が同じ入力指紋を持ち、途中で編集された場合は一致しなくなることを検査する。「論理とコメントと通信設定が同じ入力からか」を確認できる状態を保つ。 |
+| `test_gx3_refresh_candidates.py` | 未検証w3pa文字列を確定範囲に昇格させず、候補0件・点数0・点数未取得・旧推測CSVを区別する。実comm-refresh/comm-detail/xref/lint CLIと、確認済みCPU範囲の局別仮計算で種別を保持する契約を検査する。合成w3paは正式バイナリschemaの検証ではない。 |
 | `test_gx3_identity_reach.py` | index-lite と project-survey も入力指紋を記録し、別プロジェクトの索引を拒否すること、root 未指定の呼び出しは従来通り動くことを検査する。 |
 | `test_gx3_input_identity.py` | 入力指紋の依存と内容変化、別入力xrefの拒否、root付き照会での指紋欠損/入力消失の拒否を検査する。rootなしの単独DB読取りは維持し、optional traceはxref拒否時もpruningなしで継続する。 |
 | `test_gx3_step_not_pos.py` | rung-text の位置表示が内部 pos ではなく GX Works3 のステップ番号であること、ステップ不明時は pos と明示すること、印字ラダーの表示と一致することを検査する。 |

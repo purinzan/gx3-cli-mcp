@@ -154,6 +154,17 @@ load_refresh_areasは既知範囲だけの互換projectionであり、空リス�
 従来のI/O/文字コードエラーは握り潰さない。他のCSV consumer、units CSV、保存済み境界の
 入力由来・完全性の契約は未移行であり、このreader追加だけで全外部境界の受入とはしない。
 
+comm-refreshの未検証w3pa文字列はrecord_state=unverified_candidateとして保持し、
+確定範囲・点数・方向・ObjectIDには昇格させない。CPU種別と出現順からリンク側の
+RX/RY/RWr/RWwを推測しない。近傍ワードと仮の終了アドレスはcandidate_*列に限定。
+生成CSVのrecord_state列がある場合、同じ内容hashを持つmanifestの抽出状態を読むため、
+ヘッダだけの出力もcheckedな空一覧に変わらない。旧producerのinference confidenceも
+除外する。従来の明示CSVは供給された内容の読取りとして互換を維持する。
+comm-detailはこの読取り状態をmanifest/本文に残し、未検証の局別計算で外部ソースを
+確定させない。合成LDDB→comm-refresh CLI→CSV reader→comm-detail/xref/lint CLIで
+候補の誤昇格防止を検証。合成w3paは実バイナリschemaの検証ではなく、点数・単位の
+正式デコードと実GX Works3設定画面との照合は未完了。
+
 ## 定数置換と書込み前の初期・保持値読取り
 
 修正前、L100接点→Y0が先、SM401→L100 OUTが後の実LDDBで、traceは前の接点を

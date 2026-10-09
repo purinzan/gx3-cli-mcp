@@ -295,6 +295,25 @@ lintの`external-value-source`は、refresh CSVの未取得・不正なheader・
 失敗します。有効な空CSVは「指定CSV内に範囲なし」の意味に限定され、別プロジェクトの
 CSVでないことや実設備の全外部writerの不存在を証明するものではありません。
 
+`comm-refresh`のRJ61BT11抽出は、現時点では`.w3pa`内の文字列候補です。
+M/L/R/ZR/RDを含むCPU側デバイスを列挙しますが、リフレッシュ設定レコード、
+点数の単位、RX/RY/RWr/RWwの方向、リンク側開始位置、ユニットとの対応は未デコードです。
+文字列順・ファイル名順・近傍の整数による割当は確定値として使いません。
+`record_state=unverified_candidate`の行は`device_end`と`points_or_words`が空欄で、
+`candidate_points_or_words`と`candidate_device_end`は未検証の近傍ワードと仮計算です。
+GX Works3の設定画面で照合してください。正しい点数の取得が完了したことを意味しません。
+
+生成manifestの`refresh_area_analysis`とCSVの内容hashで、候補0件も未対応・未取得と
+区別します。生成CSVは同名prefixのmanifestと一緒に保存してください。候補行と旧版の
+`*_string_evidence_*_inference`行は後続解析の既知範囲から除外され、lintは依存checkを
+未評価にします。従来形式で明示した確認済み範囲のCSVは引き続き読めますが、CSV内の
+宣言を読む範囲に限られます。以前の自動抽出CSVは再生成してください。
+
+`comm-detail`の局別範囲は、確認済みCPU範囲を入力した場合にも、標準の1局32ビット・
+4ワードとリンク側開始位置0を仮定した候補です。CPUデバイス種別を保持し、
+`unverified_standard_station_mapping`と表示します。モード・占有局数・複数範囲の
+対応は未確認なので、確定した外部ソース割当には使いません。
+
 lintとDoctorのproject-healthもlite索引の入力指紋・device naming版を検証します。
 別入力・指紋欠損・旧版のlite索引は拒否し、欠損している場合は従来どおり依存する検査を未評価にします。
 liteの照会は読取り専用で開き、失敗した場合も先に開いた解析DBを閉じます。

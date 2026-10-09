@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import hashlib
+import io
 import re
 import sys
 from collections import Counter, defaultdict
@@ -15,7 +17,7 @@ from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.review_gx3_project import LadderRow, comment_for_device, load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
 from gx3cli.gx3_device_name import device_radix, split_device
-from gx3cli.gx3_analysis_state import AnalysisState, NOT_EVALUATED, PARTIAL, DISCOVERY, DECODE
+from gx3cli.gx3_analysis_state import AnalysisState, CHECKED, STATES, NOT_EVALUATED, PARTIAL, DISCOVERY, DECODE
 
 
 CONTACT_ROLES = {"a", "b"}
@@ -110,6 +112,38 @@ class RefreshAreaEvidence:
     read_error: Exception | None = None
 
 
+UNVERIFIED_REFRESH_CONFIDENCES = frozenset({
+    "high_string_evidence_manual_format_inference",
+    "medium_string_evidence_module_format_inference",
+})
+
+
+def refresh_row_is_unverified(row: dict[str, Any]) -> bool:
+    """Reject both new candidates and the old producer's inferred ranges."""
+    return (("record_state" in row and row["record_state"] != "verified")
+            or row.get("confidence") in UNVERIFIED_REFRESH_CONFIDENCES)
+
+
+def read_refresh_manifest(path: Path, csv_bytes: bytes) -> tuple[dict[str, Any] | None, str]:
+    """Bind a generated CSV (including an empty one) to its extraction state."""
+    suffix = "_refresh_areas.csv"
+    if not path.name.endswith(suffix):
+        return None, "generated refresh CSV needs its companion manifest"
+    manifest = path.with_name(path.name[:-len(suffix)] + "_manifest.json")
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("manifest is not an object")
+        if payload.get("refresh_csv_sha256") != hashlib.sha256(csv_bytes).hexdigest():
+            raise ValueError("manifest does not match the refresh CSV contents")
+        analysis = payload.get("refresh_area_analysis")
+        if not isinstance(analysis, dict) or analysis.get("state") not in STATES:
+            raise ValueError("manifest lacks a valid refresh extraction state")
+        return analysis, ""
+    except (OSError, UnicodeError, ValueError) as exc:
+        return None, f"refresh extraction manifest unavailable: {exc}"
+
+
 def read_refresh_areas(path: Path | None = None) -> RefreshAreaEvidence:
     """Read supplied CSV contents, not proof of project/external-write coverage.
 
@@ -124,16 +158,25 @@ def read_refresh_areas(path: Path | None = None) -> RefreshAreaEvidence:
     }
     invalid_lines: list[int] = []
     invalid_count = 0
+    unverified_count = 0
+    source_analysis: dict[str, Any] | None = None
+    manifest_issue = ""
     read_error: Exception | None = None
     try:
-        with path.open("r", encoding="utf-8-sig", newline="") as f:
+        csv_bytes = path.read_bytes()
+        with io.StringIO(csv_bytes.decode("utf-8-sig"), newline="") as f:
             reader = csv.DictReader(f, strict=True)
             fields = reader.fieldnames or []
             if not {"device_start", "device_end"}.issubset(fields) or len(fields) != len(set(fields)):
                 return RefreshAreaEvidence(areas, AnalysisState(
                     NOT_EVALUATED, "invalid refresh CSV header", "regenerate the communication refresh CSV",
                     detail=detail, stage=DECODE))
+            if "record_state" in fields:
+                source_analysis, manifest_issue = read_refresh_manifest(path, csv_bytes)
             for row in reader:
+                if refresh_row_is_unverified(row):
+                    unverified_count += 1
+                    continue
                 start = (row.get("device_start") or "").strip().upper()
                 end = (row.get("device_end") or "").strip().upper()
                 try:
@@ -170,10 +213,16 @@ def read_refresh_areas(path: Path | None = None) -> RefreshAreaEvidence:
         detail["error"] = str(exc)
         invalid_count += 1
         read_error = exc
-    if invalid_count:
-        detail.update(invalid_count=invalid_count, invalid_lines=invalid_lines, known_area_count=len(areas))
+    if invalid_count or unverified_count or manifest_issue or (source_analysis and source_analysis["state"] != CHECKED):
+        detail.update(invalid_count=invalid_count, invalid_lines=invalid_lines,
+                      unverified_count=unverified_count, known_area_count=len(areas))
+        if source_analysis:
+            detail["refresh_extraction"] = source_analysis
+        if manifest_issue:
+            detail["manifest_issue"] = manifest_issue
         return RefreshAreaEvidence(areas, AnalysisState(
-            PARTIAL, "refresh CSV contains uninterpreted data", "repair or regenerate the communication refresh CSV",
+            PARTIAL, "refresh CSV contains uninterpreted or unverified data",
+            "verify the refresh settings in GX Works3; supply confirmed ranges and matching extraction evidence",
             detail=detail, stage=DECODE), read_error)
     return RefreshAreaEvidence(areas, AnalysisState(detail=detail))
 

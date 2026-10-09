@@ -6,13 +6,15 @@ import argparse
 import re
 import sqlite3
 import struct
+import hashlib
 from collections import Counter
 from pathlib import Path
 
 from gx3cli.gx3_input_identity import fingerprint
 from gx3cli.gx3_version import package_version
 from gx3cli.gx3_project_paths import default_comm_prefix, default_project_root, find_comment_db
-from gx3cli.gx3_device_name import device_radix
+from gx3cli.gx3_device_name import format_device, split_device
+from gx3cli.gx3_analysis_state import AnalysisState, PARTIAL, UNSUPPORTED, NOT_EVALUATED, DECODE, DISCOVERY
 
 ROOT = default_project_root()
 UNIT_CONFIG = ROOT / "UnitConfig.dat"
@@ -41,14 +43,10 @@ DEVICE_CODE_NAMES = {
     66: "T",
 }
 
-REFRESH_ROLE_BY_INDEX = {
-    0: ("SB", "link_special_relay", "diagnostic/status/control"),
-    1: ("SW", "link_special_register", "diagnostic/status/control"),
-    2: ("X", "remote_input_RX", "incoming_to_plc"),
-    3: ("Y", "remote_output_RY", "outgoing_from_plc"),
-    4: ("W", "remote_register_RWr", "incoming_to_plc"),
-    5: ("W", "remote_register_RWw", "outgoing_from_plc"),
-}
+# CPU-side types allowed by the RJ61BT11 refresh setting. They do not identify
+# a link-side role: e.g. M can receive RX or send RY, and D can receive RWr or
+# send RWw. Neither a prefix nor the order of strings establishes that role.
+REFRESH_DEVICE_TYPES = frozenset({"SB", "SW", "X", "Y", "M", "L", "B", "D", "W", "R", "ZR", "RD"})
 
 
 def ip_from_blob(value: bytes | None) -> str:
@@ -262,138 +260,97 @@ def is_printable_utf16(value: int) -> bool:
     )
 
 
-def find_rj61_object_id(path: Path, object_ids: set[int]) -> int | None:
-    data = path.read_bytes()
-    needle = "RJ61BT11".encode("utf-16le")
-    off = data.find(needle)
-    if off < 0:
-        return None
-    for pos in range(off, min(len(data) - 1, off + 256), 2):
-        value = struct.unpack_from("<H", data, pos)[0]
-        if value in object_ids:
-            return value
-    return None
+def candidate_word_offset(offset: int, device: str) -> int:
+    return offset + len(device.encode("utf-16le")) + 2 + 0x22
 
 
-def read_size_after_device_string(path: Path, offset: int, device: str) -> int:
+def read_size_after_device_string(path: Path, offset: int, device: str) -> int | None:
+    """Legacy nearby-word probe, NOT a decoded size or its unit.
+
+    The +0x22 layout is unverified. Keep it as raw candidate evidence only;
+    distinguish a missing word from a word whose value is zero.
+    """
     data = path.read_bytes()
-    encoded_len_with_null = len(device.encode("utf-16le")) + 2
-    size_offset = offset + encoded_len_with_null + 0x22
+    size_offset = candidate_word_offset(offset, device)
     if size_offset + 2 > len(data):
-        return 0
+        return None
     return struct.unpack_from("<H", data, size_offset)[0]
 
 
 def end_device(start: str, count: int) -> str:
-    match = re.fullmatch(r"([A-Z]+)([0-9A-F]+)", start)
-    if not match or count <= 0:
+    parsed = split_device(start)
+    if not parsed or count <= 0:
         return ""
-    prefix, number = match.groups()
-    base = device_radix(prefix)
-    end_value = int(number, base) + count - 1
-    if base == 16:
-        return f"{prefix}{end_value:0{len(number)}X}"
-    return f"{prefix}{end_value:0{len(number)}d}"
-
-
-def classify_refresh_device(
-    device: str, prefix_index: dict[str, int]
-) -> tuple[str, str, str]:
-    prefix_match = re.match(r"[A-Z]+", device)
-    prefix = prefix_match.group(0) if prefix_match else ""
-    prefix_index[prefix] = prefix_index.get(prefix, 0) + 1
-    index = prefix_index[prefix]
-
-    if prefix == "SB":
-        return "SB", "link_special_relay", "diagnostic/status/control"
-    if prefix == "SW":
-        return "SW", "link_special_register", "diagnostic/status/control"
-    if prefix == "X":
-        return "X", "remote_input_RX", "incoming_to_plc"
-    if prefix == "Y":
-        return "Y", "remote_output_RY", "outgoing_from_plc"
-    if prefix in {"W", "D"}:
-        if index == 1:
-            return prefix, "remote_register_RWr", "incoming_to_plc"
-        return prefix, "remote_register_RWw", "outgoing_from_plc"
-    if prefix == "B":
-        return "B", "link_relay_or_buffer", "diagnostic/status/control"
-    return prefix, "unknown", "unknown"
-
-
-def rj61_w3pa_paths_with_devices() -> list[Path]:
-    device_pattern = re.compile(r"^(?:SB|SW|X|Y|W|B|D)[0-9A-F]+$")
-    paths: list[Path] = []
-    for path in sorted(ROOT.glob("*.w3pa")):
-        strings = iter_utf16_strings_any_alignment(path)
-        values = [s for _, s in strings]
-        if not any(s.startswith("RJ61BT11") for s in values):
-            continue
-        if any(device_pattern.fullmatch(s) for s in values):
-            paths.append(path)
-    return paths
+    return format_device(parsed[0], parsed[1] + count - 1)
 
 
 def extract_cclink_refresh_areas(units: dict[int, dict[str, object]]) -> list[dict[str, object]]:
-    rj61_ids = {object_id for object_id, u in units.items() if u.get("unit_name") == "RJ61BT11"}
-    rj61_units = sorted(rj61_ids, key=lambda oid: (units[oid].get("slot_number", 999), oid))
-    fallback_file_to_object = {
-        path.name: rj61_units[index]
-        for index, path in enumerate(rj61_w3pa_paths_with_devices())
-        if index < len(rj61_units)
-    }
-    rows: list[dict[str, object]] = []
-    device_pattern = re.compile(r"^(?:SB|SW|X|Y|W|B|D)[0-9A-F]+$")
+    """Preserve RJ61BT11 string candidates without claiming typed records.
 
+    There is no verified decoder for the refresh record, count unit, link-side
+    offset, direction, or owning ObjectID. Filename order and nearby integers
+    are not ownership evidence. Known ranges stay blank so consumers cannot
+    use these guesses as network boundaries.
+    """
+    rows: list[dict[str, object]] = []
     for path in sorted(ROOT.glob("*.w3pa")):
-        object_id = fallback_file_to_object.get(path.name)
-        if object_id is None:
-            object_id = find_rj61_object_id(path, rj61_ids)
-        if object_id is None:
-            continue
         strings = iter_utf16_strings_any_alignment(path)
-        devices = [(off, s) for off, s in strings if device_pattern.fullmatch(s)]
-        if len(devices) < 2:
+        if not any(s.startswith("RJ61BT11") for _, s in strings):
             continue
+        devices = []
+        for off, text in strings:
+            parsed = split_device(text)
+            if parsed and parsed[0] in REFRESH_DEVICE_TYPES:
+                devices.append((off, text, parsed[0]))
         module_counts = Counter(
             s
             for _, s in strings
             if s.startswith("AJ65") or re.fullmatch(r"R[XY][0-9A-Z]+", s)
         )
         module_summary = "; ".join(f"{name}:{count}" for name, count in sorted(module_counts.items()))
-        network_label = f"CCLINK_slot{units[object_id].get('slot_number', '')}_object_{object_id}"
-        prefix_index: dict[str, int] = {}
-
-        for index, (off, device) in enumerate(devices):
-            expected_prefix, area_kind, direction = classify_refresh_device(device, prefix_index)
+        for off, device, prefix in devices:
             size = read_size_after_device_string(path, off, device)
-            prefix = re.match(r"[A-Z]+", device).group(0) if re.match(r"[A-Z]+", device) else ""
             rows.append(
                 {
-                    "object_id": object_id,
-                    "network_label": network_label,
-                    "unit_name": units[object_id]["unit_name"],
-                    "base_object_id": units[object_id].get("base_object_id", ""),
-                    "slot_number": units[object_id].get("slot_number", ""),
-                    "unit_start_io": units[object_id].get("start_io", ""),
-                    "area_kind": area_kind,
-                    "direction": direction,
+                    "object_id": "",
+                    "network_label": "",
+                    "unit_name": "RJ61BT11",
+                    "base_object_id": "",
+                    "slot_number": "",
+                    "unit_start_io": "",
+                    "area_kind": "unknown",
+                    "direction": "unknown",
                     "device_start": device,
-                    "device_end": end_device(device, size),
-                    "points_or_words": size,
+                    "device_end": "",
+                    "points_or_words": "",
                     "device_prefix": prefix,
-                    "expected_prefix": expected_prefix,
+                    "expected_prefix": "",
                     "evidence_file": path.name,
                     "evidence_offset_hex": f"0x{off:X}",
-                    "confidence": (
-                        "high_string_evidence_manual_format_inference"
-                        if prefix in {"SB", "SW", "X", "Y", "W"}
-                        else "medium_string_evidence_module_format_inference"
-                    ),
+                    "confidence": "string_only",
+                    "record_state": "unverified_candidate",
+                    "candidate_points_or_words": size if size is not None else "",
+                    "candidate_device_end": end_device(device, size) if size else "",
+                    "candidate_count_offset_hex": f"0x{candidate_word_offset(off, device):X}",
+                    "count_unit": "unknown",
                     "remote_station_module_strings": module_summary,
                 }
             )
     return rows
+
+
+def refresh_extraction_analysis(rows: list[dict[str, object]]) -> AnalysisState:
+    detail = {"candidate_count": len(rows), "known_area_count": 0,
+              "scope": "RJ61BT11 candidate strings only; no decoded refresh records"}
+    if rows:
+        return AnalysisState(PARTIAL, "w3pa refresh records, count units and ownership are not decoded",
+                             "compare the refresh settings in GX Works3; verify the binary record layout",
+                             detail=detail, stage=DECODE)
+    if list(ROOT.glob("*.w3pa")):
+        return AnalysisState(UNSUPPORTED, "no supported typed refresh records; zero candidates is not absence evidence",
+                             "inspect the communication refresh settings in GX Works3", detail=detail, stage=DECODE)
+    return AnalysisState(NOT_EVALUATED, "w3pa parameter files are unavailable",
+                         "supply the project parameter files", detail=detail, stage=DISCOVERY)
 
 
 def read_comment_hints() -> list[dict[str, object]]:
@@ -577,6 +534,7 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     area_rows = extract_cclink_refresh_areas(units)
+    refresh_analysis = refresh_extraction_analysis(area_rows)
     hint_rows = read_comment_hints()
     slmp_rows = extract_ethernet_slmp_candidates()
 
@@ -628,6 +586,11 @@ def main(argv: list[str] | None = None) -> None:
             "evidence_offset_hex",
             "confidence",
             "remote_station_module_strings",
+            "record_state",
+            "candidate_points_or_words",
+            "candidate_device_end",
+            "candidate_count_offset_hex",
+            "count_unit",
         ],
     )
     write_csv(
@@ -657,10 +620,13 @@ def main(argv: list[str] | None = None) -> None:
             "root": str(ROOT),
             "input_sha256": fingerprint(ROOT),
             "analyzer_version": package_version(),
+            "refresh_area_analysis": refresh_analysis.as_dict(),
+            "refresh_csv_sha256": hashlib.sha256(OUT_AREAS.read_bytes()).hexdigest(),
             "outputs": [str(OUT_UNITS), str(OUT_AREAS), str(OUT_HINTS), str(OUT_SLMP), str(OUT_SUMMARY)],
             "counts": {
                 "units": len(unit_rows),
-                "refresh_areas": len(area_rows),
+                "refresh_areas": 0,
+                "refresh_candidates": len(area_rows),
                 "comment_hints": len(hint_rows),
                 "slmp_candidates": len(slmp_rows),
             },
@@ -684,12 +650,13 @@ def main(argv: list[str] | None = None) -> None:
         f"Analyzer: {package_version()}",
         f"Unit config: {UNIT_CONFIG}",
         f"Generated CSV: {OUT_UNITS}, {OUT_AREAS}, {OUT_HINTS}, {OUT_SLMP}",
+        refresh_analysis.line("Refresh extraction", ja=True),
         "",
         "Main findings / 要点",
         "--------------------",
         "- UnitConfig.dat はSQLite。ユニット名、スロット、先頭I/O、接続種別、IPの一部を取得できる。",
-        "- RJ61BT11のCC-Linkリフレッシュデバイス文字列はw3pa内にある。形式は完全デコードではないが、デバイス文字列と近傍の点数ワードが整合している。",
-        "- X/Y/B/W/SB/SW系の終了アドレスはGX表示に合わせて16進進みとして計算した。",
+        "- RJ61BT11を含むw3paからCPUデバイス文字列を候補抽出する。リフレッシュ設定レコードであること、点数の単位、方向、ユニットの対応は未デコード。",
+        "- candidate_* は未検証の近傍ワードと、それを点数と仮定した終了デバイス。device_end/points_or_wordsは確定できないため空欄。",
         "- RJ71EIP91はユニットDBからIP/basic parameterは取れるが、この抽出ではEtherNet/IPの直接B/Wリフレッシュ割付は見つかっていない。",
         "- Ethernet/SLMP/GOTらしい設定はw3pa内の通信セクション文字列とデバイス文字列から候補抽出する。サイズ・方向が未デコードのものは候補扱い。",
         "",
@@ -704,12 +671,12 @@ def main(argv: list[str] | None = None) -> None:
             f"IPs={ip_text}, param_db={r['parameter_db'] or '-'}"
         )
 
-    lines.extend(["", "CC-Link refresh areas / CC-Linkリフレッシュ領域", "------------------------------------------------"])
+    lines.extend(["", "CC-Link refresh candidates / CC-Linkリフレッシュ候補", "------------------------------------------------"])
     for r in area_rows:
         lines.append(
-            f"- {r['network_label']} object {r['object_id']} {r['area_kind']}: "
-            f"{r['device_start']}..{r['device_end']} ({r['points_or_words']}), "
-            f"direction={r['direction']}, evidence={r['evidence_file']}@{r['evidence_offset_hex']}"
+            f"- {r['device_start']}: range/count/direction/owner not decoded; "
+            f"nearby_word={r['candidate_points_or_words']}, end_guess={r['candidate_device_end']}, "
+            f"evidence={r['evidence_file']}@{r['evidence_offset_hex']}"
         )
 
     lines.extend(["", "Incoming/status areas to inspect first / 取得・状態監視で優先確認する領域", "---------------------------------------------------------------------"])
