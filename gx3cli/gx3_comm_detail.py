@@ -12,11 +12,12 @@ from typing import Any
 from gx3cli.extract_comm_refresh_areas import iter_utf16_strings_any_alignment
 from gx3cli.gx3_external_inputs import (
     collect_external_inputs,
-    load_refresh_areas,
+    read_refresh_areas,
     load_unit_io_areas,
+    refresh_row_is_unverified,
 )
 from gx3cli.gx3_project_paths import default_comm_prefix, default_output_prefix, default_project_root
-from gx3cli.gx3_device_name import device_radix, format_device
+from gx3cli.gx3_device_name import format_device, split_device
 from gx3cli.gx3_arg_decode import DecodedOperation, parse_row_operations
 from gx3cli.review_gx3_project import (
     CommentInfo,
@@ -188,18 +189,7 @@ def clean_module_name(text: str) -> str:
 
 
 def device_value(text: str) -> tuple[str, int] | None:
-    value_text = str(text).strip().upper()
-    prefix = ""
-    value = ""
-    for candidate in ("SB", "SW", "ZR", "SM", "SD", "X", "Y", "B", "W", "M", "L", "D", "R", "T", "C", "Z"):
-        if value_text.startswith(candidate):
-            prefix = candidate
-            value = value_text[len(candidate) :]
-            break
-    if not prefix or not value or not re.fullmatch(r"[0-9A-F]+", value):
-        return None
-    base = device_radix(prefix)
-    return prefix, int(value, base)
+    return split_device(str(text))
 
 
 def device_text(prefix: str, value: int) -> str:
@@ -265,6 +255,12 @@ def extract_remote_station_assignments(
 
     areas_by_file: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in refresh_rows:
+        if refresh_row_is_unverified(row):
+            continue
+        start = device_value(row.get("device_start", ""))
+        end = device_value(row.get("device_end", ""))
+        if not start or not end or start[0] != end[0] or start[1] > end[1]:
+            continue
         evidence_file = row.get("evidence_file", "")
         if evidence_file:
             areas_by_file[evidence_file].append(row)
@@ -281,6 +277,12 @@ def extract_remote_station_assignments(
         object_id = areas[0].get("object_id", "")
         unit = areas[0].get("unit_name", "")
         slot = areas[0].get("slot_number", "")
+        # The station-offset formula cannot select between multiple ranges of
+        # one link kind without the link-side starts, which are not decoded.
+        kinds = [r.get("area_kind") for r in areas]
+        if any(kinds.count(kind) > 1 for kind in (
+                "remote_input_RX", "remote_output_RY", "remote_register_RWr", "remote_register_RWw")):
+            continue
         rx = next((r for r in areas if r.get("area_kind") == "remote_input_RX"), {})
         ry = next((r for r in areas if r.get("area_kind") == "remote_output_RY"), {})
         rwr = next((r for r in areas if r.get("area_kind") == "remote_register_RWr"), {})
@@ -327,6 +329,8 @@ def extract_remote_station_assignments(
                 and rww_base + int(caps["rww_words"]) - 1 > rww_end[1]
             ):
                 continue
+            rx_prefix = rx_start[0] if rx_start else "X"
+            ry_prefix = ry_start[0] if ry_start else "Y"
             rwr_prefix = rwr_start[0] if rwr_start else "W"
             rww_prefix = rww_start[0] if rww_start else "W"
             out.append(
@@ -343,20 +347,18 @@ def extract_remote_station_assignments(
                     "ry_points_used": caps["ry_points"],
                     "rwr_words_used": caps["rwr_words"],
                     "rww_words_used": caps["rww_words"],
-                    "rx_range": range_text("X", rx_base, int(caps["rx_points"])) if rx_base >= 0 else "",
-                    "ry_range": range_text("Y", ry_base, int(caps["ry_points"])) if ry_base >= 0 else "",
+                    "rx_range": range_text(rx_prefix, rx_base, int(caps["rx_points"])) if rx_base >= 0 else "",
+                    "ry_range": range_text(ry_prefix, ry_base, int(caps["ry_points"])) if ry_base >= 0 else "",
                     "rwr_range": range_text(rwr_prefix, rwr_base, int(caps["rwr_words"])) if rwr_base >= 0 else "",
                     "rww_range": range_text(rww_prefix, rww_base, int(caps["rww_words"])) if rww_base >= 0 else "",
-                    "station_rx_base": device_text("X", rx_base) if rx_base >= 0 else "",
-                    "station_ry_base": device_text("Y", ry_base) if ry_base >= 0 else "",
+                    "station_rx_base": device_text(rx_prefix, rx_base) if rx_base >= 0 else "",
+                    "station_ry_base": device_text(ry_prefix, ry_base) if ry_base >= 0 else "",
                     "station_rwr_base": device_text(rwr_prefix, rwr_base) if rwr_base >= 0 else "",
                     "station_rww_base": device_text(rww_prefix, rww_base) if rww_base >= 0 else "",
                     "evidence_file": evidence_file,
                     "evidence_offset_hex": f"0x{off:X}",
-                    "confidence": "high_binary_station_no"
-                    if module_name == "AJ65BT-R2N" and station_no in r2n_station_to_equipment
-                    else "medium_binary_station_no",
-                    "note": "Station number decoded from w3pa module record; X/Y/W ranges use standard CC-Link per-station offset formula.",
+                    "confidence": "unverified_standard_station_mapping",
+                    "note": "Candidate station number from w3pa; ranges assume 32 bit points / 4 words per station and link-side origin zero. Mode and refresh mapping are not decoded; ranges are not confirmed assignments.",
                 }
             )
     return out
@@ -367,18 +369,18 @@ def assignment_for_device(row: dict[str, object], assignments: list[dict[str, ob
     if not parsed:
         return None
     prefix, value = parsed
-    range_key = {"X": "rx_range", "Y": "ry_range", "W": "rwr_range"}.get(prefix)
-    if not range_key:
-        return None
     for assignment in assignments:
-        text = str(assignment.get(range_key, ""))
-        if not text or ".." not in text:
+        if str(assignment.get("confidence", "")).startswith("unverified_"):
             continue
-        start_text, end_text = text.split("..", 1)
-        start = device_value(start_text)
-        end = device_value(end_text)
-        if start and end and start[0] == prefix and start[1] <= value <= end[1]:
-            return assignment
+        for range_key in ("rx_range", "ry_range", "rwr_range", "rww_range"):
+            text = str(assignment.get(range_key, ""))
+            if not text or ".." not in text:
+                continue
+            start_text, end_text = text.split("..", 1)
+            start = device_value(start_text)
+            end = device_value(end_text)
+            if start and end and start[0] == end[0] == prefix and start[1] <= value <= end[1]:
+                return assignment
     return None
 
 
@@ -507,7 +509,7 @@ def render_markdown(
     lines = [
             "# Communication Detail",
         "",
-        "This report goes deeper than refresh areas. It separates confirmed unit/range mapping from station/module candidates and ladder-side AJ65BT-R2N parameter writes.",
+        "This report uses supplied refresh ranges, station/module candidates and ladder-side AJ65BT-R2N parameter writes. Candidate evidence does not confirm a refresh setting.",
         "",
         "## Confirmed Unit Sources",
     ]
@@ -532,7 +534,7 @@ def render_markdown(
     else:
         lines.append("- none")
 
-    lines.extend(["", "## Decoded Remote Station Assignments"])
+    lines.extend(["", "## Remote Station Mapping Candidates"])
     if assignment_rows:
         for row in assignment_rows:
             equipment = f" {row['equipment_name']}" if row.get("equipment_name") else ""
@@ -585,10 +587,10 @@ def render_markdown(
         [
             "",
             "## Interpretation Rule",
-            "- `refresh_area` rows are confirmed to the PLC unit, slot, direction, and device range.",
+            "- `refresh_area` rows match ranges declared in the supplied CSV; project provenance and coverage need separate verification.",
             "- `direct_unit_io` rows are confirmed as module I/O/status bits by unit head I/O range.",
             "- `station_index_candidate` rows are evidence from w3pa string order only; use them as a checklist, not final terminal numbers.",
-            "- `Decoded Remote Station Assignments` rows decode station number from each w3pa module record. These are stronger than the earlier string-order candidates.",
+            "- `Remote Station Mapping Candidates` assume the standard 32 bit points / 4 words per station and link-side origin zero. Mode, occupied stations and link-side mapping are not decoded; these candidates do not enrich external sources as confirmed assignments.",
             "- `AJ65BT-R2N` rows are ladder-written communication parameters and are stronger evidence for measurement devices using `GP.RIWT/GP.RIRD` through `U6`.",
         ]
     )
@@ -615,7 +617,10 @@ def main(argv: list[str] | None = None) -> int:
     comments = load_comments_for_root(root)
     rows = load_rows(root, comments)
     refresh_rows = read_csv(Path(args.refresh_csv))
-    refresh_areas = load_refresh_areas(Path(args.refresh_csv))
+    refresh_evidence = read_refresh_areas(Path(args.refresh_csv))
+    if refresh_evidence.read_error is not None:
+        raise refresh_evidence.read_error
+    refresh_areas = refresh_evidence.areas
     unit_io_areas = load_unit_io_areas(Path(args.unit_csv))
     external_rows = collect_external_inputs(rows, comments, refresh_areas, unit_io_areas)
     station_rows = extract_remote_station_candidates(refresh_rows, root)
@@ -744,10 +749,12 @@ def main(argv: list[str] | None = None) -> int:
             "first_title",
         ],
     )
-    md_path.write_text(render_markdown(assignment_rows, station_rows, r2n_rows, external_rows) + "\n", encoding="utf-8")
+    md_path.write_text(refresh_evidence.analysis.line("Refresh CSV", ja=True) + "\n\n"
+                      + render_markdown(assignment_rows, station_rows, r2n_rows, external_rows) + "\n", encoding="utf-8")
 
     manifest = {
         "root": str(root),
+        "refresh_area_analysis": refresh_evidence.analysis.as_dict(),
         "outputs": {
             "markdown": str(md_path),
             "remote_station_assignments_csv": str(assignment_csv),

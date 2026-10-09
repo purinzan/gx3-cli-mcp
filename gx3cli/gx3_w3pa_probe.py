@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """Probe GX Works3 ``*.w3pa`` binary parameter files.
 
-Existing communication tools decode the high-value RJ61BT11 refresh areas.
-This helper keeps the lower-level evidence visible: UTF-16 strings, likely
-device starts, the size word used by known refresh records, module names, IPs,
+This helper keeps the lower-level evidence visible: UTF-16 strings, candidate
+devices, an unverified nearby word, module names, IPs,
 and section markers.  It is intentionally conservative and read-only.
 """
 
@@ -17,12 +16,19 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from gx3cli.extract_comm_refresh_areas import iter_utf16_strings_any_alignment, read_size_after_device_string
+from gx3cli.extract_comm_refresh_areas import (
+    iter_utf16_strings_any_alignment, read_size_after_device_string,
+    candidate_word_offset, end_device,
+)
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
-from gx3cli.gx3_device_name import device_radix
+from gx3cli.gx3_device_name import DEVICE_TYPE_BASE, split_device
 
 
-DEVICE_RE = re.compile(r"^(?:SB|SW|SM|SD|ZR|X|Y|W|B|D|M|L|R|F|V|TC|TS|TN|CN)[0-9A-F]+$")
+def is_device(text: str) -> bool:
+    parsed = split_device(text)
+    return parsed is not None and parsed[0] in DEVICE_TYPE_BASE
+
+
 MODULE_RE = re.compile(
     r"^(?:R\d|RJ\d|RD\d|RX\d|RY\d|AJ\d|GT\d|ENCPU|RCPU|MemoryCard|DEVSTORE|EVENT|EthernetPort|CommIfSection\d|SystemParam\w*|RemotePassword\w*)"
 )
@@ -53,7 +59,7 @@ def u32_at(data: bytes, offset: int) -> int:
 def looks_useful(text: str) -> bool:
     if not text or len(text) > 120:
         return False
-    if DEVICE_RE.fullmatch(text) or MODULE_RE.match(text) or IP_RE.search(text):
+    if is_device(text) or MODULE_RE.match(text) or IP_RE.search(text):
         return True
     if any(word in text for word in SECTION_WORDS):
         return True
@@ -65,31 +71,15 @@ def looks_useful(text: str) -> bool:
 def classify_text(text: str) -> str:
     if IP_RE.search(text):
         return "ip"
+    if is_device(text):
+        return "device"
     if MODULE_RE.match(text):
         return "module_or_section"
-    if DEVICE_RE.fullmatch(text):
-        return "device"
     if any(word in text for word in SECTION_WORDS):
         return "section"
     if re.fullmatch(r"[0-9A-Za-z_./()+-]{2,64}", text):
         return "ascii_identifier"
     return "other"
-
-
-def end_device(start: str, count: int) -> str:
-    match = re.fullmatch(r"([A-Z]+)([0-9A-F]+)", start)
-    if not match or count <= 0:
-        return ""
-    prefix, raw = match.groups()
-    base = device_radix(prefix)
-    try:
-        value = int(raw, base)
-    except ValueError:
-        return ""
-    end_value = value + count - 1
-    if base == 16:
-        return f"{prefix}{end_value:0{len(raw)}X}"
-    return f"{prefix}{end_value:0{len(raw)}d}"
 
 
 def probe_file(path: Path, root: Path) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
@@ -124,16 +114,19 @@ def probe_file(path: Path, root: Path) -> tuple[dict[str, object], list[dict[str
                 "w3pa": row["w3pa"],
                 "offset_hex": row["offset_hex"],
                 "device_start": device,
-                "points_or_words_after_string": size,
-                "device_end_guess": end_device(device, size),
-                "confidence": "high_for_known_refresh_record" if size else "string_only",
+                "points_or_words_after_string": size if size is not None else "",
+                "device_end_guess": end_device(device, size) if size else "",
+                "confidence": "string_only",
+                "record_state": "unverified_candidate",
+                "candidate_count_offset_hex": f"0x{candidate_word_offset(offset, device):X}",
+                "count_unit": "unknown",
             }
         )
 
     categories = Counter(str(row["category"]) for row in useful)
     modules = sorted({str(row["text"]) for row in useful if row["category"] in {"module_or_section", "section"}})
     ips = sorted({m.group(0) for _, text in all_strings for m in IP_RE.finditer(text)})
-    device_prefixes = Counter(re.match(r"[A-Z]+", str(d["device_start"])).group(0) for d in devices if re.match(r"[A-Z]+", str(d["device_start"])))
+    device_prefixes = Counter(split_device(str(d["device_start"]))[0] for d in devices)
     summary = {
         "w3pa": rel(path, root),
         "size": len(data),
