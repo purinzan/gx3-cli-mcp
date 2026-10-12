@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gx3cli.gx3_ladder_logic import enable_logic_for_device, output_elements_for, logic_stats, logic_to_text
 from gx3cli.review_gx3_project import load_comments_for_root, load_rows
-from gx3cli.gx3_xref_read import device_match
+from gx3cli.gx3_xref_read import device_match, device_comment_from_xref
 from gx3cli.gx3_xref import open_xref_db
 
 
@@ -146,12 +146,7 @@ def open_xref(path: Path, root: Path) -> sqlite3.Connection:
 
 
 def first_comment(con: sqlite3.Connection, device: str) -> str:
-    row = con.execute(
-        f"select x.comment from {device_match(con)[0]} "
-        f"where {device_match(con)[1]} and x.comment<>'' limit 1",
-        (device,),
-    ).fetchone()
-    return str(row["comment"]) if row else ""
+    return device_comment_from_xref(con, device)
 
 
 class RowIndex:

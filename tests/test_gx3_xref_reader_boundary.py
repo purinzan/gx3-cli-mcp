@@ -48,8 +48,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Exact query exceptions, never a module/function-wide permission to add SQL.
 APPROVED_NAMED_QUERIES = {
-    ("gx3_xref.py", "downstream", "select comment from xref where device=? and comment<>'' limit 1"):
-        "A comment belongs to the named device, not its covering writer's base address.",
     ("gx3_xref.py", "export", "select * from xref where device=? order by pou, pos"):
         "Raw stored-occurrence export with an explicit name filter, not a physical where-used query.",
 }
@@ -124,7 +122,9 @@ def new_reader(con):
     assert all(owner == "new_reader" for owner, _, _ in found)
     assert all(("gx3_xref.py", owner, query) not in APPROVED_NAMED_QUERIES for owner, query, _ in found)
     comment = direct_xref_queries("def downstream(con):\n con.execute(\"select comment from xref where device=? and comment<>'' limit 1\")")
-    assert ("gx3_xref.py", comment[0][0], comment[0][1]) in APPROVED_NAMED_QUERIES
+    assert ("gx3_xref.py", comment[0][0], comment[0][1]) not in APPROVED_NAMED_QUERIES
+    raw_export = direct_xref_queries("def export(con):\n con.execute(\"select * from xref where device=? order by pou, pos\")")
+    assert ("gx3_xref.py", raw_export[0][0], raw_export[0][1]) in APPROVED_NAMED_QUERIES
 
 
 def a_project(work: Path) -> tuple[Path, Path]:

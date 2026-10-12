@@ -32,7 +32,7 @@ from gx3cli.gx3_ladder_logic import (
 from gx3cli.review_gx3_project import load_comments_for_root, load_rows
 from gx3cli.gx3_project_paths import default_output_prefix, default_project_root
 from gx3cli.gx3_xref import default_db_path, normalize_device, open_xref_db
-from gx3cli.gx3_xref_read import device_match
+from gx3cli.gx3_xref_read import device_match, device_comment_from_xref, occurrences_of
 
 
 ALARM_COMMENT_RE = re.compile(
@@ -149,12 +149,7 @@ def row_conditions(
 
 
 def device_comment_from(con: sqlite3.Connection, device: str) -> str:
-    source, match = device_match(con)
-    row = con.execute(
-        f"select x.comment from {source} where {match} and x.comment<>'' limit 1",
-        (device,),
-    ).fetchone()
-    return str(row["comment"]) if row else ""
+    return device_comment_from_xref(con, device)
 
 
 def timer_setpoint(con: sqlite3.Connection, timer: str) -> str:
@@ -267,10 +262,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     device = normalize_device(args.device)
     con = open_db(args)
     rows = RowIndex(Path(args.root))
-    drivers = con.execute(
-        f"select x.* from {device_match(con)[0]} "
-        f"where {device_match(con)[1]} and x.access in ('write', 'both') order by x.pos", (device,)
-    ).fetchall()
+    drivers = occurrences_of(con, device, access=("write", "both"))
     if not drivers:
         print(f"no driver rows: {device}")
         con.close()

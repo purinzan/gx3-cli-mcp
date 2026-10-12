@@ -105,7 +105,7 @@ def create_link_db(path: Path, xref_a: Path, xref_b: Path) -> None:
                 f"insert into xref ({','.join(columns)}) values ({','.join('?' for _ in columns)})",
                 records,
             )
-            stamped.executemany("insert into xref_members values (?, ?, ?, ?, ?)", member_rows(stamped))
+            stamped.executemany("insert into xref_members values (?, ?, ?, ?, ?, ?)", member_rows(stamped))
         projects.append((label, str(root), str(xref)))
     con = sqlite3.connect(path)
     con.executescript(

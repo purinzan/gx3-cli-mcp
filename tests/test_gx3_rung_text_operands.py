@@ -209,6 +209,29 @@ def test_source_operand_comments_follow_the_visible_instruction() -> None:
     assert 'D0="source"' in items[0].to_line()
 
 
+def test_reported_timer_literals_are_retained_by_cli_text_and_json() -> None:
+    """Regression confirmation for an existing fix; no timer-unit inference."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = create_synthetic_project(Path(tmp) / "timers")
+        rows = [instruction_row("OUT__16", ["T", "K_1"], [device(185), constant(0)]),
+                instruction_row("OUT__16", ["T", "K_1"], [device(352), constant(500)])]
+        with closing(sqlite3.connect(root / "001_LDDB.db")) as con, con:
+            con.execute("delete from LadderBlocks")
+            for pos, row in enumerate(rows, 1):
+                con.execute("insert into LadderBlocks values (?, ?, 0, ?, ?, 0, 0)",
+                            (f"_guid/00000000-0000-0000-0000-{pos:012d}", pos, row.data, row.rowsize))
+        command = [sys.executable, "-B", "-m", "gx3cli.gx3_cli", "rung-text", "--root", str(root)]
+        output = subprocess.run([*command, "--format", "json"], capture_output=True,
+                                text=True, encoding="utf-8", check=True)
+        records = json.loads(output.stdout)
+        assert [r["operands"] for r in records] == [["T185", "K0"], ["T352", "K500"]]
+        assert [r["device"] for r in records] == ["T185", "T352"]
+        text = subprocess.run([*command, "--format", "text"], capture_output=True,
+                              text=True, encoding="utf-8", check=True).stdout
+        assert "OUT T185 K0" in text and "OUT T352 K500" in text, text
+        assert not any(token in text for token in ("ms", "seconds", "秒")), text
+
+
 def test_listed_csv_unknowns_remain_visible_with_a_device_filter() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "listed.csv"

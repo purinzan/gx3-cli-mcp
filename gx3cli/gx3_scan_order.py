@@ -23,7 +23,7 @@ from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_program_map import PouInfo, load_program_map
 from gx3cli.gx3_project_paths import default_project_root
 from gx3cli.gx3_xref import open_xref_db
-from gx3cli.gx3_xref_read import has_members, occurrences_of
+from gx3cli.gx3_xref_read import has_members, occurrences_of, occurrence_columns
 from gx3cli.gx3_xref import default_db_path, normalize_device
 from gx3cli.gx3_instruction_table import is_edge_triggered
 
@@ -273,9 +273,10 @@ def load_all_device_rows(con: sqlite3.Connection) -> dict[str, list[XrefRow]]:
     """
     grouped: dict[str, list[XrefRow]] = defaultdict(list)
     if has_members(con):
+        columns, _ = occurrence_columns(con)
         rows = con.execute(
-            """
-            select x.*, m.member_device as member_device
+            f"""
+            select {columns}, m.member_device as member_device
             from xref x join xref_members m on m.src_id = x.id
             where x.access in ('read', 'write', 'both')
             order by m.device_type, m.number, x.pou, x.pos, x.id

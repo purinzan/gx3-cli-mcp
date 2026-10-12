@@ -97,6 +97,58 @@ def device_match(con: sqlite3.Connection) -> tuple[str, str]:
     return ("xref x", "x.device = ?")
 
 
+def member_comment_expression(con: sqlite3.Connection) -> str:
+    """A covering row's comment belongs to the queried member, not its base.
+
+    Legacy member tables did not store comments. Their named member can use
+    xref.comment; every other member is unknown rather than borrowing it.
+    """
+    fields = {str(row[1]) for row in con.execute("pragma table_info(xref_members)")}
+    if "comment" in fields:
+        return "coalesce(m.comment, '')"
+    return "case when m.member_device = x.device then coalesce(x.comment, '') else '' end"
+
+
+def occurrence_columns(
+    con: sqlite3.Connection, device: str | None = None, *, member_join: bool = True,
+    columns: str = "x.*",
+) -> tuple[str, tuple[object, ...]]:
+    """Full occurrence projection with a member-specific comment.
+
+    Keep xref.device and all source location/range fields intact. Legacy
+    interval queries without a member table need an extra SELECT parameter
+    to retain the comment only when the queried device is the named base.
+    """
+    fields = [str(row[1]) for row in con.execute("pragma table_info(xref)")]
+    if "comment" not in fields or columns not in {"x.*", "x.comment"}:
+        return columns, ()
+    params: tuple[object, ...] = ()
+    if member_join:
+        expression = member_comment_expression(con)
+    else:
+        expression = "case when x.device = ? then coalesce(x.comment, '') else '' end"
+        params = (device,)
+    if columns == "x.comment":
+        return f"{expression} as comment", params
+    # Enumerate once so sqlite3.Row never carries two columns named comment.
+    projected = [f"{expression} as comment" if name == "comment"
+                 else 'x."' + name.replace('"', '""') + '"' for name in fields]
+    return ", ".join(projected), params
+
+
+def device_comment_from_xref(con: sqlite3.Connection, device: str) -> str:
+    """An available comment for this exact physical device, including members."""
+    if "comment" not in {str(row[1]) for row in con.execute("pragma table_info(xref)")}:
+        return ""
+    source, match = device_match(con)
+    expression = member_comment_expression(con) if has_members(con) else "x.comment"
+    row = con.execute(
+        f"select {expression} as comment from {source} where {match} and {expression}<>'' limit 1",
+        (device,),
+    ).fetchone()
+    return str(row[0]) if row else ""
+
+
 def occurrences_of(
     con: sqlite3.Connection,
     device: str,
@@ -113,12 +165,14 @@ def occurrences_of(
     instruction spells, which is what a rung listing wants.
     """
     params: list[Any] = [device]
+    comment_params: tuple[object, ...] = ()
     if scope == NAMED_ONLY or not has_members(con):
         where = ["x.device = ?"]
         source = "xref x"
     else:
         where = ["m.member_device = ?"]
         source = "xref x join xref_members m on m.src_id = x.id"
+        columns, comment_params = occurrence_columns(con, device, columns=columns)
 
     if access:
         access = tuple(access)
@@ -129,7 +183,7 @@ def occurrences_of(
     if limit is not None and limit >= 0:
         sql += " limit ?"
         params.append(limit)
-    return con.execute(sql, params).fetchall()
+    return con.execute(sql, (*comment_params, *params)).fetchall()
 
 
 def counts_for(con: sqlite3.Connection, devices: Iterable[str]) -> dict[str, dict[str, int]]:
