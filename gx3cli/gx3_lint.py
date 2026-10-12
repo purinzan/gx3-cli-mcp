@@ -45,7 +45,7 @@ from gx3cli.gx3_project_paths import (
     default_project_root,
 )
 from gx3cli.gx3_device_name import format_device, split_device
-from gx3cli.gx3_xref_read import device_match
+from gx3cli.gx3_xref_read import device_match, occurrences_of
 from gx3cli.gx3_external_inputs import read_refresh_areas, refresh_area_for
 from gx3cli.gx3_cli import project_label_from_root
 from gx3cli.gx3_alarm_map import ALARM_COMMENT_RE, collect_alarms
@@ -784,12 +784,7 @@ def check_link_range(ctx: LintContext) -> list[dict[str, object]]:
             inbound[str(r["device_a"])] = r
     out: list[dict[str, object]] = []
     for device, link in inbound.items():
-        writers = ctx.xref.execute(
-            f"select x.* from {device_match(ctx.xref)[0]} "
-            f"where {device_match(ctx.xref)[1]} and x.access in ('write','both') "
-            f"order by x.pou, x.pos limit 12",
-            (device,),
-        ).fetchall()
+        writers = occurrences_of(ctx.xref, device, access=("write", "both"), limit=12)
         if not writers:
             continue
         out.append(

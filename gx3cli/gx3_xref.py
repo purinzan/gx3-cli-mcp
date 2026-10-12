@@ -80,7 +80,8 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 #   counted bases remain statically unexpanded.
 # v7 preserves independent physical spans in data_flow; count is not extent.
 # v8 preserves LD block/operation/element locations instead of dropping them.
-XREF_DECODER = "arg-decode-label-operands-11"
+# v12 stores comments for each covered device, not only the named base.
+XREF_DECODER = "arg-decode-member-comments-12"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:
@@ -167,16 +168,22 @@ def open_xref_db(
     return con
 
 
-def member_rows(con: sqlite3.Connection) -> list[tuple]:
-    """One line per device an occurrence covers, including the one it names."""
+def member_rows(con: sqlite3.Connection, comments: dict[tuple[str, int], CommentInfo] | None = None) -> list[tuple]:
+    """One line and its own comment per device an occurrence covers.
+
+    Preserve the stored named-device comment at offset zero. Other members
+    require their own comment DB entry; the base comment is never a fallback.
+    """
+    comments = comments or {}
     rows = con.execute(
-        "select id, device, device_type, number, range_len from xref"
+        "select id, device, device_type, number, range_len, comment from xref"
     ).fetchall()
     out: list[tuple] = []
     for row in rows:
-        src_id, device, dev_type, number, length = row
-        out.append((src_id, device, dev_type, number, 0))
+        src_id, device, dev_type, number, length, base_comment = row
+        out.append((src_id, device, dev_type, number, 0, base_comment or ""))
         for offset in range(1, max(1, int(length or 1))):
+            info = comments.get((dev_type, number + offset), CommentInfo())
             out.append(
                 (
                     src_id,
@@ -184,6 +191,7 @@ def member_rows(con: sqlite3.Connection) -> list[tuple]:
                     dev_type,
                     number + offset,
                     offset,
+                    info.japanese or info.english or info.all_text or "",
                 )
             )
     return out
@@ -588,14 +596,15 @@ def _populate_xref(args: argparse.Namespace, con: sqlite3.Connection) -> int:
             member_device text not null,
             device_type text not null,
             number integer not null,
-            run_offset integer not null
+            run_offset integer not null,
+            comment text not null
         );
         """
     )
     con.executemany(
-        "insert into xref_members(src_id, member_device, device_type, number, run_offset)"
-        " values (?, ?, ?, ?, ?)",
-        member_rows(con),
+        "insert into xref_members(src_id, member_device, device_type, number, run_offset, comment)"
+        " values (?, ?, ?, ?, ?, ?)",
+        member_rows(con, comments),
     )
     con.executescript(
         """
@@ -681,12 +690,13 @@ def device_filter(device: str) -> tuple[str, tuple[object, ...]]:
 
 
 def rows_for_device(con: sqlite3.Connection, device: str, limit: int) -> list[sqlite3.Row]:
-    from gx3cli.gx3_xref_read import covered_query
+    from gx3cli.gx3_xref_read import covered_query, occurrence_columns
 
     source, predicate, params = covered_query(con, device)
+    columns, comment_params = occurrence_columns(con, device, member_join=source != "xref x")
     return con.execute(
-        f"select x.* from {source} where {predicate} order by x.pou, x.pos, x.id limit ?",
-        (*params, limit),
+        f"select {columns} from {source} where {predicate} order by x.pou, x.pos, x.id limit ?",
+        (*comment_params, *params, limit),
     ).fetchall()
 
 
@@ -1000,10 +1010,10 @@ def downstream(args: argparse.Namespace) -> int:
     con = open_db(args)
     has_flow = has_value_edges(con)
 
-    start_comment = con.execute(
-        "select comment from xref where device=? and comment<>'' limit 1", (device,)
-    ).fetchone()
-    print(f"downstream impact of {device} {start_comment[0] if start_comment else ''}".rstrip())
+    from gx3cli.gx3_xref_read import device_comment_from_xref
+
+    start_comment = device_comment_from_xref(con, device)
+    print(f"downstream impact of {device} {start_comment}".rstrip())
     print(f"(max-depth={args.max_depth}, strict-bit={args.strict_bit})")
     st_note = st_coverage_note(con, downstream=True)
     if st_note:

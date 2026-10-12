@@ -40,7 +40,9 @@ def main() -> int:
         # each, plus two member-capability checks (page and totals) per query.
         # No project data scan added.
         # Each xref read now pins validation and result queries with BEGIN.
-        assert sample["warm_query"]["sql_statements"] == 36, sample
+        # Member-specific comments add two column-metadata reads per query
+        # (xref and xref_members), without loading/scanning project data.
+        assert sample["warm_query"]["sql_statements"] == 40, sample
         # Trace pins the validation snapshot (BEGIN) and checks stored ST gaps
         # before constant proofs. Both artifact opens verify the build contract.
         # One capability check and one batched first-read query certify that
