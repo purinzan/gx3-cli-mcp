@@ -23,7 +23,10 @@ from gx3cli.gx3_ladder_print import (
     comment_text_for,
     contact_mark,
     op_cells_of,
-    ops_past_grid,
+    fold_to_grid,
+    display_x_for_op,
+    text_width,
+    wrap_display,
     load_print_comments,
     parse_rung,
     resolve_lddb,
@@ -86,14 +89,13 @@ def rung_layout(
     # A rung wider than the printed grid folds onto continuation rows, the way
     # the printed one does and on the same rule, so the two break in the same
     # place. Everything then lays out to one width.
-    ops, verticals, wires, folds = _fold_to_grid(ops, verticals, wires)
-    # Constant width, unless something still reaches past the grid: a rung is
-    # drawn too wide far more cheaply than it is drawn with a piece missing.
+    ops, verticals, wires, folds = fold_to_grid(ops, verticals, wires, GRID_CELLS)
+    # Ends of wires and verticals are boundaries, not additional cells.
     max_x = max(
-        [GRID_CELLS - 1, *[op.x for op in ops], *[wire[2] for wire in wires],
-         *[x for x, _ in verticals]]
+        [GRID_CELLS - 1, *[op.x + op_cells_of(op) - 1 for op in ops],
+         *[wire[2] - 1 for wire in wires], *[x - 1 for x, _ in verticals]]
     )
-    max_y = max([height - 1, *[op.y for op in ops], *[wire[1] for wire in wires], *[y for _, y in verticals], 0])
+    max_y = max([0 if folds else height - 1, *[op.y for op in ops], *[wire[1] for wire in wires], *[y for _, y in verticals], 0])
     max_y = max(max_y, *( [f["y"] for f in folds] or [0] ))
 
     elements: list[dict[str, Any]] = []
@@ -116,6 +118,7 @@ def rung_layout(
                 "opcode": op.opcode_text(),
                 "x": op.x,
                 "y": op.y,
+                "display_x": display_x_for_op(op, ops, verticals, wires, GRID_CELLS),
                 "ct_code": op.ct_code,
                 "element_kind": op.element_kind,
                 "operands": operands,
@@ -124,7 +127,6 @@ def rung_layout(
                 "operand_comments": [
                     {"operand": operand, "comment": _operand_comment(operand, comments)}
                     for operand in operands
-                    if _operand_comment(operand, comments)
                 ],
             }
         )
@@ -142,39 +144,6 @@ def rung_layout(
     }
 
 
-def _fold_to_grid(ops, verticals, wires):
-    """Move what does not fit the grid onto continuation rows below.
-
-    Which ops move is decided by ops_past_grid, shared with the printed rung.
-    Each pass drops the overflow to a fresh band under everything drawn so far
-    and shifts it left to the rail, and the band is recorded so the drawing can
-    mark where the rung continues.
-    """
-    ops = list(ops)
-    folds: list[dict[str, int]] = []
-    for _ in range(8):  # a rung is not folded forever; this bounds a bad row
-        moved = ops_past_grid(ops, GRID_CELLS)
-        if not moved:
-            break
-        moved_ids = {id(op) for op in moved}
-        x_base = min(op.x for op in moved)
-        band = max([op.y for op in ops] + [y for _, y in verticals] + [w[1] for w in wires]) + 1
-        for op in moved:
-            op.y = op.y + band
-            op.x = op.x - x_base
-        verticals = [
-            (x - x_base, y + band) if x >= x_base else (x, y) for x, y in verticals
-        ]
-        wires = [
-            (x1 - x_base, y + band, x2 - x_base) if x1 >= x_base else (x1, y, x2)
-            for x1, y, x2 in wires
-        ]
-        folds.append({"y": band, "from_x": x_base})
-        if not any(id(op) in moved_ids for op in ops):
-            break
-    return ops, verticals, wires, folds
-
-
 def _cell_center(x: int, y: int, y_offset: int = 0) -> tuple[int, int]:
     return RAIL_PAD + x * CELL_W + CELL_W // 2, y_offset + ROW_PAD_Y + y * CELL_H + CELL_H // 2
 
@@ -188,14 +157,14 @@ def _text(label: str, max_chars: int = 22) -> str:
     return label if len(label) <= max_chars else label[: max_chars - 1] + "..."
 
 
-def _comment_lines(label: str, max_chars: int = 6, max_lines: int = 2) -> list[str]:
+def _comment_lines(label: str, width: int = 12, max_lines: int = 2) -> list[str]:
     text = label.replace("\r", "").replace("\n", " ").strip()
-    if not text:
-        return []
-    lines = [text[index : index + max_chars] for index in range(0, len(text), max_chars)]
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines[-1] = _text(lines[-1], max_chars)
+    lines = wrap_display(text, width, max_lines)
+    if sum(len(line) for line in lines) < len(text) and lines:
+        tail = lines[-1]
+        while tail and text_width(tail + "...") > width:
+            tail = tail[:-1]
+        lines[-1] = tail + "..."
     return lines
 
 
@@ -216,6 +185,8 @@ def _instruction_cell_texts(element: dict[str, Any]) -> list[str]:
 
 
 def _display_x(element: dict[str, Any], layout_width: int) -> int:
+    if "display_x" in element:
+        return int(element["display_x"])
     if element["kind"] == "coil":
         return max(0, layout_width - 1)
     if element["kind"] == "instruction" and element.get("element_kind") != "ct":
@@ -243,54 +214,6 @@ def _element_span(element: dict[str, Any], layout_width: int) -> int:
     # Match the cell footprint used by the print renderer and grid folding.
     # Output instructions must not expand to consume the remaining power rail.
     return max(1, min(box_cells(element.get("operands", [])), layout_width - int(element["x"])))
-
-
-def _inferred_horizontal_wires(layout: dict[str, Any], y_offset: int) -> list[str]:
-    dim = layout["dim"]
-    height = int(dim["height"])
-    right = RAIL_PAD + max(1, int(dim["width"])) * CELL_W
-    by_y: dict[int, list[tuple[int, int]]] = {y: [] for y in range(height)}
-    for element in layout["elements"]:
-        left, right_edge, cy = _element_box(element, y_offset)
-        by_y.setdefault(int(element["y"]), []).append((left, right_edge))
-
-    vertical_x_by_y: dict[int, set[int]] = {}
-    for vertical in layout["verticals"]:
-        x = _boundary_x(int(vertical["x"]))
-        y1 = int(vertical["y1"])
-        y2 = int(vertical["y2"])
-        vertical_x_by_y.setdefault(y1, set()).add(x)
-        vertical_x_by_y.setdefault(y2, set()).add(x)
-
-    lines: list[str] = []
-    for y, boxes in sorted(by_y.items()):
-        if not boxes and y not in vertical_x_by_y:
-            continue
-        _, cy = _cell_center(0, y, y_offset)
-        anchors: set[int] = set(vertical_x_by_y.get(y, set()))
-        if any(int(element["y"]) == y and int(element["x"]) == 0 for element in layout["elements"]):
-            anchors.add(RAIL_PAD)
-        has_sink = False
-        for element in layout["elements"]:
-            if int(element["y"]) != y:
-                continue
-            left, right_edge, _ = _element_box(element, y_offset)
-            anchors.add(left)
-            anchors.add(right_edge)
-            if element["kind"] == "coil" or element.get("element_kind") != "ct":
-                has_sink = True
-        if has_sink:
-            anchors.add(right)
-        sorted_anchors = sorted(anchors)
-        blockers = sorted(boxes)
-        for a, b in zip(sorted_anchors, sorted_anchors[1:]):
-            if b <= a + 2:
-                continue
-            midpoint = (a + b) // 2
-            if any(left < midpoint < right_edge for left, right_edge in blockers):
-                continue
-            lines.append(f'<line class="wire" x1="{a}" y1="{cy}" x2="{b}" y2="{cy}" />')
-    return lines
 
 
 def _contact_mark_svg(mark: str, x: int, y: int) -> list[str]:
@@ -326,50 +249,26 @@ def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
     width = int(dim["width"])
     height = int(dim["height"])
     top = y_offset + ROW_PAD_Y
-    bottom = top + max(1, height - 1) * CELL_H
+    bottom = top + max(1, height) * CELL_H
     left = RAIL_PAD
     right = RAIL_PAD + max(1, width) * CELL_W
     lines = [
         f'<line class="rail" x1="{left}" y1="{top}" x2="{left}" y2="{bottom}" />',
         f'<line class="rail" x1="{right}" y1="{top}" x2="{right}" y2="{bottom}" />',
     ]
-    occupied: set[tuple[int, int]] = set()
-    for element in layout["elements"]:
-        span = _element_span(element, width)
-        display_x = _display_x(element, width)
-        for cell_x in range(display_x, display_x + span):
-            occupied.add((cell_x, int(element["y"])))
     for wire in layout["wires"]:
         y = int(wire["y"])
         x1 = int(wire["x1"])
         x2 = int(wire["x2"])
         _, cy = _cell_center(0, y, y_offset)
         lines.append(f'<line class="wire" x1="{_boundary_x(x1)}" y1="{cy}" x2="{_boundary_x(x2)}" y2="{cy}" />')
-    for y in range(height):
-        row_elements = [element for element in layout["elements"] if int(element["y"]) == y]
-        boundaries = {_boundary_x(_display_x(element, width)) for element in row_elements}
-        boundaries.update(_boundary_x(_display_x(element, width) + _element_span(element, width)) for element in row_elements)
-        # Keep the original input connection when an output moves to the rail.
-        boundaries.update(_boundary_x(int(element["x"])) for element in row_elements
-                          if _display_x(element, width) != int(element["x"]))
-        for vertical in layout["verticals"]:
-            if int(vertical["y1"]) == y or int(vertical["y2"]) == y:
-                boundaries.add(_boundary_x(int(vertical["x"])))
-        if any(_display_x(element, width) == 0 for element in row_elements):
-            boundaries.add(left)
-        if any(element["kind"] == "coil" or element.get("element_kind") != "ct" for element in row_elements):
-            boundaries.add(right)
-        sorted_boundaries = sorted(boundaries)
-        _, cy = _cell_center(0, y, y_offset)
-        for a, b in zip(sorted_boundaries, sorted_boundaries[1:]):
-            cell_a = round((a - RAIL_PAD) / CELL_W)
-            cell_b = round((b - RAIL_PAD) / CELL_W)
-            if cell_b <= cell_a:
-                continue
-            middle_cells = range(cell_a, cell_b)
-            if any((cell_x, y) in occupied for cell_x in middle_cells):
-                continue
-            lines.append(f'<line class="wire" x1="{a}" y1="{cy}" x2="{b}" y2="{cy}" />')
+    # A moved sink keeps its original input node through a display stem.
+    for element in layout["elements"]:
+        source = int(element["x"])
+        display = _display_x(element, width)
+        if display > source:
+            _, cy = _cell_center(0, int(element["y"]), y_offset)
+            lines.append(f'<line class="wire" x1="{_boundary_x(source)}" y1="{cy}" x2="{_boundary_x(display)}" y2="{cy}" />')
     for vertical in layout["verticals"]:
         x = _boundary_x(int(vertical["x"]))
         _, y1 = _cell_center(0, int(vertical["y1"]), y_offset)
@@ -392,8 +291,8 @@ def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
             right_x = (cell_left + cell_right) // 2 + CONTACT_W // 2
             lines.extend(
                 [
-                    f'<line class="wire" x1="{cell_left}" y1="{y}" x2="{left_x}" y2="{y}" />',
-                    f'<line class="wire" x1="{right_x}" y1="{y}" x2="{cell_right}" y2="{y}" />',
+                    f'<line class="wire" x1="{cell_left}" y1="{y}" x2="{left_x + 10}" y2="{y}" />',
+                    f'<line class="wire" x1="{right_x - 10}" y1="{y}" x2="{cell_right}" y2="{y}" />',
                     f'<line class="symbol" x1="{left_x + 10}" y1="{y - CONTACT_H // 2}" x2="{left_x + 10}" y2="{y + CONTACT_H // 2}" />',
                     f'<line class="symbol" x1="{right_x - 10}" y1="{y - CONTACT_H // 2}" x2="{right_x - 10}" y2="{y + CONTACT_H // 2}" />',
                     *_contact_mark_svg(contact_mark(str(element["role"]), str(element.get("ct_code", ""))), x, y),
@@ -459,6 +358,16 @@ def _svg_rung(layout: dict[str, Any], y_offset: int) -> list[str]:
         if comment:
             for line_index, value in enumerate(_comment_lines(str(element.get("comment") or ""))):
                 lines.append(f'<text class="comment" x="{x}" y="{y + 31 + line_index * 13}">{html.escape(value)}</text>')
+    for fold in layout.get("folds", []):
+        label = html.escape(str(fold["label"]) + " →")
+        for outgoing, row_y in ((True, fold["from_y"]), (False, fold["to_y"])):
+            cell_x = width - 1 if outgoing else 0
+            x, y = _cell_center(cell_x, row_y, y_offset)
+            # A marker is a wire terminal, with a gap to the nearby power rail.
+            x1 = _boundary_x(cell_x) if outgoing else x + CELL_W // 3
+            x2 = x - CELL_W // 3 if outgoing else _boundary_x(1)
+            lines.append(f'<line class="wire" x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" />')
+            lines.append(f'<text class="fold-label" x="{x}" y="{y}" dominant-baseline="middle">{label}</text>')
     return [line for line in lines if line]
 
 
@@ -478,7 +387,7 @@ def layouts_to_svg(payload: dict[str, Any]) -> str:
         "</linearGradient>",
         "</defs>",
         "<style>",
-        ".bg{fill:#fbfcfd}.rung-bg{fill:#fff}.rail,.wire{stroke:#202832;stroke-width:2.4;stroke-linecap:square}.symbol{fill:#fff;stroke:#202832;stroke-width:2}.mark{stroke:#202832;stroke-width:1.8}.mark-head{fill:none;stroke:#202832;stroke-width:1.8;stroke-linejoin:round}.box{fill:#fff;stroke:#202832;stroke-width:1.8}.opcode-cell{fill:url(#gx3-opcode);stroke:none}.box-separator{stroke:#9aa4b1;stroke-width:1}.label{font:13px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#0f1720}.opcode-label{font:13px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#1d2630}.operand-label{font:12px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#111827}.comment{font:9px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#14833b}.pos{font:12px Meiryo,Arial,sans-serif;fill:#53606f}",
+        ".bg{fill:#fbfcfd}.rung-bg{fill:#fff}.rail,.wire{stroke:#202832;stroke-width:2.4;stroke-linecap:square}.symbol{fill:#fff;stroke:#202832;stroke-width:2}.mark{stroke:#202832;stroke-width:1.8}.mark-head{fill:none;stroke:#202832;stroke-width:1.8;stroke-linejoin:round}.box{fill:#fff;stroke:#202832;stroke-width:1.8}.opcode-cell{fill:url(#gx3-opcode);stroke:none}.box-separator{stroke:#9aa4b1;stroke-width:1}.label{font:13px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#0f1720}.opcode-label{font:13px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#1d2630}.operand-label{font:12px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#111827}.comment{font:9px Meiryo,Arial,sans-serif;text-anchor:middle;fill:#14833b}.fold-label{font:12px Consolas,Meiryo,sans-serif;text-anchor:middle;fill:#202832}.pos{font:12px Meiryo,Arial,sans-serif;fill:#53606f}",
         "</style>",
         f'<rect class="bg" x="0" y="0" width="{svg_width}" height="{svg_height}" />',
     ]
@@ -486,7 +395,7 @@ def layouts_to_svg(payload: dict[str, Any]) -> str:
     for rung, height in zip(rungs, rung_heights):
         pos = html.escape(str(rung.get("pos", "")))
         parts.append(f'<rect class="rung-bg" x="0" y="{offset}" width="{svg_width}" height="{height - 10}" />')
-        parts.append(f'<text class="pos" x="8" y="{offset + 16}">pos {pos}</text>')
+        parts.append(f'<text class="pos" x="8" y="{offset + 16}">step {html.escape(str(rung.get("step"))) if rung.get("step") is not None else "?"} · pos {pos}</text>')
         parts.extend(_svg_rung(rung, offset))
         offset += height
     parts.append("</svg>")
