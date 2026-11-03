@@ -13,6 +13,7 @@ and ambiguous characters occupy 2 columns, everything else 1.
 """
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -519,9 +520,8 @@ def ops_past_grid(ops: list, cells: int = N_CELLS) -> list:
     """The ops that do not fit the printed grid and move to a continuation row.
 
     An op that pokes past the marker cell moves too, which is why the test is
-    against cells - 1 once anything has overflowed. Both the printed rung and
-    the SVG fold on this, so a rung cannot break in one place on paper and
-    another on screen.
+    against cells - 1 once anything has overflowed. Kept for compatibility;
+    rendering now uses fold_to_grid to move wires and fitting elements too.
     """
     if not any(op.x + op_cells_of(op) > cells for op in ops):
         return []
@@ -555,6 +555,8 @@ def gap_is_wired(
     """
     _, _, _, a_lend, a_kind = a
     _, _, b_lstart, _, b_kind = b
+    if a_kind == "sink":
+        return False
     if a_kind == "stub" and b_kind == "stub":
         # two verticals with nothing between them: a real bridge would be
         # stored as explicit wire elements
@@ -569,6 +571,143 @@ def gap_is_wired(
     return True
 
 
+def wired_gaps(ops, verticals, wires):
+    """Logical empty stretches, using the same branch rule as printed gaps.
+
+    A sink ends at its input node: its drawn box is placed at the right rail
+    later. Two vertical stubs alone never imply a horizontal bridge.
+    """
+    items = {}
+    incident = {}
+    starts = {(op.x, op.y) for op in ops}
+    vset = set(verticals)
+    for op in ops:
+        sink = op.is_coil or op.is_driver_box
+        end = op.x if sink else op.x + op_cells_of(op)
+        items.setdefault(op.y, []).append((op.x, end, op.x, end, "sink" if sink else "op"))
+    for x, y, end in wires:
+        items.setdefault(y, []).append((x, end, x, end, "wire"))
+    for x, vy in vset:
+        for y in (vy - 1, vy):
+            incident.setdefault(y, set()).add(x)
+            up, down = (x, y) in vset, (x, y + 1) in vset
+            if up != down or (x, y) in starts:
+                items.setdefault(y, []).append((x, x, x, x, "stub"))
+    gaps = []
+    for y, row_items in items.items():
+        row_items.sort()
+        for a, b in zip(row_items, row_items[1:]):
+            if a[3] < b[2] and gap_is_wired(a, b, incident.get(y, set())):
+                gaps.append((a[3], y, b[2]))
+    return gaps
+
+
+def fold_to_grid(ops, verticals, wires, cells=N_CELLS):
+    """Partition the full circuit into bands and join only cut wire nodes.
+
+    Cell zero is reserved for incoming K markers on continuation bands; the
+    last cell holds outgoing ones. All content at or beyond a cut moves,
+    including fitting elements and wire-only branches. A vertical exactly on
+    the cut stays on the source band, with one marker per right-going tap.
+    """
+    ops = [copy.copy(op) for op in ops]
+    order = {id(op): i for i, op in enumerate(ops)}
+    wires = list(wires) + wired_gaps(ops, verticals, wires)
+    verticals = list(verticals)
+    result_ops, result_verticals, result_wires, folds = [], [], [], []
+    offset = 0
+    continued = False
+
+    def active_rows(band_ops, band_vs, band_ws):
+        return {op.y for op in band_ops} | {y for _, y, _ in band_ws} | {
+            y for _, vy in band_vs for y in (vy - 1, vy) if y >= 0
+        }
+
+    while True:
+        overflow = any(op.x + op_cells_of(op) > cells for op in ops)
+        overflow |= any(end > cells for _, _, end in wires) or any(x > cells for x, _ in verticals)
+        if not overflow:
+            result_ops.extend(ops)
+            result_verticals.extend((x, y + offset) for x, y in verticals)
+            result_wires.extend((x, y + offset, end) for x, y, end in wires)
+            for op in ops:
+                op.y += offset
+            break
+
+        cut = min([cells - 1, *[op.x for op in ops if op.x + op_cells_of(op) > cells - 1]])
+        if cut <= (1 if continued else 0):
+            raise ValueError("instruction footprint exceeds the available cells in a continuation band")
+        stay = [op for op in ops if op.x < cut]
+        moved = [op for op in ops if op.x >= cut]
+        stay_vs = [(x, y) for x, y in verticals if x <= cut]
+        moved_vs = [(x - cut + 1, y) for x, y in verticals if x > cut]
+        stay_ws, moved_ws = [], []
+        left_nodes, right_nodes = set(), set()
+        for op in stay:
+            if not (op.is_coil or op.is_driver_box) and op.x + op_cells_of(op) == cut:
+                left_nodes.add(op.y)
+        for op in moved:
+            if op.x == cut:
+                right_nodes.add(op.y)
+        for x, vy in stay_vs:
+            if x == cut:
+                left_nodes.update((vy - 1, vy))
+        for x, y, end in wires:
+            if x < cut:
+                stay_ws.append((x, y, min(end, cut)))
+                if end >= cut:
+                    left_nodes.add(y)
+            if end > cut:
+                moved_ws.append((max(x, cut) - cut + 1, y, end - cut + 1))
+                if x <= cut:
+                    right_nodes.add(y)
+        crossing = sorted(left_nodes & right_nodes)
+        stay_ws.extend((cut, y, cells - 1) for y in crossing if cut < cells - 1)
+        stay_rows = active_rows(stay, stay_vs, stay_ws) | set(crossing)
+        next_offset = offset + (max(stay_rows) + 1 if stay_rows else 0)
+        next_rows = sorted(active_rows(moved, moved_vs, moved_ws) | set(crossing))
+        row_map = {y: i for i, y in enumerate(next_rows)}
+        for y in crossing:
+            folds.append({"label": f"K{len(folds)}", "from_y": offset + y,
+                          "from_x": cut, "marker_x": cells - 1,
+                          "to_y": next_offset + row_map[y], "to_x": 1,
+                          "y": next_offset + row_map[y]})
+        result_ops.extend(stay)
+        result_verticals.extend((x, y + offset) for x, y in stay_vs)
+        result_wires.extend((x, y + offset, end) for x, y, end in stay_ws if x < end)
+        for op in stay:
+            op.y += offset
+        for op in moved:
+            op.x = op.x - cut + 1
+            op.y = row_map[op.y]
+        verticals = [(x, row_map[y]) for x, y in moved_vs]
+        wires = [(x, row_map[y], end) for x, y, end in moved_ws]
+        ops, offset, continued = moved, next_offset, True
+
+    # Preserve parser order for consumers that associate elements with operands.
+    result_ops.sort(key=lambda op: order[id(op)])
+    return result_ops, sorted(set(result_verticals)), sorted(set(result_wires)), folds
+
+
+def display_x_for_op(op, ops, verticals, wires, cells=N_CELLS):
+    """Right align sinks only while their input stem stays clear of other nets.
+
+    Extending a sink's input across a later branch vertical shorts that branch
+    into its enable node. Leave room for the box before the first obstacle.
+    """
+    if not (op.is_coil or op.is_driver_box):
+        return op.x
+    span = op_cells_of(op)
+    target = cells - span
+    obstacles = [x for x, y in verticals if op.y in (y - 1, y)]
+    obstacles += [other.x for other in ops if other is not op and other.y == op.y]
+    obstacles += [x for x, y, _ in wires if y == op.y]
+    for x in obstacles:
+        if op.x < x:
+            target = min(target, x - span)
+    return max(op.x, target)
+
+
 def render_rung(
     row: LadderRow,
     comments: dict[tuple[str, int], str],
@@ -577,75 +716,9 @@ def render_rung(
     labels: LabelResolver | None = None,
 ) -> list[str]:
     ops, verticals, wires = parse_rung(row, labels)
-    vset_logical = set(verticals)
-    max_y = 0
-    for op in ops:
-        max_y = max(max_y, op.y)
-    for _, y in verticals:
-        max_y = max(max_y, y)
-    for _, y, _ in wires:
-        max_y = max(max_y, y)
-
-    # ---- fold rungs wider than the printed 12-cell grid --------------------
-    # The overflowing right part of the grid moves onto continuation rows
-    # below the rung; rows whose wiring crosses the fold are linked with
-    # "K<n> →" markers (exactly like the GX Works3 print output).
-    right_markers: dict[int, str] = {}
-    left_markers: dict[int, str] = {}
-    moved_ops = ops_past_grid(ops, N_CELLS)
-    if moved_ops:
-        x_base = min(op.x for op in moved_ops)
-        moved_ids = {id(op) for op in moved_ops}
-        incident_by_row: dict[int, set[int]] = {}
-        for vx, vy in vset_logical:
-            incident_by_row.setdefault(vy - 1, set()).add(vx)
-            incident_by_row.setdefault(vy, set()).add(vx)
-
-        crossing_rows: list[int] = []
-        cont_content_rows: list[int] = []
-        for y in sorted({op.y for op in ops}):
-            stay = [op for op in ops if op.y == y and id(op) not in moved_ids]
-            moved_here = [op for op in ops if op.y == y and id(op) in moved_ids]
-            if not moved_here and not any(
-                vx >= x_base for vx in incident_by_row.get(y, set())
-            ):
-                continue
-            cont_content_rows.append(y)
-            if stay and moved_here:
-                last_stay = max(op.x + op_cells_of(op) for op in stay)
-                first_moved = min(op.x for op in moved_here)
-                if not blocked(last_stay, first_moved, incident_by_row.get(y, set())):
-                    crossing_rows.append(y)
-
-        cont_pos = {y: max_y + 1 + i for i, y in enumerate(cont_content_rows)}
-        for i, y in enumerate(crossing_rows):
-            label = f"K{i}"
-            right_markers[y] = label
-            left_markers[cont_pos[y]] = label
-
-        for op in moved_ops:
-            op.x = op.x - x_base + 1
-            op.y = cont_pos[op.y]
-        new_verticals: list[tuple[int, int]] = []
-        for vx, vy in verticals:
-            if vx < x_base:
-                new_verticals.append((vx, vy))
-                continue
-            upper = cont_pos.get(vy - 1)
-            lower = cont_pos.get(vy)
-            if upper is None or lower is None:
-                continue
-            for py in range(upper + 1, lower + 1):
-                new_verticals.append((vx - x_base + 1, py))
-        verticals = new_verticals
-        new_wires = []
-        for wx, wy, wend in wires:
-            if wx + 1 <= N_CELLS - 1:
-                new_wires.append((wx, wy, wend))
-            elif wx >= x_base and wy in cont_pos:
-                new_wires.append((wx - x_base + 1, cont_pos[wy], wend - x_base + 1))
-        wires = new_wires
-        max_y = max_y + len(cont_content_rows)
+    ops, verticals, wires, folds = fold_to_grid(ops, verticals, wires)
+    max_y = max([0, *[op.y for op in ops], *[y for _, y in verticals],
+                 *[y for _, y, _ in wires], *[f["to_y"] for f in folds]])
 
     height = max_y + 1
     note_rows = {op.y for op in ops if op.note}
@@ -670,29 +743,26 @@ def render_rung(
             for i, part in enumerate(wrap_display(text, COMMENT_W, COMMENT_LINES)):
                 canvas.comment_line(py, i).put(2, part)
 
-    # horizontal content per row
+    # The complete horizontal wiring was determined before any folding.
+    # Draw those stretches directly: a new gap on a continuation band is not
+    # evidence of a connection. Element symbols overlay their own footprint.
     ends_at_rail: set[int] = set()
     for x, y, end_x in wires:
-        line = canvas.symbol_line(y)
-        line.put(cell_col(x), HLINE * (CELL_W // 2))
+        start, end = boundary_col(x), boundary_col(end_x)
+        canvas.symbol_line(y).put(start, HLINE * ((end - start) // 2))
 
-    # items per row: (drawn_start, drawn_end, logical_start, logical_end, kind)
-    items_by_y: dict[int, list[tuple[int, int, int, int, str]]] = {}
-
-    def add_item(
-        y: int, dstart: int, dend: int, lstart: int, lend: int, kind: str = "op"
-    ) -> None:
-        items_by_y.setdefault(y, []).append((dstart, dend, lstart, lend, kind))
-
-    for x, y, end_x in wires:
-        canvas.symbol_line(y).put(cell_col(x), HLINE * (CELL_W // 2))
-        add_item(y, cell_col(x), cell_col(x) + CELL_W, x, x + 1)
+    def place_sink_stem(y, logical_x, drawn_start):
+        start = boundary_col(logical_x)
+        if drawn_start > start:
+            canvas.symbol_line(y).put(start, HLINE * ((drawn_start - start) // 2))
 
     for op in ops:
         y = op.y
         sym_line = canvas.symbol_line(y)
         dev_line = canvas.device_line(y)
         col = cell_col(op.x)
+        if op.is_contact or op.is_inline_box:
+            sym_line.put(boundary_col(op.x), HLINE)
         if op.is_contact:
             sym_line.put(col, contact_symbol(op.role, op.ct_code))
             sym_line.put(col + 8, HLINE * 3)
@@ -700,26 +770,25 @@ def render_rung(
             dev_line.put(col, device)
             place_comment(canvas, y, col, comment_text_for(device, comments))
             place_live_annotation(canvas, y, col, op.role, device, live_values or {})
-            add_item(y, col, col + CELL_W, op.x, op.x + 1)
         elif (
             op.is_inline_box
             and op.opcode_text() in INLINE_SYMBOL_OPS
             and not op.operands
         ):
             sym_line.put(col, HLINE + INLINE_SYMBOL_OPS[op.opcode_text()] + HLINE * 5)
-            add_item(y, col, col + CELL_W, op.x, op.x + 1)
         elif op.is_coil:
             lx = max(op.x, 0)
-            col = RIGHT_RAIL - 12
+            display_x = display_x_for_op(op, ops, verticals, wires)
+            end = boundary_col(display_x + 1)
+            col = end - 12
             sym_line.put(col, HLINE + COIL + HLINE * 4)
             device = op.operands[0] if op.operands else "?"
             dev_line.put(col, device)
             place_comment(canvas, y, col, comment_text_for(device, comments))
             place_live_annotation(canvas, y, col, "coil", device, live_values or {})
-            ends_at_rail.add(y)
-            add_item(y, col, RIGHT_RAIL, lx, lx)
-            if cell_col(lx) < col:
-                add_item(y, cell_col(lx), cell_col(lx), lx, lx, "stub")
+            if display_x + 1 == N_CELLS:
+                ends_at_rail.add(y)
+            place_sink_stem(y, lx, col)
         elif op.is_inline_box:
             text = box_text(op.opcode_text(), op.operands)
             sym_line.put(col, text)
@@ -728,73 +797,32 @@ def render_rung(
             if fill_to > fill_from:
                 sym_line.put(fill_from, HLINE * ((fill_to - fill_from) // 2))
             place_box_comments(canvas, y, col, op.operands, comments)
-            add_item(y, col, max(fill_to, fill_from), op.x, op.x + box_cells(op.operands))
         else:  # driver box, right aligned
             text = box_text(op.opcode_text(), op.operands)
-            col = RIGHT_RAIL - text_width(text)
+            display_x = display_x_for_op(op, ops, verticals, wires)
+            end = boundary_col(display_x + op_cells_of(op))
+            col = end - text_width(text)
             sym_line.put(col, text)
             place_box_comments(canvas, y, col, op.operands, comments)
-            ends_at_rail.add(y)
+            if display_x + op_cells_of(op) == N_CELLS:
+                ends_at_rail.add(y)
             lx = max(op.x, 0)
-            add_item(y, col, RIGHT_RAIL, lx, lx)
-            if cell_col(lx) < col:
-                add_item(y, cell_col(lx), cell_col(lx), lx, lx, "stub")
+            place_sink_stem(y, lx, col)
         if op.note:
             canvas.note_line(y).put(col, op.note)
 
-    # wrap markers: "K<n> →" in the last cell of the folded row and in the
-    # first cell of its continuation row
-    marker_text_w = COMMENT_W  # 12 display columns: label padded to 10 + arrow
-    for y, label in right_markers.items():
-        col = RIGHT_RAIL - marker_text_w
-        canvas.symbol_line(y).put(col, pad_field(label, 10) + "→")
-        ends_at_rail.add(y)
-        add_item(y, col, RIGHT_RAIL, N_CELLS - 1, N_CELLS - 1, "marker")
-    for y, label in left_markers.items():
-        canvas.symbol_line(y).put(CELL0, pad_field(label, 10) + "→")
-        add_item(y, CELL0, CELL0 + marker_text_w, 0, 0, "marker")
+    # K endpoints are virtual connections, with space between an incoming
+    # marker and the left rail. Outgoing markers do not connect to the rail.
+    for fold in folds:
+        label = fold["label"]
+        canvas.symbol_line(fold["from_y"]).put(boundary_col(N_CELLS - 1), HLINE)
+        canvas.symbol_line(fold["from_y"]).put(cell_col(N_CELLS - 1), pad_field(label, 10) + "→")
+        canvas.symbol_line(fold["to_y"]).put(CELL0, pad_field(label, 10) + "→")
 
-    # the first row always leaves the left rail
-    add_item(0, LEFT_RAIL, CELL0, 0, 0, "rail")
-
-    # left-rail connector: row 0 and rows whose leftmost element sits at x=0
-    rail_rows = {0} | {
-        y
-        for y, items in items_by_y.items()
-        if min(d for d, _, _, _, _ in items) == CELL0
-    }
+    rail_rows = {op.y for op in ops if op.x == 0} | {y for x, y, _ in wires if x == 0}
     for y in rail_rows:
         canvas.symbol_line(y).put(LEFT_RAIL, "├")
-
-    # verticals participate as zero-width connection stubs
     vset = set(verticals)
-    incident: dict[int, set[int]] = {}
-    for vx, vy in vset:
-        incident.setdefault(vy - 1, set()).add(vx)
-        incident.setdefault(vy, set()).add(vx)
-    # ... where they terminate or where an element taps them at its own x
-    ops_x_by_y: dict[int, set[int]] = {}
-    for op in ops:
-        ops_x_by_y.setdefault(op.y, set()).add(op.x)
-    for x, vy in vset:
-        b = boundary_col(x) if x > 0 else LEFT_RAIL
-        for y in (vy - 1, vy):
-            up = (x, y) in vset
-            down = (x, y + 1) in vset
-            connects = up != down or x in ops_x_by_y.get(y, set())
-            if connects and 0 <= y <= max_y and y in items_by_y:
-                add_item(y, b, b + 2, x, x, "stub")
-
-    # wire the gaps between consecutive connected items on each row
-    for y, items in items_by_y.items():
-        items.sort()
-        sym_line = canvas.symbol_line(y)
-        for a, b in zip(items, items[1:]):
-            if b[0] <= a[1]:
-                continue
-            if not gap_is_wired(a, b, incident.get(y, set())):
-                continue
-            sym_line.put(a[1], HLINE * ((b[0] - a[1]) // 2))
 
     # right rail connector on driver rows
     for y in ends_at_rail:
