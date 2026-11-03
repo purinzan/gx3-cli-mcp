@@ -59,6 +59,9 @@ class ProgramMap:
     program_files: list[str] = field(default_factory=list)          # CPU.PRM order
     step_starts: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # A stronger name match rejected these groups. Consumers must not apply
+    # another naming heuristic to turn them back into execution assignments.
+    rejected_prefix_dirs: set[str] = field(default_factory=set)
 
     def label(self, lddb: str) -> str:
         hexid = lddb.split("_")[0]
@@ -176,6 +179,39 @@ def match_program_file(pou_name: str, program_files: list[str]) -> str:
     return candidates[0]
 
 
+def drop_shadowed_prefix_matches(
+    pm: ProgramMap, prefix_program_dirs: set[str], decoded_names: dict[str, list[str]]
+) -> set[str]:
+    """Reject a weak group assignment claimed by an exact name in another group.
+
+    Clear the whole linked group, not just its first POU. Keep its source
+    names/order and return the rejected dirs so later heuristics cannot turn
+    the same unassigned metadata back into an execution-setting assignment.
+    """
+    exact_dirs: dict[str, set[str]] = {}
+    by_dir: dict[str, list[PouInfo]] = {}
+    for info in pm.pous_by_dir.values():
+        if not info.program_dir:
+            continue
+        by_dir.setdefault(info.program_dir, []).append(info)
+        if info.name and info.name == info.program_file and info.name in decoded_names.get(info.program_dir, []):
+            exact_dirs.setdefault(info.program_file, set()).add(info.program_dir)
+    rejected: set[str] = set()
+    for program_dir in sorted(prefix_program_dirs):
+        infos = by_dir.get(program_dir, [])
+        targets = {info.program_file for info in infos if info.program_file}
+        if not any(exact_dirs.get(target, set()) - {program_dir} for target in targets):
+            continue
+        rejected.add(program_dir)
+        for info in infos:
+            info.program_file = ""
+        pm.warnings.append(
+            f"program {program_dir}: dropped prefix program-file match {', '.join(sorted(targets))}; "
+            "an exact POU name belongs to another linked program; left unassigned"
+        )
+    return rejected
+
+
 def load_program_map(root: Path) -> ProgramMap:
     pm = ProgramMap(root=root)
     cpu_prm = root / "CPU.PRM"
@@ -222,6 +258,8 @@ def load_program_map(root: Path) -> ProgramMap:
 
     link_entries = iter_convertdata_entries(root, "PouLinkOrder.info")
     if link_entries:
+        prefix_program_dirs: set[str] = set()
+        decoded_names: dict[str, list[str]] = {}
         qpg_by_dir = {entry.program_id: entry.path for entry in iter_convertdata_entries(root, "Program.qpg")}
         for entry in link_entries:
             qpg = qpg_by_dir.get(entry.program_id)
@@ -241,6 +279,8 @@ def load_program_map(root: Path) -> ProgramMap:
                         names = records
                 if names and names[0]:
                     program_file = match_program_file(names[0], pm.program_files)
+                    if program_file and program_file != names[0]:
+                        prefix_program_dirs.add(entry.program_id)
                 if not program_file:
                     program_file = qpg_program_file_name(data, pm.program_files)
             if len(names) != len(pou_ids):
@@ -249,6 +289,9 @@ def load_program_map(root: Path) -> ProgramMap:
                         f"program {entry.program_id}: {len(pou_ids)} POUs but {len(names)} names decoded"
                     )
                 names = [""] * len(pou_ids)
+            # Do not treat a display name filled from program_file below as
+            # exact-name evidence when no matching POU record was decoded.
+            decoded_names[entry.program_id] = names
             for order, (pid, name) in enumerate(zip(pou_ids, names)):
                 info = pm.pous_by_dir.get(pid)
                 if info is None:
@@ -259,13 +302,16 @@ def load_program_map(root: Path) -> ProgramMap:
                 info.program_dir = entry.program_id
                 info.link_index = order
 
+        rejected_dirs = drop_shadowed_prefix_matches(pm, prefix_program_dirs, decoded_names)
+        pm.rejected_prefix_dirs = rejected_dirs
+
         # Second pass for program dirs whose POU name is known but whose
         # program file could not be matched (underscore drift such as
         # POU ``202_MES2_`` vs program file ``202_MES_2``).
         used_files = {info.program_file for info in pm.pous_by_dir.values() if info.program_file}
         unused_files = [n for n in pm.program_files if n not in used_files]
         for info in pm.pous_by_dir.values():
-            if not info.program_dir or info.program_file or not info.name:
+            if not info.program_dir or info.program_dir in rejected_dirs or info.program_file or not info.name:
                 continue
             key = info.name.replace("_", "")
             candidates = [
@@ -285,7 +331,7 @@ def load_program_map(root: Path) -> ProgramMap:
         unresolved = [
             info
             for info in pm.pous_by_dir.values()
-            if info.program_dir and not info.program_file
+            if info.program_dir and info.program_dir not in rejected_dirs and not info.program_file
         ]
         if len(unresolved) == 1 and len(unused_files) == 1:
             info = unresolved[0]

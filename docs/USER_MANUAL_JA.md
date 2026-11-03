@@ -96,6 +96,16 @@ gx3-cli dead-logic --root project.gx3
 gx3-cli reliability-report --root project.gx3 -o reliability.md
 ```
 
+`lint` の `compare-type` / `signed-compare` は、GX Works3 中間形式で比較記号だけが
+保存されている場合、その比較命令の `K_2` / `H_2`（2ワード整数定数）を根拠に
+32ビットの比較として検査します。別命令の定数や定数値の大きさから幅を推定しません。
+
+`program-map` は、POU名の前方一致で割り当てたprogram fileに、別のリンクグループの
+POU名が完全一致する場合、前方一致側のグループを警告付きの未割当として残します。
+`exec-config` / `scan-order` もその除外を保持します。以前の実行設定CSVやscan-order結果は
+再生成してください。未割当は旧POUが実行されないことの証明ではありません。
+`lint` / `review` の二重コイル検査は引き続き全LDDBを対象とし、未割当POUも検査します。
+
 ## 現在値の読み取り
 
 `live-read` は MC Protocol/SLMP 3E binary の batch read で、明示指定した PLC から現在値を読みます。

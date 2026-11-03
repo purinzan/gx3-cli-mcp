@@ -129,6 +129,8 @@ def build_pou_order(root: Path) -> dict[str, PouOrder]:
 
     matched_label: dict[str, str] = {}
     for group, members in groups.items():
+        if group in pm.rejected_prefix_dirs:
+            continue
         pf = members[0].program_file if members else ""
         if pf and pf in order_of:
             matched_label[group] = pf

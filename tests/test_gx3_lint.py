@@ -9,6 +9,11 @@ real parse path stays aligned.
 """
 
 import sqlite3
+import csv
+import json
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from gx3cli.gx3_intermediate_tool import generate_rung
@@ -21,6 +26,7 @@ from gx3cli.gx3_lint import (
     check_comment_conflict,
     check_multi_writer,
     check_signed_compare,
+    check_compare_type,
     check_operand_device,
     check_width_mismatch,
     const_int,
@@ -456,6 +462,89 @@ def test_decode_row_ops_on_generated_rung() -> None:
     assert roles == ["a", "c"], roles
     numbers = [a.number for op in ops for a in op.args if a.kind == "device"]
     assert 100 in numbers and 200 in numbers, numbers
+
+
+def comparison_data(token: str, value: int, *, constant_first: bool = False,
+                    opcode: str = "<", other_wide_constant: bool = False) -> str:
+    """Synthetic LD bytes with a real length table and ordered operands."""
+    types = [token, "D"] if constant_first else ["D", token]
+    args = [f"c{{s=#:v={value}}}", "d{s=#:a=100:vt=nn}"]
+    if not constant_first:
+        args.reverse()
+    tokens = [opcode, *types]
+    elements = ["e{s=ce{op=ct{op=#:ct=a:as=[as{vt=A16}:as{vt=A16}]}:args=["
+                + ":".join(args) + "]}:pos=0,0}"]
+    if other_wide_constant:
+        tokens.extend(["MOV", "K_2", "D"])
+        elements.append("e{s=ce{op=in{op=#:ct=a:as=[as{vt=A32}:as{vt=A32}]}:args=[c{s=#:v=70000}:d{s=#:a=200:vt=nn}]}:pos=4,0}")
+    tokens.extend(["c", "M"])
+    elements.append("e{s=ce{op=cl{op=#:ct=a:as=[as{vt=Abl}]}:args=[d{s=#:a=900:vt=nn}]}:pos=10,0}")
+    lengths = ":".join(str(len(t.encode("utf-16-le")) // 2) for t in tokens)
+    return f"V1:{len(tokens)}:{lengths}:{':'.join(tokens)}:cb{{fg=fg{{dim=11x1:es=[{':'.join(elements)}]}}}}"
+
+
+def comparison_context(data: str) -> LintContext:
+    row = make_row("001_LDDB.db", 0)
+    row.data = data
+    return LintContext(root=Path("."), rows=[row], comments={})
+
+
+def test_two_word_compare_constants_use_32_bit_lint_types() -> None:
+    for opcode in ("=", "<>", "<", "<=", ">", ">="):
+        for token in ("K_2", "H_2"):
+            for first in (False, True):
+                ctx = comparison_context(comparison_data(token, 99999999, constant_first=first, opcode=opcode))
+                op = ctx.ops_for(ctx.rows[0])[0]
+                assert (op.role, op.opcode, op.base) == (opcode, "D" + opcode, "D" + opcode), (token, first, op)
+                assert check_compare_type(ctx) == [], (token, first)
+                assert check_signed_compare(ctx) == [], (token, first)
+
+
+def test_compare_width_is_local_and_keeps_real_range_findings() -> None:
+    for value in (65534, 65535, 65536):
+        ctx = comparison_context(comparison_data("K_1", value, other_wide_constant=True))
+        assert ctx.ops_for(ctx.rows[0])[0].opcode == "<"
+        assert bool(check_compare_type(ctx)) == (value > 65535)
+    for value in (-2147483649, -2147483648, -2147483647, 2147483646, 2147483647, 2147483648):
+        ctx = comparison_context(comparison_data("K_2", value))
+        findings = check_signed_compare(ctx)
+        assert bool(findings) == (not -2147483648 <= value <= 2147483647), (value, findings)
+        if findings:
+            assert "int32" in findings[0]["detail"]
+
+
+def test_compare_adapter_preserves_explicit_types():
+    # Adapter-only contract: typed names are supplied by an upstream decoder.
+    # The saved intermediate fixture above uses the actual bare-symbol form.
+    from dataclasses import replace
+    from gx3cli.gx3_arg_decode import parse_row_operations
+    operations, status = parse_row_operations(comparison_data("K_2", 70000))
+    for opcode in ("D<", "LD<_U", "E<"):
+        typed = replace(operations[0], role=opcode, opcode=opcode)
+        assert decode_row_ops("", decoded=([typed], status))[0].opcode == opcode
+
+
+def test_wide_compare_through_real_lint_cli() -> None:
+    from gx3cli.gx3_synthetic_project import create_synthetic_project
+    with tempfile.TemporaryDirectory() as tmp:
+        root = create_synthetic_project(Path(tmp) / "project")
+        with sqlite3.connect(root / "001_LDDB.db") as con:
+            con.execute("delete from LadderBlocks")
+            for i, token in enumerate(("K_2", "H_2", "K_1")):
+                con.execute("insert into LadderBlocks values (?, ?, 0, ?, 1, 0, 0)",
+                            (f"synthetic-{i}", i * 1024, comparison_data(token, 99999999)))
+        done = subprocess.run([sys.executable, "-m", "gx3cli.gx3_cli", "lint", str(root),
+                               "--checks", "compare-type,signed-compare", "--format", "json",
+                               "--out-prefix", str(Path(tmp) / "report")], capture_output=True, text=True, encoding="utf-8")
+        assert done.returncode == 0, done.stdout + done.stderr
+        payload = json.loads(done.stdout)
+        # Only the deliberately single-word constant still has both findings.
+        assert payload["total_findings"] == 2, payload
+        for check in ("compare-type", "signed-compare"):
+            assert payload["checks"][check]["count"] == 1
+            with (Path(tmp) / f"report_{check}.csv").open(encoding="utf-8-sig", newline="") as stream:
+                findings = list(csv.DictReader(stream))
+            assert len(findings) == 1 and "001_LDDB.db:2048:" in findings[0]["locations"], findings
 
 
 def main() -> int:

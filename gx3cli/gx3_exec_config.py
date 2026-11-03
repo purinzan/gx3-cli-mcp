@@ -128,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     # (PF107 <-> first POU "107", exact match, underscore-stripped match).
     name_by_dir: dict[str, str] = {}
     for d, members in groups.items():
+        if d in pm.rejected_prefix_dirs:
+            continue
         pf = members[0].program_file if members else ""
         if pf and pf in names:
             name_by_dir[d] = pf

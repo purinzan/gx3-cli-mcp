@@ -160,7 +160,7 @@
 | `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。 |
 | `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
 | `gx3_tools.py` | `tools`, `inspect`, `sourceinfo`, `version`, `ip-map`, `scon-map`, `query-instruction`, `diff`, `block-context`, `same-row`, `signal-classify`, `impact-add-nc`, `state-chain` | `gx3_run_command` | 補助調査、近傍根拠、状態/命令検索。 |
-| `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。 |
+| `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。記号だけの比較は、その命令の2ワード整数定数を根拠に32ビットとして検査する。 |
 | `gx3_dead_logic.py` | `dead-logic` | `gx3_dead_logic` | 常時 OFF、未読 coil/word、SET without RST。 |
 | `gx3_interlock.py` | `interlock-check` | `gx3_interlock_check` | 2 コイルの同時成立可能性を静的 SAT で確認する。 |
 | `gx3_alarm_map.py` | `alarm-map` | `gx3_alarm_map` | アラーム/異常の trigger、hold、reset 整理。 |
@@ -179,7 +179,7 @@
 | `gx3_motion_rd77.py` | `motion-rd77` | `gx3_run_command` | RD77 simple motion buffer/G label。 |
 | `gx3_iut_probe.py` | `iut-probe` | `gx3_run_command` | RD77 `.iut` motion-setting container strings and paths。 |
 | `gx3_convertdata_probe.py` | `convertdata` | `gx3_run_command` | ConvertData qpg / PouPCode record layout。 |
-| `gx3_program_map.py` | `program-map` | `gx3_run_command` | LDDB から POU 名、program file、step 対応を作る。 |
+| `gx3_program_map.py` | `program-map` | `gx3_run_command` | LDDB から POU 名、program file、step 対応を作る。別グループに完全一致POUがある前方一致割当は警告して未割当に戻す。 |
 | `gx3_exec_config.py` | `exec-config` | `gx3_run_command` | program execution order、POU groups、unit configuration。 |
 | `gx3_scan_order.py` | `scan-order` | `gx3_run_command` | writer/reader の scan-order stale-read 候補。 |
 | `gx3_timing_chart.py` | `timing-chart` | `gx3_run_command` | link-map/xref から handoff timing draft を生成する。 |
@@ -254,6 +254,7 @@
 | `test_gx3_dependency_flow_topology.py` | dependency-flow が暗黙 horizontal gap、左母線推定、driver sink 越しの逆流を依存に混ぜないこと。 |
 | `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |
 | `test_gx3_lint.py` | lint rule 群。 |
+| `test_gx3_program_map_prefix.py` | 合成LDDB・StepInfo・qpg・CPU.PRMから前方一致の誤割当を再現し、program-map、exec-config、scan-orderで再割当されないことを検査する。 |
 | `test_gx3_ladder_logic.py` | ラダー論理生成。 |
 | `test_gx3_ladder_layout.py` | LadderBlocks 座標から JSON/SVG レイアウトを作り、既存の論理解析と矛盾しないことを検査する。 |
 | `test_gx3_ladder_print_filter.py` | ladder-print の section/device filter。 |

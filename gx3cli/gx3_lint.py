@@ -59,6 +59,7 @@ from gx3cli.review_gx3_project import (
 )
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_arg_decode import COMPARE_RE
+from gx3cli.gx3_operand_parse import parse_operands
 from gx3cli.gx3_instruction_table import (
     manual_allowed_devices,
     manual_operand_names,
@@ -237,7 +238,17 @@ def decode_row_ops(data: str, *, decoded=None) -> list[RowOp]:
                     )
                 else:
                     args.append(OpArg(index=idx, kind="other"))
-        out.append(RowOp(role=operation.role, opcode=operation.role, base=base_opcode(operation.role), args=args))
+        opcode = operation.role
+        # GX's intermediate comparison contact can omit the D prefix. Only
+        # a two-word integer constant on THIS operation supplies that width;
+        # do not borrow a token from another instruction or reinterpret an
+        # explicitly typed comparison family.
+        if opcode in {"=", "<>", "<", "<=", ">", ">="} and any(
+            operand.kind == "const" and operand.const_token in {"K_2", "H_2"}
+            for operand in parse_operands(operation.raw_args, operation.arg_tokens)
+        ):
+            opcode = "D" + opcode
+        out.append(RowOp(role=operation.role, opcode=opcode, base=base_opcode(opcode), args=args))
     return out
 
 
