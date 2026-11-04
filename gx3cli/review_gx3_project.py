@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from gx3cli.gx3_device_name import format_device as _format_device
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
 from gx3cli.gx3_analysis_state import DECODE, PARTIAL, AnalysisState, checked
 from gx3cli.extract_hmi_build_info import CommentInfo, DEVICE_CODE_BY_TYPE, comment_status
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
@@ -108,6 +109,7 @@ class DeviceOcc:
     row_conditions: list[str] = field(default_factory=list)
     row_condition_comments: list[str] = field(default_factory=list)
     row_all_devices: list[str] = field(default_factory=list)
+    op_index: int = -1
 
 
 @dataclass
@@ -209,6 +211,7 @@ def parse_device_occurrences(row: LadderRow, comments: dict[tuple[str, int], Com
                     access=arg.access,
                     detail=arg.detail,
                     range_len=arg.range_len,
+                    op_index=operation.op_index,
                 )
             )
 
@@ -315,34 +318,122 @@ def review_missing_comments(rows: list[LadderRow], comments: dict[tuple[str, int
     return out
 
 
+def coil_device(occ: DeviceOcc) -> str:
+    """Static word bits are distinct coil targets; dynamic bases stay unresolved."""
+    bit = re.search(r'\bbit=K?(\d+)\b', occ.detail)
+    if (bit and occ.device_type not in BIT_DEVICE_TYPES | {'', '?', 'LABEL'} and not INDEXED_DETAIL_RE.search(occ.detail)
+            and 'indirect' not in occ.detail and 0 <= int(bit[1]) < 16):
+        return f'{occ.device}.{int(bit[1]):X}'
+    return occ.device
+
+
+def _coil_output_condition_keys(row: LadderRow) -> dict[int, tuple]:
+    """Resolved local conditions per output, never the whole row's contacts.
+
+    Only complete, ordinary contact/coil topology supplies downgrade evidence.
+    Unknown geometry, predicates, modified contacts and stateful/control-flow
+    instructions cannot prove two outputs equivalent and leave severity alone.
+    """
+    from gx3cli.gx3_ladder_logic import VERTICAL_RE, row_logic_analysis
+    from gx3cli.gx3_intermediate_tool import row_syntax
+    from gx3cli.extract_gx3_extended_instruction_knowledge import top_level_items
+
+    def key(node):
+        op = node.get('op')
+        if op in {'true', 'false'}:
+            return (op,)
+        if op == 'contact':
+            if (node.get('device_type') not in DEVICE_CODE_BY_TYPE
+                    or node.get('ct_code') not in {'', 'a', 'b'}
+                    or node.get('device') != node.get('raw_device')):
+                return None
+            return (op, node.get('role'), node.get('device_type'), node.get('device'), node.get('ct_code'))
+        if op in {'and', 'or'}:
+            children = [key(child) for child in node.get('args', [])]
+            if children and all(child is not None for child in children):
+                return (op, *sorted(children, key=repr))
+        return None
+
+    try:
+        operations, status = row_operations(row)
+        if (row.parse_status != 'exact' or status != 'exact'
+                or any(operation.role not in {'a', 'b', 'c'} for operation in operations)):
+            return {}
+        raw_elements = row_syntax(row).elements
+        dim = row.dim or extract_dim(row.data)
+        if not re.fullmatch(r'\d+x\d+', dim):
+            return {}
+        width, height = map(int, dim.split('x'))
+        if width <= 0 or height <= 0:
+            return {}
+        # Missing wires can turn both outputs into FALSE. Validate every
+        # element's own position before treating that as equality evidence.
+        for raw in raw_elements:
+            positions = [field[4:] for field in top_level_items(raw[2:-1]) if field.startswith('pos=')]
+            if len(positions) != 1 or not re.fullmatch(r'\d+,\d+', positions[0]):
+                return {}
+            x, y = map(int, positions[0].split(','))
+            if not (0 <= x < width and 0 <= y < height):
+                return {}
+        verticals = VERTICAL_RE.findall(row.data)
+        if (len(verticals) != row.data.count('v{')
+                or any(not (0 <= int(x) <= width and 0 < int(y) < height) for x, y in verticals)):
+            return {}
+        analysis = row_logic_analysis(row)
+        if (len(analysis.elements) != len(raw_elements)
+                or sum(not element.is_wire for element in analysis.elements) != len(operations)):
+            return {}
+        result = {}
+        for element in analysis.elements:
+            if element.role != 'c':
+                continue
+            logic = analysis.output_logic.get((element.x, element.y))
+            condition = key(logic) if logic is not None else None
+            if condition is not None:
+                result[element.op_index] = condition
+        return result
+    except (ValueError, TypeError, KeyError, IndexError, RecursionError):
+        return {}  # Failure to resolve topology supplies no downgrade evidence.
+
+
 def review_duplicate_coils(rows: list[LadderRow], comments: dict[tuple[str, int], CommentInfo]) -> list[dict[str, object]]:
     drivers: dict[str, list[DeviceOcc]] = defaultdict(list)
+    source_rows: dict[int, LadderRow] = {}
+    conditions_by_row: dict[int, dict[int, tuple]] = {}
     for row in rows:
         for occ in row.occurrences:
-            if occ.role == "c" or occ.role in {"SET", "RST", "PLS", "PLF", "OUT__16", "OUTH__16"}:
-                drivers[occ.device].append(occ)
+            if (occ.access in {'write', 'both'}
+                    and occ.role in {'c', 'SET', 'RST', 'PLS', 'PLF', 'OUT__16', 'OUTH__16'}):
+                drivers[coil_device(occ)].append(occ)
+                source_rows[id(occ)] = row
     out = []
     for device, occs in sorted(drivers.items()):
-        unique_locs = {(occ.lddb, occ.pos, occ.role) for occ in occs}
+        unique_locs = {(occ.lddb, occ.pos, occ.op_index, occ.role) for occ in occs}
         if len(unique_locs) <= 1:
             continue
         first = occs[0]
         info = comments.get((first.device_type, first.number), CommentInfo())
         roles = Counter(occ.role for occ in occs)
-        severity = "high" if first.device_type in {"Y", "M", "L"} and roles.get("c", 0) > 1 else "medium"
+        severity = "high" if (first.device_type in {"Y", "M", "L"} or device != first.device) and roles.get("c", 0) > 1 else "medium"
         note = "same output/coil driven from multiple places; confirm intentional SET/RST pattern or consolidate"
         text = " ".join([device_comment_text(info), *[occ.title for occ in occs]])
         normal_coils = [occ for occ in occs if occ.role == "c"]
-        normal_condition_keys = {tuple(occ.row_conditions) for occ in normal_coils}
         if severity == "high" and BENIGN_DUPLICATE_TEXT_RE.search(text):
             severity = "medium"
             note = "duplicate coil is in a debug/example/change-history area; review before treating as a live logic conflict"
         elif severity == "high" and normal_coils and all(INDEXED_DETAIL_RE.search(occ.detail or "") for occ in normal_coils):
             severity = "medium"
             note = "duplicate coil uses indexed device addressing; verify index range before treating the base device as duplicated"
-        elif severity == "high" and len(normal_coils) > 1 and len(normal_condition_keys) == 1:
-            severity = "medium"
-            note = "duplicate normal coils share the same condition signature; redundant, but not competing writes"
+        elif severity == "high" and len(normal_coils) > 1:
+            condition_keys = []
+            for occ in normal_coils:
+                row = source_rows[id(occ)]
+                if id(row) not in conditions_by_row:
+                    conditions_by_row[id(row)] = _coil_output_condition_keys(row)
+                condition_keys.append(conditions_by_row[id(row)].get(occ.op_index))
+            if all(key is not None for key in condition_keys) and len(set(condition_keys)) == 1:
+                severity = "medium"
+                note = "duplicate normal coils share the same resolved local condition; verify execution order before treating them as redundant"
         out.append(
             {
                 "severity": severity,

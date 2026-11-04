@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
+import time
 import xml.etree.ElementTree as ET
 import tempfile
 from collections import defaultdict
@@ -66,6 +68,22 @@ def comment_count(path):
     con=sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True)
     try:return con.execute('select count(*) from DEVICE_DATA').fetchone()[0]
     finally:con.close()
+
+
+def rename_with_retry(stage, destination):
+    """Publish once; retry only transient Windows access denial, ten attempts."""
+    for attempt in range(10):
+        try:
+            os.rename(stage, destination)
+            return
+        except OSError as error:
+            if (sys.platform != 'win32' or getattr(error, 'winerror', None) != 5
+                    or attempt == 9 or destination.exists() or destination.is_symlink()):
+                raise
+            time.sleep(0.05 * (attempt + 1))
+            # Another process may have created the destination during the wait.
+            if destination.exists() or destination.is_symlink():
+                raise
 
 
 def export_csv(source: Path, destination: Path, *, kind='all', program='', project_name='', format='gxworks3'):
@@ -178,7 +196,7 @@ def export_csv(source: Path, destination: Path, *, kind='all', program='', proje
         (stage/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
         (stage/'README.txt').write_text('\n'.join(limits)+'\n',encoding='utf-8')
         if destination.exists() or destination.is_symlink():raise ValueError('output was created by another process')
-        os.rename(stage,destination)
+        rename_with_retry(stage,destination)
         return manifest
     finally:
         if stage.exists():shutil.rmtree(stage)

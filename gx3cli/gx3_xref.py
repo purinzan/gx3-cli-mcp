@@ -81,7 +81,8 @@ DEVICE_NAME_RE = re.compile(r"^([A-Z]+)(\d+)$", re.IGNORECASE)
 # v7 preserves independent physical spans in data_flow; count is not extent.
 # v8 preserves LD block/operation/element locations instead of dropping them.
 # v12 stores comments for each covered device, not only the named base.
-XREF_DECODER = "arg-decode-member-comments-12"
+# v13 counts each BMOV/FMOV digit group in bit devices, independently per operand.
+XREF_DECODER = "arg-decode-digit-blocks-13"
 
 
 def stamp_decoder(con: sqlite3.Connection, root: Path | None = None) -> None:

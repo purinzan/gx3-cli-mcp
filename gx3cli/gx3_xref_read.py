@@ -97,6 +97,22 @@ def device_match(con: sqlite3.Connection) -> tuple[str, str]:
     return ("xref x", "x.device = ?")
 
 
+def written_devices(con: sqlite3.Connection) -> set[str]:
+    """All devices covered by writers; old indexes expose named bases only.
+
+    An existing but empty member table is not a reason to fall back: that
+    would conceal a malformed index as a narrower successful answer.
+    """
+    if has_members(con):
+        rows = con.execute(
+            "select distinct m.member_device from xref_members m "
+            "join xref x on x.id=m.src_id where x.access in ('write', 'both')"
+        )
+    else:
+        rows = con.execute("select distinct device from xref where access in ('write', 'both')")
+    return {str(row[0]) for row in rows}
+
+
 def member_comment_expression(con: sqlite3.Connection) -> str:
     """A covering row's comment belongs to the queried member, not its base.
 

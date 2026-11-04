@@ -136,6 +136,9 @@ class ArgOcc:
     # only the first. 1 is an ordinary single device; 0 means the instruction
     # covers a run whose length is held in a device and cannot be known here.
     range_len: int = 1
+    # One digit-specified transfer element covers this many bit devices.
+    # Kept per operand: the other operand may be a word or a different digit.
+    digit_width: int = 1
 
 
 @dataclass
@@ -324,22 +327,26 @@ def parse_row_operations(data: str, labels: LabelResolver | None = None, *, synt
                 a.access_basis = "index register"
                 continue
             indexed = "indexed" in (a.detail or "")
+            # Only these transfers count digit groups. A shift's (n) is a
+            # shift amount, and DFMOV already has its documented count unit.
+            unit = a.digit_width if base_opcode(hop.op) in {"BMOV", "FMOV"} else 1
+            operand_span = span * unit
             if wset is None:
                 a.access = "ref"
             elif a.arg_index in wset:
                 a.access = "both" if rmw else "write"
                 if span != 1 and not indexed:
-                    a.range_len = span
+                    a.range_len = operand_span
                     a.detail = (a.detail + "; " if a.detail else "") + (
-                        f"covers {span} devices" if span else "covers a run of unknown length"
+                        f"covers {operand_span} devices" if span else "covers a run of unknown length"
                     )
             elif a.arg_index in source_runs:
                 a.access = "read"
                 if not indexed:
-                    a.range_len = span
+                    a.range_len = operand_span
                     a.access_basis = a.access_basis or span_basis
                     a.detail = (a.detail + "; " if a.detail else "") + (
-                        f"reads a run of {span} devices"
+                        f"reads a run of {operand_span} devices"
                         if span
                         else "reads a run of unknown length"
                     )
@@ -533,6 +540,8 @@ def block_span(opcode: str, raw_args: list[str]) -> tuple[int, str]:
     is intentionally retained until each remaining count-bearing instruction
     is classified under #122 rather than guessed from its opcode spelling.
     """
+    if base_opcode(opcode) in {"ROR", "ROL", "RCR", "RCL", "DROR", "DROL", "DRCR", "DRCL"}:
+        return 1, ""  # (n) rotates bits within the operand, not a device run
     explicit, explicit_basis = counted_operand_spans(opcode, raw_args)
     if explicit:
         wset, _ = write_indices(opcode, len(raw_args))
@@ -693,6 +702,7 @@ def decode_args(
                 detail += f"; covers {span} devices"
             occ = make_occ(operand.device_type, number, arg_index, detail=detail)
             occ.range_len = max(span, 1)
+            occ.digit_width = max(span, 1)
             occs.append(occ)
             continue
         if operand.bit:
