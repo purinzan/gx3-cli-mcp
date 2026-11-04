@@ -60,6 +60,7 @@ from gx3cli.review_gx3_project import (
 from gx3cli.extract_hmi_build_info import CommentInfo
 from gx3cli.gx3_arg_decode import COMPARE_RE
 from gx3cli.gx3_operand_parse import parse_operands
+from gx3cli.gx3_xref_read import written_devices
 from gx3cli.gx3_instruction_table import (
     manual_allowed_devices,
     manual_operand_names,
@@ -510,12 +511,7 @@ def check_external_value_source(ctx: LintContext) -> list[dict[str, object]]:
 
     if ctx.refresh_analysis is not None:
         ctx.states["external-value-source"] = ctx.refresh_analysis
-    written = {
-        str(row["device"])
-        for row in ctx.xref.execute(
-            "select distinct device from xref where access in ('write', 'both')"
-        )
-    }
+    written = written_devices(ctx.xref)
 
     out: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -702,7 +698,6 @@ def check_unused_device(ctx: LintContext) -> list[dict[str, object]]:
         where (driver_rows > 0 and condition_uses = 0)
            or (occurrences = 0 and coalesce(comment, '') <> '')
         order by driver_rows desc, device_type, number
-        limit 1000
         """
     ).fetchall()
     covered = covered_device_ranges(ctx.lite)

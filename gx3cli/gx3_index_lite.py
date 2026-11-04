@@ -462,7 +462,7 @@ def _populate_index(args: argparse.Namespace, con: sqlite3.Connection) -> int:
 # before X/Y/B/W were stored in hex holds "X520" where this build looks for
 # "X208", and a silent miss reads as "device not used" -- the worst possible
 # way to be wrong about a PLC project.
-DEVICE_NAMING = "hex-2-comment-identities"
+DEVICE_NAMING = "hex-3-digit-block-spans"
 
 
 def check_input(path: Path, con: sqlite3.Connection, root: Path | None) -> None:

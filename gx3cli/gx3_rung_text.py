@@ -39,6 +39,7 @@ from gx3cli.gx3_ladder_logic import (
 from gx3cli.gx3_ladder_csv import parse_csv_rows, read_csv_records
 from gx3cli.gx3_intermediate_tool import extract_dim
 from gx3cli.gx3_arg_decode import row_operations, write_indices
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, split_device
 from gx3cli.gx3_ladder_print import load_print_comments, comment_text_for, operand_comment_device
 from gx3cli.gx3_program_map import load_program_map
 from gx3cli.gx3_label_resolve import LabelResolver, load_label_resolver
@@ -77,8 +78,9 @@ class RungText:
 
     def to_line(self, width: int = 0) -> str:
         arrow = f"{self.opcode} {self.device}" if self.opcode not in ("", "OUT") else self.device
-        if self.operands and (self.opcode != "OUT" or len(self.operands) > 1):
-            arrow = f"{self.opcode} {' '.join(self.operands)}"
+        if self.operands:
+            arrow = (self.operands[0] if self.opcode in ("", "OUT") and len(self.operands) == 1
+                     else f"{self.opcode} {' '.join(self.operands)}")
         line = f"{self.location:<{width}}  {self.condition} -> {arrow.rstrip()}"
         if self.diagnostic:
             line += "  # diagnostic=" + json.dumps(self.diagnostic, ensure_ascii=False)
@@ -119,7 +121,13 @@ def written_devices(element: FlowElement) -> list[str]:
     a value. The manuals name the destination operand of every instruction, so
     the write positions decide it here.
     """
-    written = [ref.device for ref in element.devices if ref.is_written]
+    def target(ref):
+        if ref.device_type not in BIT_DEVICE_TYPES and ref.device_type != 'LABEL' and 0 <= ref.arg_index < len(element.operands):
+            operand = element.operands[ref.arg_index]
+            if re.fullmatch(re.escape(ref.device) + r'\.[0-9A-F]', operand, re.IGNORECASE):
+                return operand
+        return ref.device
+    written = [target(ref) for ref in element.devices if ref.is_written]
     devices = [ref.device for ref in element.devices]
     if element.is_driver:
         return written or devices or ["?"]
@@ -254,7 +262,11 @@ def visible_comments(
 
 def matches_device(item: RungText, device: str) -> bool:
     # With unknown writes, a filter cannot establish that this row is unrelated.
-    return not device or item.device.upper() == device.upper() or (not item.device and bool(item.diagnostic))
+    if not device or item.device.upper() == device.upper() or (not item.device and bool(item.diagnostic)):
+        return True
+    parsed = split_device(device.upper())
+    return bool(parsed and parsed[0] not in BIT_DEVICE_TYPES
+                and re.fullmatch(re.escape(device) + r'\.[0-9A-F]', item.device, re.IGNORECASE))
 
 
 _DATA_COLUMNS = (

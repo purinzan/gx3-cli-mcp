@@ -254,6 +254,10 @@
 | `test_gx3_dependency_flow_topology.py` | dependency-flow が暗黙 horizontal gap、左母線推定、driver sink 越しの逆流を依存に混ぜないこと。 |
 | `test_gx3_cli_issue_polish.py` | JSON 出力、同義語検索、カテゴリ別ヘルプ、`--no-color`。 |
 | `test_gx3_lint.py` | lint rule 群。 |
+| `test_gx3_digit_block_runs.py` | 桁指定BMOV/FMOVのオペランド別範囲、末尾検索、シフト量との区別、xref全書込みメンバーのlintへの反映。 |
+| `test_gx3_unused_device_limit.py` | 合成4083回路を実際に索引化し、先頭1000件を除外した後の3083件も未使用検査に残ること。 |
+| `test_gx3_bit_of_word_coils.py` | ワードの16ビットを分けた回路文字出力・検索・重複コイル検査。同一行の複数出力、書込みaccess、出力別条件、添字付き・配線不明の境界も確認。 |
+| `test_gx3_csv_publish_retry.py` | 模擬WinError 5の限定再試行、10試行上限、他エラー維持、出力先競合と一時フォルダの後始末。 |
 | `test_gx3_program_map_prefix.py` | 合成LDDB・StepInfo・qpg・CPU.PRMから前方一致の誤割当を再現し、program-map、exec-config、scan-orderで再割当されないことを検査する。 |
 | `test_gx3_ladder_logic.py` | ラダー論理生成。 |
 | `test_gx3_ladder_layout.py` | LadderBlocks 座標から JSON/SVG レイアウトを作り、既存の論理解析と矛盾しないことを検査する。 |

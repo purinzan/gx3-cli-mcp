@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_intermediate_tool import generate_rung
@@ -23,7 +24,7 @@ def fixture(root: Path, groups, programs, *, generation="fixed") -> Path:
     # The generic generator writes a text placeholder for unit configuration.
     # exec-config needs its actual SQLite container, even when no units exist.
     (root / "UnitConfig.dat").unlink()
-    with sqlite3.connect(root / "UnitConfig.dat") as con:
+    with closing(sqlite3.connect(root / "UnitConfig.dat")) as con:
         con.execute("create table Object(ObjectID integer, ObjectName text)")
     (root / "CPU.PRM").write_bytes(("$MELPRJ$\0" + "\0".join(programs) + "\0").encode("utf-16-le"))
     index = 0
@@ -37,12 +38,14 @@ def fixture(root: Path, groups, programs, *, generation="fixed") -> Path:
             ids.append(decimal)
             guid = str(uuid.UUID(int=index))
             data, size, _ = generate_rung({"device": f"M{100 + index}"}, {"type": "coil", "device": "M900"})
-            with sqlite3.connect(root / f"A{index:02}_LDDB.db") as con:
+            with closing(sqlite3.connect(root / f"A{index:02}_LDDB.db")) as con:
                 con.execute("create table LadderBlocks(id text, pos real, blocktype integer, data text, rowsize integer, translated integer, ConvTarget integer)")
                 con.execute("insert into LadderBlocks values (?,0,0,?,?,0,0)", ("_guid/" + guid, data, size))
-            with sqlite3.connect(root / f"{decimal}_StepInfo.db") as con:
+                con.commit()
+            with closing(sqlite3.connect(root / f"{decimal}_StepInfo.db")) as con:
                 con.execute("create table T_Block(Pos real, BlockID text, StepSize integer)")
                 con.execute("insert into T_Block values (0,?,1)", ("{" + guid.upper() + "}",))
+                con.commit()
             raw = (name + "\0").encode("utf-16-le")
             record = struct.pack("<H", len(raw)) + raw
             records.append((QPG_NAME_MARKER + b"\0\0\xff\xff\xff\xff" if generation == "fixed" else b"\0\0") + record)

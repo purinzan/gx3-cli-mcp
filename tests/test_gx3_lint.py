@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 from gx3cli.gx3_intermediate_tool import generate_rung
@@ -528,11 +529,12 @@ def test_wide_compare_through_real_lint_cli() -> None:
     from gx3cli.gx3_synthetic_project import create_synthetic_project
     with tempfile.TemporaryDirectory() as tmp:
         root = create_synthetic_project(Path(tmp) / "project")
-        with sqlite3.connect(root / "001_LDDB.db") as con:
+        with closing(sqlite3.connect(root / "001_LDDB.db")) as con:
             con.execute("delete from LadderBlocks")
             for i, token in enumerate(("K_2", "H_2", "K_1")):
                 con.execute("insert into LadderBlocks values (?, ?, 0, ?, 1, 0, 0)",
                             (f"synthetic-{i}", i * 1024, comparison_data(token, 99999999)))
+            con.commit()
         done = subprocess.run([sys.executable, "-m", "gx3cli.gx3_cli", "lint", str(root),
                                "--checks", "compare-type,signed-compare", "--format", "json",
                                "--out-prefix", str(Path(tmp) / "report")], capture_output=True, text=True, encoding="utf-8")
