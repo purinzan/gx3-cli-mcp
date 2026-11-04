@@ -1,5 +1,6 @@
 """Distinct static word bits stay distinct through real LDDB and CLI paths."""
 import contextlib
+import csv
 import json
 import sqlite3
 import subprocess
@@ -9,8 +10,8 @@ import unittest
 from pathlib import Path
 
 from gx3cli.gx3_rung_text import collect
-from gx3cli.review_gx3_project import load_rows, review_duplicate_coils
-from test_gx3_digit_block_runs import dev, instruction, modified
+from gx3cli.review_gx3_project import coil_device, load_rows, review_duplicate_coils
+from test_gx3_digit_block_runs import const, dev, instruction, modified
 from test_gx3_shared_reach import write_program
 
 
@@ -36,7 +37,108 @@ def paired_coils(*, bits=(10, 10), contacts=(1, 2), indexed=False):
     return f"V1:{len(header)}:{lengths}:{':'.join(header)}:cb{{fg=fg{{dim=3x2:es=[{':'.join(elements)}]}}}}"
 
 
+def qualified_bit_coil(kind, bit, *, contact=1, unit=0, modifier=''):
+    if kind == 'UG':
+        base = f'B{{b={dev(unit)}:e={dev(100)}:vt=i}}'
+        tokens = ['U', 'G', 'Dots']
+    else:
+        base = dev(0x120 if kind == 'W' else 120)
+        tokens = [kind, 'Dots']
+    target = f'M{{b={base}:m={const(bit)}}}'
+    if modifier:
+        tokens.append('Zs' if modifier == 'indexed' else 'Ats')
+        target = f"M{{b={target}:m={dev(1) if modifier == 'indexed' else const(0)}}}"
+    return instruction('c', tokens, [target], contact=contact, coil=True)
+
+
 class BitCoilTests(unittest.TestCase):
+    def test_buffer_and_word_bit_identity_with_different_conditions(self):
+        from gx3cli.gx3_lint import LintContext, check_duplicate_coil
+        for kind in ('UG', 'W', 'D'):
+            for bit in (0, 10, 15):
+                with self.subTest(kind=kind, bit=bit), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)/'source'
+                    write_program(root, [(f'_guid/coil-{i}', qualified_bit_coil(kind, bit, contact=i)) for i in (1, 2)])
+                    rows = load_rows(root, {})
+                    base = {'UG': 'U0\\G100', 'W': 'W120', 'D': 'D120'}[kind]
+                    expected = f'{base}.{bit:X}'
+                    targets = [occ.device for row in rows for occ in row.occurrences if occ.access == 'write']
+                    self.assertEqual(targets, [expected if kind == 'UG' else base] * 2)
+                    found = review_duplicate_coils(rows, {})
+                    self.assertEqual([(r['device'], r['driver_count'], r['severity']) for r in found],
+                                     [(expected, 2, 'high')])
+                    self.assertEqual([item.device for item in collect(root)], [expected] * 2)
+                    self.assertEqual([r['device'] for r in check_duplicate_coil(LintContext(root, rows, {}))], [expected])
+
+    def test_equal_buffer_bit_conditions_keep_the_normal_downgrade(self):
+        for bit in (0, 10, 15):
+            with self.subTest(bit=bit), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)/'source'
+                data = qualified_bit_coil('UG', bit)
+                write_program(root, [('_guid/first', data), ('_guid/second', data)])
+                found = review_duplicate_coils(load_rows(root, {}), {})
+                self.assertEqual([(r['device'], r['driver_count'], r['severity']) for r in found],
+                                 [(f'U0\\G100.{bit:X}', 2, 'medium')])
+
+    def test_distinct_buffer_bits_and_units_do_not_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'source'
+            rungs = [(f'_guid/u{unit}-b{bit}', qualified_bit_coil('UG', bit, unit=unit, contact=unit+bit+1))
+                     for unit in (0, 1) for bit in (0, 10, 15)]
+            write_program(root, rungs)
+            self.assertEqual(review_duplicate_coils(load_rows(root, {}), {}), [])
+            with contextlib.closing(sqlite3.connect(root/'001_LDDB.db')) as con:
+                con.execute('insert into LadderBlocks values (?, ?, 0, ?, 1, 0, 0)',
+                            ('_guid/duplicate', 1000, qualified_bit_coil('UG', 10, contact=30)))
+                con.commit()
+            found = review_duplicate_coils(load_rows(root, {}), {})
+            self.assertEqual([(r['device'], r['driver_count'], r['severity']) for r in found], [('U0\\G100.A', 2, 'high')])
+
+    def test_indexed_and_indirect_buffer_bits_keep_the_decoder_identity(self):
+        for kind in ('UG', 'W', 'D'):
+            for modifier in ('indexed', 'indirect'):
+                with self.subTest(kind=kind, modifier=modifier), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)/'source'
+                    write_program(root, [(f'_guid/coil-{i}', qualified_bit_coil(kind, 10, contact=i, modifier=modifier)) for i in (1, 2)])
+                    rows = load_rows(root, {})
+                    targets = [occ for row in rows for occ in row.occurrences if occ.access == 'write']
+                    self.assertEqual([coil_device(occ) for occ in targets], [occ.device for occ in targets])
+                    self.assertEqual(len(targets), 2)
+                    self.assertEqual({r['severity'] for r in review_duplicate_coils(rows, {})}, {'medium'})
+                    self.assertNotIn('Z1', {r['device'] for r in review_duplicate_coils(rows, {})})
+
+    def test_label_or_unknown_device_spaces_do_not_restore_a_bit_suffix(self):
+        # Adapter boundary only. The physical-format integration paths above
+        # are decoded from real serialized LDDB rows, without occurrence mocks.
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'source'
+            write_program(root, [('_guid/buffer', qualified_bit_coil('UG', 10))])
+            occ = next(o for o in load_rows(root, {})[0].occurrences if o.access == 'write')
+            for kind in ('LABEL', '?', '', 'UNKNOWN'):
+                adapted = replace(occ, device_type=kind, device='Area.Channel', detail='bit=10')
+                self.assertEqual(coil_device(adapted), 'Area.Channel')
+
+    def test_lint_and_rung_text_cli_preserve_a_qualified_buffer_bit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'source'
+            write_program(root, [(f'_guid/coil-{i}', qualified_bit_coil('UG', 10, contact=i)) for i in (1, 2)])
+            done = subprocess.run([sys.executable, '-m', 'gx3cli.gx3_cli', 'lint', str(root),
+                                   '--checks', 'duplicate-coil', '--format', 'json', '--out-prefix', str(Path(tmp)/'lint')],
+                                  capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            summary = json.loads(done.stdout)
+            self.assertEqual(summary['checks']['duplicate-coil']['count'], 1)
+            self.assertEqual(summary['checks']['duplicate-coil']['by_severity']['high'], 1)
+            with (Path(tmp)/'lint_duplicate-coil.csv').open(encoding='utf-8-sig', newline='') as stream:
+                finding, = csv.DictReader(stream)
+            self.assertEqual(finding['device'], 'U0\\G100.A')
+            done = subprocess.run([sys.executable, '-m', 'gx3cli.gx3_cli', 'rung-text', '--root', str(root),
+                                   '--device', 'U0\\G100.A', '--format', 'json'],
+                                  capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual([r['device'] for r in json.loads(done.stdout)], ['U0\\G100.A'] * 2)
+
     def test_read_only_index_registers_are_not_coil_writers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'source'

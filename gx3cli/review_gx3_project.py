@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from gx3cli.gx3_device_name import format_device as _format_device
-from gx3cli.gx3_device_name import BIT_DEVICE_TYPES
+from gx3cli.gx3_device_name import BIT_DEVICE_TYPES, DEVICE_TYPE_BASE
 from gx3cli.gx3_analysis_state import DECODE, PARTIAL, AnalysisState, checked
 from gx3cli.extract_hmi_build_info import CommentInfo, DEVICE_CODE_BY_TYPE, comment_status
 from gx3cli.extract_gx3_extended_instruction_knowledge import (
@@ -318,12 +318,22 @@ def review_missing_comments(rows: list[LadderRow], comments: dict[tuple[str, int
     return out
 
 
-def coil_device(occ: DeviceOcc) -> str:
-    """Static word bits are distinct coil targets; dynamic bases stay unresolved."""
+def _static_coil_bit(occ: DeviceOcc) -> int | None:
+    """Bit evidence is independent of how the decoder spells its device."""
+    word = occ.device_type in DEVICE_TYPE_BASE and occ.device_type not in BIT_DEVICE_TYPES
     bit = re.search(r'\bbit=K?(\d+)\b', occ.detail)
-    if (bit and occ.device_type not in BIT_DEVICE_TYPES | {'', '?', 'LABEL'} and not INDEXED_DETAIL_RE.search(occ.detail)
-            and 'indirect' not in occ.detail and 0 <= int(bit[1]) < 16):
-        return f'{occ.device}.{int(bit[1]):X}'
+    if (bit and (word or occ.device_type == 'UG') and not INDEXED_DETAIL_RE.search(occ.detail)
+            and 'indirect' not in occ.detail and not occ.device.startswith('@') and 0 <= int(bit[1]) < 16):
+        return int(bit[1])
+    return None
+
+
+def coil_device(occ: DeviceOcc) -> str:
+    """Restore only a plain word base; UG already includes its bit/modifiers."""
+    bit = _static_coil_bit(occ)
+    if (bit is not None and occ.device_type in DEVICE_TYPE_BASE
+            and occ.device == _format_device(occ.device_type, occ.number)):
+        return f'{occ.device}.{bit:X}'
     return occ.device
 
 
@@ -414,7 +424,7 @@ def review_duplicate_coils(rows: list[LadderRow], comments: dict[tuple[str, int]
         first = occs[0]
         info = comments.get((first.device_type, first.number), CommentInfo())
         roles = Counter(occ.role for occ in occs)
-        severity = "high" if (first.device_type in {"Y", "M", "L"} or device != first.device) and roles.get("c", 0) > 1 else "medium"
+        severity = "high" if (first.device_type in {"Y", "M", "L"} or _static_coil_bit(first) is not None) and roles.get("c", 0) > 1 else "medium"
         note = "same output/coil driven from multiple places; confirm intentional SET/RST pattern or consolidate"
         text = " ".join([device_comment_text(info), *[occ.title for occ in occs]])
         normal_coils = [occ for occ in occs if occ.role == "c"]
