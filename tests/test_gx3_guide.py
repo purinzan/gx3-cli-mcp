@@ -35,6 +35,7 @@ def test_a_ladder_project_is_told_to_build_the_cross_reference_first() -> None:
         assert commands.index("workspace --prepare") < commands.index("lint")
         assert "metrics" in commands
         assert "rung-text" in commands
+        assert "ladder-export-svg <PROGRAM_OR_LDDB> -o ladder.svg" in commands
 
 
 def test_a_label_project_is_pointed_at_the_label_table() -> None:
@@ -64,6 +65,7 @@ def test_a_container_with_no_ladder_says_so() -> None:
         commands = _commands(Path(tmp))
         assert "inspect" in commands
         assert "lint" not in commands
+        assert not any(command.startswith("ladder-export-svg") for command in commands)
 
 
 def test_every_suggestion_carries_its_reason() -> None:

@@ -59,9 +59,15 @@ to a user, follow these two rules without exception.
    genuinely has no comment, write `M100 (no comment)` so the absence is
    explicit rather than ambiguous.
 
-2. Explain ladder logic with the TXT ladder diagram, never with JSON.
+2. Explain ladder logic with a ladder diagram, never with JSON.
 
-   When the answer involves how a rung is wired, show the actual ladder text
+   For an SVG image or file export, use `gx3_ladder_export_svg` (CLI:
+   `gx3-cli ladder-export-svg PROGRAM --root PROJECT -o ladder.svg`). It uses
+   the existing ladder renderer. With `output`, files are confined to
+   GX3_MCP_OUTPUT_DIR, just like other MCP artifacts. Without it, SVG is
+   returned as text, with the usual large-output spill to a file.
+
+   For a plain-text explanation of how a rung is wired, show the actual ladder text
    from `gx3_ladder_print`, or from `ladder-diagram` with `--format text`
    (its default) or `--format markdown`. Quote it verbatim inside a code block
    so the contacts and coils stay aligned.
@@ -401,6 +407,37 @@ TYPED_TOOLS: list[TypedTool] = [
         build_args=lambda a: ["--root", _require(a, "root"), *_opt(a, "prefix", "--prefix")],
     ),
     TypedTool(
+        name="gx3_ladder_export_svg",
+        command="ladder-export-svg",
+        description=(
+            "Export a GX Works3 ladder diagram as an SVG image for viewing or documents. "
+            "Use this when asked to draw a ladder, export SVG, or save a ladder image. "
+            "Equivalent CLI: gx3-cli ladder-export-svg PROGRAM --root PROJECT -o ladder.svg. "
+            "Uses the same renderer as ladder-layout --format svg. Pass 'output' to save "
+            "under GX3_MCP_OUTPUT_DIR; otherwise returns SVG text (large output spills to a file). "
+            "Filter with 'device' or 'pos_range'. For TXT diagrams use gx3_ladder_print; "
+            "for coordinate JSON use gx3_run_command with command='ladder-layout'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "program": {"type": "string", "description": "Program/POU name or LDDB file name, e.g. 001_LDDB.db."},
+                "root": {"type": "string", "description": "Extracted project folder. For a .gx3 archive, keep it inside GX3_MCP_OUTPUT_DIR so its extraction cache stays inside the output boundary."},
+                "output": {"type": "string", "description": "Optional SVG file (-o). Relative to GX3_MCP_OUTPUT_DIR; absolute paths must stay inside it. Parent dirs are created."},
+                "pos_range": {"type": "string", "description": "Only rows whose internal pos is within A-B (inclusive); not necessarily GX Works3 step numbers."},
+                "device": {"type": "string", "description": "Only rungs referencing this device in any role."},
+            },
+            "required": ["program", "root"],
+            "additionalProperties": False,
+        },
+        build_args=lambda a: [
+            _require(a, "program"), "--root", _require(a, "root"),
+            *_opt(a, "output", "-o"),
+            *_opt(a, "pos_range", "--pos-range"),
+            *_opt(a, "device", "--device"),
+        ],
+    ),
+    TypedTool(
         name="gx3_ladder_print",
         command="ladder-print",
         description=(
@@ -409,7 +446,7 @@ TYPED_TOOLS: list[TypedTool] = [
             "never a JSON dump of the same rung. Output can be large; pass 'output' to write "
             "it to a file. To emit only the circuit under discussion, use 'list_sections' to "
             "discover section titles, then filter with 'section', 'pos_range' (A-B), or "
-            "'device'."
+            "'device'. For an SVG image export, use gx3_ladder_export_svg."
         ),
         input_schema={
             "type": "object",
@@ -570,7 +607,9 @@ GENERIC_TOOL = {
         "Escape hatch: run any MCP-allowed, project-read-only GX3 CLI command "
         "with explicit arguments. Project-mutating commands and local demo "
         "generation commands are rejected. Local artifacts are confined to "
-        "GX3_MCP_OUTPUT_DIR. Prefer the typed tools above when one fits."
+        "GX3_MCP_OUTPUT_DIR. Prefer the typed tools above when one fits; for SVG ladder images "
+        "use gx3_ladder_export_svg. Both ladder-export-svg and the existing ladder-layout "
+        "(JSON by default, or --format svg) remain available here."
     ),
     "inputSchema": {
         "type": "object",

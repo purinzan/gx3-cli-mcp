@@ -56,6 +56,12 @@ and uncertainty. Prefer concrete devices and comments over speculation.
 - For large diagrams, use `ladder-print <PROGRAM_OR_LDDB> --root <project> -o <FILE>`
   and read the relevant lines from the saved file. Client-side output truncation
   is not proof that the CLI failed; inspect the full output and error separately.
+- For an SVG ladder image, use `gx3-cli ladder-export-svg <PROGRAM_OR_LDDB> --root <project> -o ladder.svg`
+  or MCP `gx3_ladder_export_svg`. The MCP `output` stays inside `GX3_MCP_OUTPUT_DIR`.
+  For MCP, use an extracted root or keep the archive inside that output directory
+  so its extraction cache does not cross the existing write boundary.
+  The existing `ladder-layout --format svg` produces the same SVG; `ladder-layout`
+  still defaults to coordinate JSON for internal processing. Use `ladder-print` for TXT diagrams.
 - Keep coverage Notes and trace truncation/uncertainty in the interpretation.
   Shorter output does not mean complete analysis. Avoid repeatedly fetching
   identical evidence; narrow searches and request only the SQL columns needed.

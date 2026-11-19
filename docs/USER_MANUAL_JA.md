@@ -64,10 +64,28 @@ gx3-cli xref build --root C:\path\to\project.gx3
 | 現在値を読む | `gx3-cli live-read --ip <PLC_IP> --port 5000 --device D1000 --count 10 --type word` |
 | 現在値をラダー根拠へ重ねる | `gx3-cli ladder-print MAIN --root project.gx3 --device M100 --live-values live.json` |
 | GX 印刷風のラダー根拠を見る | `gx3-cli ladder-print <PROGRAM_OR_LDDB> --root project.gx3 --device M100` |
-| ビューア/画像生成向けのラダー座標を出す | `gx3-cli ladder-layout <PROGRAM_OR_LDDB> --root project.gx3 --format svg -o ladder.svg` |
+| ラダーをSVG画像へ書き出す | `gx3-cli ladder-export-svg <PROGRAM_OR_LDDB> --root project.gx3 -o ladder.svg` |
+| ビューア向けの座標JSONを出す | `gx3-cli ladder-layout <PROGRAM_OR_LDDB> --root project.gx3 -o layout.json` |
 | 2 つのコイルが同時 ON 可能か静的確認する | `gx3-cli interlock-check M100 M200 --root project.gx3` |
 | 静的チェックを走らせる | `gx3-cli lint project.gx3` |
 | サポート用の診断 ZIP を作る | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+
+## ラダーのSVG出力
+
+`gx3-cli ladder-export-svg PROGRAM --root project.gx3 -o ladder.svg` で画像を保存します。
+`PROGRAM` はプログラム名・POU名または `001_LDDB.db` のようなファイル名です。
+`--root` は `.gx3` または展開フォルダを指定でき、`-o` を省略するとSVGを標準出力へ返します。
+`--device M100` はそのデバイスを参照する回路、`--pos-range 0-100` は内部位置posの範囲で絞ります。
+posはGX Works3の表示ステップ番号と同じとは限りません。
+
+従来の `gx3-cli ladder-layout PROGRAM --root project.gx3 --format svg` も同じ画像を出力します。
+`ladder-layout` の既定形式は引き続き座標JSONです。TXT図には `ladder-print` を使います。
+
+MCPでは `gx3_ladder_export_svg` に `program`、`root`、必要なら `output`、`device`、`pos_range` を渡します。
+`output` は `GX3_MCP_OUTPUT_DIR` 内に限定され、相対パスはそこを起点にします。
+省略時はSVGテキストを返し、大きな出力は他のツールと同じくファイルへ退避します。
+`root` は展開フォルダを指定するか、展開キャッシュも制限内に収まるよう `.gx3` を出力ディレクトリ内に置きます。
+既存の `gx3_run_command` からの `ladder-layout` も互換性を保ち、新コマンド `ladder-export-svg` も呼び出せます。
 
 ## 典型的な調査の流れ
 

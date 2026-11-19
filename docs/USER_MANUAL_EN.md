@@ -13,6 +13,7 @@ Other languages: [Japanese](USER_MANUAL_JA.md) / [Chinese](USER_MANUAL_ZH.md)
 - Searches device comments for startup, stop, alarm, manual, cycle, and state
   signals.
 - Traces coil enable conditions and shows nearby ladder evidence.
+- Exports GX Works3 ladder diagrams as SVG images with `ladder-export-svg`.
 - Exposes read-only analysis tools to AI agents through MCP.
 - Runs static checks such as duplicate coils, multi-writers, dead logic, and
   interlock possibilities.
@@ -69,8 +70,32 @@ When `--root` points at a `.gx3` file, the CLI extracts it into a local
 | Emit JSON for scripts | `gx3-cli query-device M100 --root project.gx3 --json` |
 | Trace coil conditions | `gx3-cli trace-device M100 --root project.gx3 --strict-logic --compact` |
 | Print ladder evidence | `gx3-cli ladder-print MAIN --root project.gx3 --device M100` |
+| Export a ladder SVG image | `gx3-cli ladder-export-svg PROGRAM --root project.gx3 -o ladder.svg` |
+| Export coordinate JSON | `gx3-cli ladder-layout PROGRAM --root project.gx3 -o layout.json` |
 | Run static checks | `gx3-cli lint project.gx3` |
 | Create a support bundle | `gx3-cli support-bundle --root project.gx3 -o support.zip` |
+
+## Ladder SVG Export
+
+`gx3-cli ladder-export-svg PROGRAM --root project.gx3 -o ladder.svg` writes
+an SVG image using the existing ladder renderer. `PROGRAM` is a program/POU
+name or LDDB file name, such as `001_LDDB.db`. The root may also be an extracted
+project folder. Without `-o`, SVG goes to stdout. Use `--device M100` to select
+rungs referencing that device, or `--pos-range 0-100` for an inclusive internal
+pos range (which may differ from GX Works3 display step numbers).
+
+`gx3-cli ladder-layout PROGRAM --root project.gx3 --format svg` remains
+compatible and produces the same image. Its default remains coordinate JSON;
+use `ladder-print` when you need a TXT diagram instead.
+
+In MCP, prefer `gx3_ladder_export_svg` with `program`, `root`, and optionally
+`output`, `device`, or `pos_range`. Output files stay inside `GX3_MCP_OUTPUT_DIR`;
+relative paths are based there, and absolute paths must stay inside it. Without
+`output`, the response contains SVG text, with large output spilled to a file
+as for other tools. Use an extracted folder as `root`, or keep a `.gx3` archive
+inside the output directory so its extraction cache also stays inside it.
+Existing `gx3_run_command` calls to `ladder-layout` keep
+working; it also accepts the new `ladder-export-svg` command.
 
 ## Live Read
 

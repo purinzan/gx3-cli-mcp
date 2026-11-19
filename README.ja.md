@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
 [![gx3-cli-mcp MCP server](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badges/score.svg)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
-**GX Works3を開かずに、コイルがONにならない理由を調べます。**
+**GX Works3を開かずにプロジェクトを解析し、ラダーをSVG画像へ書き出せます。**
 
 手元のマシンにある三菱電機 MELSEC の GX Works3 `.gx3` プロジェクトを読み取り、
 デバイスがどこで書き込まれるか、コイルがONになるために何が成立する必要があるか、
@@ -29,8 +29,7 @@ AIエージェントはバイナリファイルの内容を推測する代わり
 pip install gx3-cli-mcp
 ```
 
-Python 3.10以上が必要です。`gx3-cli` と `gx3-mcp-server` の2つの
-コンソールスクリプトがインストールされます。
+Python 3.10以上が必要です。CLIには `gx3-cli`、MCPには `gx3-mcp-server` を使います。
 
 ## 30秒で試す
 
@@ -43,6 +42,22 @@ gx3-cli guide --root demo.gx3
 
 `guide` はプロジェクトを読み取り、そのプロジェクトで実行する価値のあるコマンドと
 理由を示します。「コマンドが60個もあるけれど、どこから始めればいいのか」に答えます。
+
+## GX Works3のラダーをSVGへ書き出す
+
+```bash
+gx3-cli ladder-export-svg 001_LDDB.db --root demo.gx3 -o ladder.svg
+```
+
+上で生成したデモのラダーを画像にします。自分のプロジェクトでは、
+`001_LDDB.db` を対象のプログラム名・POU名・LDDBファイル名に、
+`demo.gx3` を `.gx3` ファイルまたは展開フォルダに置き換えます。
+`--device M100` や `--pos-range 0-100` で回路を絞れます。
+`-o` を省略するとSVGを標準出力へ返します。
+
+実行ファイルは `gx3-cli`、コマンドはフラットな `ladder-export-svg` です。
+従来の `gx3-cli ladder-layout PROGRAM --root PROJECT --format svg` も同じSVGを出力します。
+`ladder-layout` の既定は引き続き座標JSONです。
 
 ## プロジェクトで使う
 
@@ -69,9 +84,9 @@ gx3-cli rung-text --root project.gx3
 gx3-cli query-comment "clamp pressure" --root project.gx3
 ```
 
-各コマンドはスクリプト向けの `--format json` と、画面への出力の代わりに
-ファイルへ書き出す `-o FILE` に対応します。`gx3-cli --help` で全コマンドを
-グループ別に確認できます。
+多くのコマンドはスクリプト向けの `--format json` と、ファイルへ書き出す
+`-o FILE` に対応します。対応形式は各コマンドの `--help` で確認してください。
+`ladder-export-svg` は常にSVGを出力します。`gx3-cli --help` でコマンドをグループ別に確認できます。
 
 `.gx3` を渡すと `.gx3_cache/<sha256>/` に展開し、そのコピーを解析します。
 
@@ -82,7 +97,7 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 | このコイルがOFFなのはなぜか？ | `trace-device`, `interlock-check` |
 | このデバイスはどこで書き込まれ、読み取られるか？ | `xref where-used`, `xref downstream` |
 | このプログラムは何をしているか？ | `rung-text`, `ladder-print`, `metrics` |
-| ラダーのラングを図で見たい | `ladder-layout --format svg` |
+| ラダーをSVG画像へ書き出したい | `ladder-export-svg PROGRAM --root PROJECT -o ladder.svg` |
 | PLCの外部から何が来るか？ | `external-inputs`, `comm-refresh` |
 | 決して成立しない条件は何か？ | `dead-logic` |
 | 問題がありそうな箇所はどこか？ | `lint PROJECT`（重複コイル、複数の書き込み元、オペランド幅、型） |
@@ -102,6 +117,14 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 クライアントがPATHからコンソールスクリプトを見つけられない場合は、
 `"command": "python", "args": ["-m", "gx3cli.gx3_mcp_server"]` を使えます。
 サーバーは読み取り専用の解析ツールと、制限付きのコマンド実行機能を公開します。
+
+ラダーのSVG画像には専用ツール `gx3_ladder_export_svg` を使います。
+`program`、`root` を指定し、必要なら `output`、`device`、`pos_range` を付けます。
+保存先は従来どおり `GX3_MCP_OUTPUT_DIR` 内に限定され、相対パスもそこを起点にします。
+`root` は展開フォルダを指定するか、展開キャッシュも制限内に収まるよう `.gx3` を出力ディレクトリ内に置きます。
+汎用の `gx3_run_command` からも `ladder-export-svg`、または従来の
+`ladder-layout` と `--format svg` を利用できます。座標JSONには `ladder-layout` の既定形式を、
+回答内のTXTラダー図には `gx3_ladder_print` を使います。
 
 エージェントの操作方法は[エージェント利用ガイド（日本語）](docs/AGENT_USAGE_JA.md)を参照してください。
 

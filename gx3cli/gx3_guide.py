@@ -105,6 +105,10 @@ def suggest(evidence: Evidence) -> list[Suggestion]:
             add("workspace --prepare", f"{rungs}, {why}; most commands need one", 1)
         add("metrics", f"{rungs}: size per program, and where the logic is concentrated", 2)
         add("rung-text", "read the whole program as one line per rung", 3)
+        add(
+            "ladder-export-svg <PROGRAM_OR_LDDB> -o ladder.svg",
+            "export a GX Works3 ladder diagram as an SVG image; pass --root for this project", 5,
+        )
         add("lint", "static checks over the rungs: coils, writers, widths, operand types", 4)
         add("interlock-check", "conditions that hold an output off", 5)
         add("dead-logic", "rungs that can never become true", 6)

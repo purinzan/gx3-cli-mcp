@@ -20,7 +20,11 @@ Codex、Claude Code、Cursor などの AI エージェントから使う場合�
 の出力に含まれています。コメントが本当に存在しない場合は `M100（コメントなし）` と
 書き、「調べていない」のか「無い」のかを曖昧にしないでください。
 
-### 2. ラダーの説明は TXT のラダー図で行う
+### 2. ラダーは図で示し、JSONを回路の説明として貼らない
+
+SVG画像の作成・保存を求められたら、専用ツール `gx3_ladder_export_svg` を使います。
+CLIでは `gx3-cli ladder-export-svg PROGRAM --root project.gx3 -o ladder.svg` です。
+TXTで結線を説明する場合は、以下の手順を使います。
 
 回路の結線を説明するときは、`ladder-print` の出力、または `ladder-diagram` の
 `--format text`（既定）か `--format markdown` を、コードブロック内にそのまま
@@ -124,6 +128,7 @@ MCP では typed tool を優先します。
 | `gx3_trace_device` | `trace-device` |
 | `gx3_xref_where_used` | `xref where-used` |
 | `gx3_ladder_print` | `ladder-print` |
+| `gx3_ladder_export_svg` | `ladder-export-svg`（SVG画像） |
 | `gx3_lint` | `lint` |
 | `gx3_dead_logic` | `dead-logic` |
 | `gx3_device_map` | `device-map` |
@@ -133,3 +138,29 @@ MCP では typed tool を優先します。
 | `gx3_run_command` | project-read-only CLI escape hatch |
 
 typed tool がない検索は `gx3_run_command` で `query-device`、`query-comment`、`query-external`、`query-cycle`、`index-lite`、`xref` を呼び出してください。`synthetic-project` はローカル CLI 専用で、MCP からは実行できません。
+
+### SVG画像・座標JSON・TXTの選び方
+
+SVG画像には、名前と引数から用途がわかる専用ツールを優先します。
+
+```json
+{"name":"gx3_ladder_export_svg","arguments":{"program":"001_LDDB.db","root":"extracted-project","output":"ladder.svg"}}
+```
+
+`device` は参照回路を絞り、`pos_range` は内部位置posの範囲（例 `"0-100"`）を指定します。
+posはGX Works3の表示ステップ番号と同一とは限りません。
+`output` は従来と同じ `GX3_MCP_OUTPUT_DIR` 内に限定されます。
+相対パスはそのディレクトリを起点とし、絶対パスも内側だけに保存できます。
+省略時はSVGテキストを返し、大きい出力は他のツールと同じくファイルへ退避します。
+`root` は展開フォルダを使います。未展開の `.gx3` を使う場合は、展開キャッシュも
+制限内に収まるようアーカイブを `GX3_MCP_OUTPUT_DIR` 内に置いて指定してください。
+
+既存の汎用入口も互換性のため維持します。
+
+```json
+{"name":"gx3_run_command","arguments":{"command":"ladder-layout","root":"extracted-project","args":["001_LDDB.db","--format","svg","-o","ladder.svg"]}}
+```
+
+同じ汎用入口で `command` を `ladder-export-svg` にした場合は `--format svg` が不要です。
+座標JSONが必要な内部処理では、従来どおり `ladder-layout` の既定形式を使います。
+人にTXT図を見せる場合は `gx3_ladder_print` を使います。
