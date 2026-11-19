@@ -465,21 +465,36 @@ def _parse_pos_range(value: str | None) -> tuple[int, int] | None:
     return int(parts[0]), int(parts[1])
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Export GX Works3 ladder coordinate layout as JSON or SVG.")
+def build_parser(*, svg_only: bool = False) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=f"gx3-cli {'ladder-export-svg' if svg_only else 'ladder-layout'}",
+        description=(
+            "Export a GX Works3 ladder diagram as an SVG image."
+            if svg_only else "Export GX Works3 ladder coordinate layout as JSON or SVG."
+        ),
+        epilog=(
+            "Example: gx3-cli ladder-export-svg 001_LDDB.db --root project.gx3 -o ladder.svg. "
+            "For coordinate JSON, use gx3-cli ladder-layout (JSON is its default)."
+            if svg_only else
+            "For an SVG image, you can also use gx3-cli ladder-export-svg PROGRAM --root PROJECT -o ladder.svg."
+        ),
+    )
     parser.add_argument("program", help="program name (POU / program file) or LDDB file name")
-    parser.add_argument("--root", default=str(default_project_root()), help="extracted project folder")
-    parser.add_argument("--pos-range", metavar="A-B", help="only export rows whose step pos is within A-B")
+    parser.add_argument("--root", default=str(default_project_root()), help=".gx3 project or extracted project folder")
+    parser.add_argument("--pos-range", metavar="A-B", help="only rows whose internal pos is within A-B (inclusive; may differ from GX Works3 steps)")
     parser.add_argument("--device", help="only export rungs that reference DEVICE")
-    parser.add_argument("--format", choices=["json", "svg"], default="json")
+    parser.add_argument(
+        "--format", choices=["svg"] if svg_only else ["json", "svg"],
+        default="svg" if svg_only else "json", help="output format (default: %(default)s)",
+    )
     parser.add_argument("-o", "--output", help="write output to file")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, svg_only: bool = False) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args(argv)
+    args = build_parser(svg_only=svg_only).parse_args(argv)
     root = resolve_project_root(args.root)
     payload = build_layout_payload(root, args.program, _parse_pos_range(args.pos_range), args.device)
     if args.format == "svg":

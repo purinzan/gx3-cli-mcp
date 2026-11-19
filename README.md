@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/license-source--available-blue)](LICENSE.txt)
 [![gx3-cli-mcp MCP server](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp/badges/score.svg)](https://glama.ai/mcp/servers/purinzan/gx3-cli-mcp)
 
-**Work out why a coil never turns on, without opening GX Works3.**
+**Analyze GX Works3 projects and export ladder diagrams as SVG, without opening GX Works3.**
 
 Reads a GX Works3 `.gx3` project on your own machine and answers questions
 about it — where a device is written, what has to be true for a coil to turn
@@ -36,7 +36,7 @@ answer from indexed facts instead of guessing at a binary file.
 pip install gx3-cli-mcp
 ```
 
-Python 3.10+. Installs two console scripts: `gx3-cli` and `gx3-mcp-server`.
+Python 3.10+. Use `gx3-cli` for the CLI and `gx3-mcp-server` for MCP.
 
 ## Try it in 30 seconds
 
@@ -49,6 +49,21 @@ gx3-cli guide --root demo.gx3
 
 `guide` reads the project and tells you which commands are worth running on it,
 and why. That is the answer to "there are sixty commands, where do I start".
+
+## Export a GX Works3 ladder as SVG
+
+```bash
+gx3-cli ladder-export-svg 001_LDDB.db --root demo.gx3 -o ladder.svg
+```
+
+This exports a ladder image from the demo above. For your own project, replace
+`001_LDDB.db` with its program/POU name or LDDB file name, and `demo.gx3` with
+your `.gx3` file or extracted folder. Use `--device M100` or `--pos-range 0-100`
+to narrow the rungs. Without `-o`, SVG is printed to stdout.
+
+The executable is `gx3-cli`, with the flat command `ladder-export-svg`.
+The existing `gx3-cli ladder-layout PROGRAM --root PROJECT --format svg`
+produces the same SVG; `ladder-layout` still defaults to coordinate JSON.
 
 ## On a project
 
@@ -75,8 +90,9 @@ gx3-cli rung-text --root project.gx3
 gx3-cli query-comment "clamp pressure" --root project.gx3
 ```
 
-Every command takes `--format json` for scripting, and `-o FILE` to write
-instead of print. `gx3-cli --help` lists all of them by group.
+Many commands accept `--format json` for scripting and `-o FILE` to write
+instead of print; check each command's `--help`. `ladder-export-svg` always
+exports SVG. `gx3-cli --help` lists the commands by group.
 
 Passing a `.gx3` extracts it to `.gx3_cache/<sha256>/` and analyses that copy.
 
@@ -87,7 +103,7 @@ Passing a `.gx3` extracts it to `.gx3_cache/<sha256>/` and analyses that copy.
 | Why is this coil off? | `trace-device`, `interlock-check` |
 | Where is this device written or read? | `xref where-used`, `xref downstream` |
 | What does this program do? | `rung-text`, `ladder-print`, `metrics` |
-| Show me the rung as a picture | `ladder-layout --format svg` |
+| Export a ladder diagram as an SVG image | `ladder-export-svg PROGRAM --root PROJECT -o ladder.svg` |
 | What comes from outside the PLC? | `external-inputs`, `comm-refresh` |
 | What can never be true? | `dead-logic` |
 | What looks wrong? | `lint PROJECT` (duplicate coils, multi-writer, operand widths, types) |
@@ -107,6 +123,15 @@ Passing a `.gx3` extracts it to `.gx3_cache/<sha256>/` and analyses that copy.
 Or `"command": "python", "args": ["-m", "gx3cli.gx3_mcp_server"]` if your
 client cannot resolve console scripts from PATH. The server exposes read-only
 analysis tools and a restricted command runner.
+
+For ladder SVG images, use the dedicated `gx3_ladder_export_svg` tool with
+`program`, `root`, and optionally `output`, `device`, or `pos_range`.
+Saved files stay under `GX3_MCP_OUTPUT_DIR` (relative paths start there).
+Use an extracted folder as `root`, or put a `.gx3` archive inside that output
+directory so its extraction cache also stays inside the boundary.
+The existing `gx3_run_command` routes remain available: `ladder-export-svg`
+or `ladder-layout` with `--format svg`; omit that format for coordinate JSON.
+For a TXT ladder diagram in an answer, use `gx3_ladder_print`.
 
 See [Agent usage guide (JA)](docs/AGENT_USAGE_JA.md) for how an agent should
 drive it.

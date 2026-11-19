@@ -79,7 +79,7 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 | 이 코일이 OFF인 이유는 무엇인가요? | `trace-device`, `interlock-check` |
 | 이 디바이스의 값을 쓰거나 읽는 위치는 어디인가요? | `xref where-used`, `xref downstream` |
 | 이 프로그램은 어떤 일을 하나요? | `rung-text`, `ladder-print`, `metrics` |
-| 래더의 렁(회로)을 그림으로 보고 싶어요 | `ladder-layout --format svg` |
+| 래더의 렁(회로)을 그림으로 보고 싶어요 | `ladder-export-svg PROGRAM --root PROJECT -o ladder.svg` |
 | PLC 외부에서 무엇이 들어오나요? | `external-inputs`, `comm-refresh` |
 | 절대로 참이 될 수 없는 조건은 무엇인가요? | `dead-logic` |
 | 문제가 있어 보이는 부분은 어디인가요? | `lint PROJECT`(중복 코일, 여러 쓰기 주체, 피연산자 폭, 자료형) |

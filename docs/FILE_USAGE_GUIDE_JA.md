@@ -54,6 +54,7 @@
 | `test_gx3_project_config.py` | project-config が「読めない」と「そもそも無い」を区別して報告することを検査する。デバイスメモリ不在・MESジョブがプロジェクト外・暗号化本体・DataDefault が空である旨を、それぞれ理由付きで出す。 |
 | `test_gx3_module_params.py` | 記述子テーブル（Prm3=257 の署名）と設定値テーブルの判別、既定値のままの行を設定として報告しないこと、チャンネル/軸ごとの行が取れることを検査する。 |
 | `test_gx3_ladder_layout_svg.py` | SVG が全ラングを同じ幅（印字と同じ12セル格子）で描き、立上がり/立下がり接点・b接点・INV/ME/MEF を記号として描き分けることを検査する。パルス接点が通常接点と同じ絵になる退行を防ぐ。 |
+| `test_gx3_ladder_export_svg.py` | 実CLI/MCP経由で新SVG入口を発見できること、旧SVGとのバイト一致・旧JSON互換、フィルタ・保存・合成gx3アーカイブと出力先制限を検査する。 |
 | `test_gx3_ladder_print_fold.py` | 合成LDデータを実パーサーからSVG・印刷へ通す。複数折返し、合流、配線だけの枝、折返し列より右の要素、コメント列と表示幅、step、最終母線、要素欠落を検査する。別実装の線分グラフで元データと実際のSVG・印刷の端子接続を比較する。 |
 | `test_gx3_device_code_table.py` | コメントDBの DevCode 表が単一の出所であること、検証データで確認済みのC=70 / ST=74 が入っていること、未確認の LT/LC/LST/LZ が入っていないことを検査する。 |
 | `test_gx3_operand_alignment.py` | ポインタオペランド（CALL #P240）と継続コネクタ（src/dst）が後続オペランドの型を奪わないことを検査する。検証データの経路間照合で見つかった退行を防ぐ。 |
@@ -157,7 +158,8 @@
 | `gx3_data_flow.py` | `data-flow` | `gx3_data_flow`, `gx3_run_command` | 命令引数単位の source→destination value-flow。未知/部分解析は unresolved として保持する。 |
 | `trace_gx3_device_dependencies.py` | `trace-device` | `gx3_trace_device` | デバイス成立条件、停止条件、上流依存を追う。呼出し単位のTraceInputsと条件参照providerを既存エンジンへ渡す。import時の他モジュール関数差替えは行わず、rows/comments/labelsを前処理・本体・後処理で共有する。 |
 | `gx3_ladder_print.py` | `ladder-print` | `gx3_ladder_print` | GX Works3 印刷風のラダー根拠を出す。 |
-| `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。 |
+| `gx3_ladder_layout.py` | `ladder-layout` | `gx3_run_command` | LadderBlocks の座標からビューア向け JSON/SVG レイアウトを出す。既定の座標JSONと `--format svg` は互換維持。SVG描画処理は新入口と共通。 |
+| `gx3_ladder_export_svg.py` | `ladder-export-svg` | `gx3_ladder_export_svg`, `gx3_run_command` | ラダーをSVG画像へ書き出す専用入口。既存layout処理へ委譲し、program/root、device/pos-range、保存方法を共用する。 |
 | `gx3_device_dictionary.py` | `device-dictionary` | `gx3_run_command` | GX3 コメントと xref 使用状況から address-comment JSON/CSV を出力する。 |
 | `gx3_tools.py` | `tools`, `inspect`, `sourceinfo`, `version`, `ip-map`, `scon-map`, `query-instruction`, `diff`, `block-context`, `same-row`, `signal-classify`, `impact-add-nc`, `state-chain` | `gx3_run_command` | 補助調査、近傍根拠、状態/命令検索。 |
 | `gx3_lint.py` | `lint` | `gx3_lint` | duplicate coils、multi-writer、alarm、unused/comment、math/type checks。記号だけの比較は、その命令の2ワード整数定数を根拠に32ビットとして検査する。 |
@@ -303,7 +305,8 @@
 ## 解析結果を短く読む
 
 概要は `rung-text`、依存条件は `trace-device --compact`、図の確認は
-範囲を絞った `ladder-print` を使います。以下のファイル名・デバイスは説明用です。
+範囲を絞った `ladder-print` を使います。SVG画像を保存する場合は `ladder-export-svg` を使います。
+以下のファイル名・デバイスは説明用です。
 
 ```powershell
 gx3-cli rung-text --root demo.gx3 --program 001_LDDB.db --comments
@@ -311,11 +314,15 @@ gx3-cli trace-device M100 --root demo.gx3 --strict-logic --compact --max-depth 4
 gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --list-sections
 gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --device M100
 gx3-cli ladder-print 001_LDDB.db --root demo.gx3 --pos-range 0-100 -o ladder.txt
+gx3-cli ladder-export-svg 001_LDDB.db --root demo.gx3 -o ladder.svg
 ```
 
 - `rung-text --device` は指定デバイスを駆動する出力で絞ります。
   書込み先が確定できない診断行は、指定デバイスと無関係だと判断できないため残します。
   `ladder-print --device` は読取りを含む参照回路で絞ります。
+- `ladder-export-svg` も `--device` / `--pos-range` で絞れます。
+  従来の `ladder-layout --format svg` は同じ画像を返し、`ladder-layout` の既定は座標JSONです。
+  MCPの `gx3_ladder_export_svg` と既存の汎用入口は同じ出力先制限を使います。
 - セクション名で選ぶ場合は `--section "タイトル"` を使います。
   `--pos-range` は内部位置 pos の範囲です。GX Works3 の表示ステップ番号と
   同一とは限りません。

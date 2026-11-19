@@ -78,7 +78,7 @@ gx3-cli query-comment "clamp pressure" --root project.gx3
 | 这个线圈为什么是 OFF？ | `trace-device`、`interlock-check` |
 | 这个软元件在哪里被写入或读取？ | `xref where-used`、`xref downstream` |
 | 这个程序到底在做什么？ | `rung-text`、`ladder-print`、`metrics` |
-| 把梯级画成图给我看 | `ladder-layout --format svg` |
+| 把梯级画成图给我看 | `ladder-export-svg PROGRAM --root PROJECT -o ladder.svg` |
 | 哪些条件来自 PLC 外部？ | `external-inputs`、`comm-refresh` |
 | 哪些分支永远不可能成立？ | `dead-logic` |
 | 哪里看起来有问题？ | `lint PROJECT`（重复线圈、多重写入、操作数位宽、类型） |
